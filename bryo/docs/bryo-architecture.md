@@ -5,6 +5,20 @@ instrument) into firmware on the FM-1. Nothing here is built yet. The PRD is the
 check it against what the hardware can actually do, decide what to keep from Felucca, and set the order to
 build in.
 
+## Decisions so far (2026-10-07)
+
+| Question | Decision |
+| --- | --- |
+| Where audio comes from | All of it: reels (factory + uploaded), resampling inside Bryo, **and USB audio in from the computer, early** (phase 3), **plus synth engines**. |
+| What starts a track's chain | **A source engine per track**, picked like a modulator engine: TAPE, SYNTH, POLY, and engines still to be decided. The source flows into GRAIN, RESONATOR, COLOR and SPACE. |
+| Tape format | IMA ADPCM, mono, 22.05 kHz, about 3.3 s per track. |
+| Gestures where the hardware differs | Adapt what makes sense; **ask before changing anything else**. The remaps below stand. |
+| MONO and POLY keys | Hold for 0.5 s with a countdown ring, plus one level of undo. |
+
+Still open, to ask when the phase gets there: what **POLY** is as a source (the name also collides with the POLY black key, which clears the tape) (a polyphonic synth, a poly
+sample player, or something else), and what the white keys do on a SYNTH track while TAPE-style views
+are focused.
+
 ## What the hardware really gives me
 
 I had the Felucca source read for facts before planning, because a few of them change the design:
@@ -51,6 +65,34 @@ These are my proposals. Each keeps the PRD's intent and only changes the gesture
    start, tuned on the device) and the scheduler drops the oldest. It sounds like 64-grain density at
    normal settings and stays inside the budget at extremes.
 
+## Source engines: what starts each track
+
+Each track's first device is a **source engine** in the HOME slot. TAPE is one source; SYNTH is another;
+more can be added without touching the rest of the chain. In the code it's an interface like Felucca's
+`engine_t`, but for a whole track:
+
+```c
+typedef struct {
+    const char *name;                         /* "TAPE", "SYNTH", … shown in the header */
+    void (*init)(track_t *t);
+    void (*key)(track_t *t, uint32_t key, uint32_t vel, int on);   /* white keys in this source's mode */
+    void (*render)(track_t *t, int32_t *mono, uint32_t n);         /* one control block, mono into GRAIN */
+    const param_desc_t *knobs[4];             /* what KNOB 1-4 do on the HOME page for this source */
+} source_t;
+```
+
+How it works: the HOME pad focuses the source; holding HOME and turning SELECT picks the source engine
+(the same hold-and-turn idiom as modulator engines). Why an interface: the PRD's chain stays fixed, the
+sound-making front end stays open, and a new engine is one file plus one table row.
+
+- **TAPE:** the ADPCM looper below. White keys are 16 slices.
+- **SYNTH:** a simple subtractive voice built from Felucca's ANALOG engine (`eng_analog.c`: oscillators,
+  filter, envelope), trimmed to a few voices. White keys are chromatic, and OCT−/OCT+ shift octaves.
+- **POLY and later engines:** to be defined (see "still open").
+
+Any source's output can still be printed onto the track's tape with REC, so every track keeps a tape
+buffer even when TAPE isn't its source.
+
 ## Where TAPE's audio comes from
 
 With no input, a tape records what the instrument makes. That's still a lot:
@@ -64,9 +106,11 @@ With no input, a tape records what the instrument makes. That's still a lot:
 - **Sources that make sound from nothing:** RESONATOR played from the keys (Karplus-Strong excited by a
   noise burst) and COLOR's noise generator. A blank tape plus RESONATOR plus REC is a way to start from
   silence.
-- **Later, maybe:** USB audio from the computer into the FM-1 (UAC host to device). It's a big feature
-  (a new endpoint, clock drift, a ring buffer) and I'd treat it as its own phase after everything else
-  works.
+- **USB audio from the computer (decided: early).** A UAC1 OUT endpoint (computer to FM-1), 44.1 kHz
+  16-bit stereo, into a ring buffer the audio ISR reads. The work: a second streaming interface in the
+  descriptors (kept apart from the existing IN endpoint, so macOS and Windows still see one class-compliant
+  device), clock drift between the computer and the codec handled by nudging the read rate, and an
+  underrun that plays silence instead of clicking. It becomes an INPUT choice for any track's tape.
 
 ## The tape format, and why
 
@@ -100,7 +144,9 @@ Why:
 | SPACE reverb | 40,000 | 4 small reverbs, Felucca's ROOM structure run at 22.05 kHz |
 | Screen canvas | 29,760 | 240×62 strip (Felucca uses 240×124, 59 KiB); the UI draws in strips |
 | GRAIN state | 4,096 | 4 × 64 slots × 16 B |
-| Spare | ~31,000 | build.py already enforces at least 8 KiB free |
+| USB audio in | 16,384 | ring buffer: 4,096 stereo frames × 4 B (93 ms) for drift and jitter |
+| SYNTH | ~2,000 | 4 tracks × a few voices of oscillator and filter state |
+| Spare | ~13,000 | build.py already enforces at least 8 KiB free; SPACE delay is the first thing to shrink |
 
 What gives way if the budget breaks: SPACE delay length first, then tape length. Both are single
 constants (`TAPE_BYTES`, `SPACE_DLY_LEN` in `src/bryo_config.h`).
@@ -192,7 +238,10 @@ audio engine (audio ISR, per 32-sample control block)
   color.c         drive, crush, follower-driven noise and its tone
   space.c         per-track delay and small reverb
   mixer.c         track level, pan, filter, master compressor, ALGORITHM routing into tapes
-  chain.c         one track = tape → grain → reso → color → space; the 4 tracks; grain shedding
+  chain.c         one track = source → grain → reso → color → space; the 4 tracks; grain shedding
+  source.c        the source_t table; picking a track's source engine
+  synth.c         SYNTH: a small subtractive voice (from eng_analog.c)
+  usb_in.c        USB audio in: the OUT endpoint ring buffer and drift correction
 
 control
   mod.c           4 slots per track; engines WAVE, RANDOM, ADSR/FOLLOW, SEQUENCER; depths; sums
@@ -234,8 +283,9 @@ Each phase ends in something you can flash and hear or see, and each is its own 
 | Phase | What | Done when |
 | --- | --- | --- |
 | 1. Skeleton | `bryo.c` boots on the kept hardware layer; the old app code is removed; silence plus a test tone; the header and an empty strip; install, UBOOT and calibration still work | it installs from the web installer and returns to stock |
-| 2. TAPE + reels | tapes play factory reels; slices on the white keys; REC and overdub (resampling); the upload tool fills reel slots | you can load, slice, record and overdub a loop |
-| 3. GRAIN | the scheduler, the sounding cap, FREEZE (key 0) | grains run on 4 tracks inside the budget |
+| 2. Sources + TAPE + reels | the source_t interface; tapes play factory reels; slices on the white keys; REC and overdub (resampling); the upload tool fills reel slots | you can load, slice, record and overdub a loop |
+| 3. USB audio in + SYNTH | the UAC OUT endpoint, drift handling, INPUT = USB; the SYNTH source | you can record your computer and play the synth onto a tape |
+| 3b. GRAIN | the scheduler, the sounding cap, FREEZE (key 0) | grains run on 4 tracks inside the budget |
 | 4. RESONATOR | strings, chromatic keys, OCT shifts | tuned feedback chords from the keys |
 | 5. COLOR + SPACE | drive, crush, noise; delay and reverb | the full chain on 4 tracks inside the budget |
 | 6. Mixer + routing | GLO mixer, filters, compressor; ALGORITHM routes track to tape | track-to-tape overdub between tracks |
