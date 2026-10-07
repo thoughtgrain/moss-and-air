@@ -2,10 +2,10 @@
 /* Bryo: buttons, keys and encoders into actions, and the LEDs. Main loop only.
  *
  * Phase 1 mapping (docs/bryo-architecture.md, PRD 2):
- *   HOME           focus the track's source (TAPE)
- *   EDIT           focus GRAIN, again RESONATOR, again GRAIN ...
- *   FX             focus COLOR, again SPACE ...
- *   LFO ENV SEQ ARP  focus modulator slot 1..4
+ *   HOME           focus the track's source (TAPE); again: its page 2
+ *   EDIT           focus GRAIN; again: GRAIN 2, RESONATOR, GRAIN ... (each device's pages, then the next device)
+ *   FX             focus COLOR; again: COLOR 2, SPACE, SPACE 2, COLOR ...
+ *   LFO ENV SEQ ARP  focus modulator slot 1..4; again: the slot's page 2
  *   GLO held       the mixer while held: white keys 1..4 pick the track, KNOB 1..4 set the levels; let go: back
  *   GLO tapped     the mixer stays up; tap again (or any page pad): back
  *   EDIT held      on the mixer: KNOB 1..4 set the selected track's channel (LOW HIGH FILT PAN); let go: levels
@@ -98,23 +98,41 @@ static void ui_leds(void)
 
 /* ----------------------------------------------------------- actions --- */
 /* a page pad: that page (the mixer closes); the visualization starts without a last-turned knob */
-static void focus_dev(uint32_t d)
+static void focus_dev(uint32_t d, uint32_t page)
 {
     ui.view = VIEW_PAGE;
     ui.chan = 0;
     ui.glo_latched = 0;
     ui.kind = FOCUS_DEV;
     ui.dev = (uint8_t)d;
+    ui.page = (uint8_t)page;
     ui.last = 0xFF;
+}
+
+/* a pad that holds devices a and b (b == a: one device): pressed again, the next page, then the next device,
+ * round; from elsewhere, a's first page */
+static void pad_devices(uint32_t a, uint32_t b)
+{
+    uint32_t d = ui.dev;
+    if (ui.view != VIEW_PAGE || ui.kind != FOCUS_DEV || (d != a && d != b)) {
+        focus_dev(a, 0);
+        return;
+    }
+    if (ui.page + 1u < pdesc_pages(DEV_P[d]))
+        focus_dev(d, ui.page + 1u);
+    else
+        focus_dev(d == a ? b : a, 0);
 }
 
 static void focus_slot(uint32_t s)
 {
+    uint32_t again = ui.view == VIEW_PAGE && ui.kind == FOCUS_SLOT && ui.slot == s;
     ui.view = VIEW_PAGE;
     ui.chan = 0;
     ui.glo_latched = 0;
     ui.kind = FOCUS_SLOT;
     ui.slot = (uint8_t)s;
+    ui.page = again ? (uint8_t)((ui.page + 1u) % pdesc_pages(ME_P[tp[sys.sel].engine[s]])) : 0u;
     ui.last = 0xFF;
 }
 
@@ -147,10 +165,10 @@ static void glo_up(void)
 static void on_button(uint32_t b)
 {
     switch (b) {
-    case B_HOME:
-        focus_dev(DEV_SRC);
+    case B_HOME:                                        /* TAPE, its page 2 */
+        pad_devices(DEV_SRC, DEV_SRC);
         break;
-    case B_EDIT:                                        /* GRAIN <-> RESONATOR; on the mixer: the channel, held */
+    case B_EDIT:                                        /* GRAIN, GRAIN 2, RESONATOR; on the mixer: the channel, held */
         if (ui.view == VIEW_MIXER) {
             ui.chan = 1;
             ui.last = 0xFF;
@@ -158,10 +176,10 @@ static void on_button(uint32_t b)
                 ui.glo_used = 1;
             break;
         }
-        focus_dev(ui.view == VIEW_PAGE && ui.kind == FOCUS_DEV && ui.dev == DEV_GRAIN ? DEV_RESO : DEV_GRAIN);
+        pad_devices(DEV_GRAIN, DEV_RESO);
         break;
-    case B_FX:                                          /* COLOR <-> SPACE */
-        focus_dev(ui.view == VIEW_PAGE && ui.kind == FOCUS_DEV && ui.dev == DEV_COLOR ? DEV_SPACE : DEV_COLOR);
+    case B_FX:                                          /* COLOR, COLOR 2, SPACE, SPACE 2 */
+        pad_devices(DEV_COLOR, DEV_SPACE);
         break;
     case B_LFO: focus_slot(0); break;
     case B_ENV: focus_slot(1); break;
@@ -203,7 +221,10 @@ static void on_knob(uint32_t c, int32_t d)
 {
     int16_t *vp;
     const pdesc_t *p = ui_page(c, &vp);
-    int16_t v = param_nudge(p, *vp, d);
+    int16_t v;
+    if (!p->label[0])                                   /* an empty knob on a page */
+        return;
+    v = param_nudge(p, *vp, d);
     if (ui.view == VIEW_MIXER && !ui.chan)
         track[c].level = (uint8_t)v;
     else

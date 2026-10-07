@@ -386,6 +386,30 @@ After phase 1, two changes to the screen, from your review:
   accents the beats; it moves nothing until the slot is assigned a depth, and setting a step's value (hold the
   slot, hold a white key, turn a knob) arrives with phase 7. RESONATOR's ROOT pictogram is now one outline with
   dividers and thin black keys, the root key filled (or a black one hollow), instead of a key-by-key drawing.
+- **Second pages, reached by pressing the same pad again.** The PRD gives each device exactly four knobs, and
+  all of them were on screen. What was missing is what the sound needs that the PRD never gave a knob, so I
+  added a page 2 where it matters. Pressing a pad again steps through its pages: EDIT goes GRAIN, GRAIN 2,
+  RESONATOR, GRAIN; FX goes COLOR, COLOR 2, SPACE, SPACE 2; HOME and the slot pads toggle page 1 and 2. The
+  header shows the page as a block and a dot after the title.
+
+  | Page 2 | Knobs | Why |
+  | --- | --- | --- |
+  | TAPE 2 | FADE, REV, HALF, GAIN | the loop's crossfade (no clicks at the seam); OP5/OP6's reverse and half speed, now visible; the record gain |
+  | GRAIN 2 | MIX, JIT, WIN, REV | without a dry/wet GRAIN always replaces the tape; where grains land, their window, the chance one plays backwards |
+  | COLOR 2 | LVL, MIX, SRR, GATE | drive adds loudness with nothing to take it back; a blend; the rate split off CRSH (which keeps the bits); where the noise's envelope opens |
+  | SPACE 2 | DMIX, RMIX, PRE, WIDE | the PRD gives no wet level for the delay or the reverb; the reverb's pre-delay; the stereo width |
+  | WAVE 2 | PHAS, TRIG, CLK, FADE | where the cycle starts, free or restarted by a key, free or locked to the tempo, a fade-in |
+  | ADSR 2 | MODE, SENS, LOOP, VEL | the PRD's "ADSR / FOLLOW" had nothing to pick between them; the follower's sensitivity; cycling; velocity |
+  | SEQ 2 | DIR, TRIG, PROB, STRT | forward, reverse, ping-pong, random; key restart; the chance a step plays; the step it starts on |
+
+  RESONATOR and RANDOM stay at one page: their four knobs already cover them. Every page 2 knob also shows in the
+  picture below, not only as a number: GAIN scales (and clips) the sample on the tape, FADE draws ramps at the
+  loop's ends, REV and HALF turn and halve the chevrons; WIN rounds the grains, REV makes some hollow, JIT adds
+  whiskers; COLOR's curve and wave include MIX and LVL, and GATE draws its line over the noise; SPACE's echoes
+  and tail scale by their mixes and the tail waits for PRE; WAVE starts at PHAS, fades in, shows the beat ticks
+  when locked and the key when restarted; ADSR draws the hits it follows, the loop, and the softest key's
+  envelope; SEQ hollows the steps PROB skips and marks STRT. A page 2 knob you turn is tagged with its value.
+  Switch-like values (REV, LOOP, TRIG, CLK, MODE, DIR, SHPE) print their names, not numbers.
 
 The controls are mapped in `docs/controls.tsv` (one row per context, control and gesture, with status and
 phase), validated by `tests/controls_check.py`, which also fails if a physical control goes unmentioned.

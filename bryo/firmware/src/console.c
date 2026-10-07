@@ -320,13 +320,13 @@ static void con_crash(void)
     con_kv("early", (int32_t)fm1_crash.early);
 }
 
-static void con_params(void)                    /* the focused track: five devices x four values, then the slots */
+static void con_params(void)                    /* the focused track: five devices' values (both pages), then the slots */
 {
     const track_params_t *p = &tp[sys.sel];
     uint32_t d, k;
     for (d = 0; d < NDEV; d++) {
         con_puts(DEV_NAME[d]);
-        for (k = 0; k < 4u; k++) {
+        for (k = 0; k < 4u * pdesc_pages(DEV_P[d]); k++) {
             con_putc(' ');
             con_dec(p->dev[d][k]);
         }
@@ -337,7 +337,7 @@ static void con_params(void)                    /* the focused track: five devic
         con_dec((int32_t)d + 1);
         con_putc(' ');
         con_puts(ME_NAME[p->engine[d]]);
-        for (k = 0; k < 4u; k++) {
+        for (k = 0; k < 4u * pdesc_pages(ME_P[p->engine[d]]); k++) {
             con_putc(' ');
             con_dec(p->mod[d][k]);
         }

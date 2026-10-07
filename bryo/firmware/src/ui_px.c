@@ -183,7 +183,7 @@ enum {
     PK_KNOB, PK_FADER, PK_ATTACK, PK_DECAY, PK_SUSTAIN, PK_RELEASE, PK_START, PK_LENGTH, PK_SPEED, PK_LAYERS,
     PK_SQUARE, PK_DOTS, PK_BOWTIE, PK_LOOP, PK_MIX, PK_DRIVE, PK_STAIRS, PK_NOISE, PK_TONE, PK_CLOCK, PK_ROOM,
     PK_SHAPE, PK_FOLD, PK_SKEW, PK_SMOOTH, PK_STEPS, PK_SLEW, PK_SWING, PK_KEYS, PK_SHELF_LO, PK_SHELF_HI, PK_FILTER,
-    PK_PAN
+    PK_PAN, PK_TOGGLE, PK_FADE, PK_WINDOW, PK_GATE, PK_PRE, PK_MODE, PK_DIR, PK_STEPAT, PK_NONE
 };
 
 /* the waveform shapes WAVE's SHAPE picks, at phase p (0..63 a cycle), x1000 */
@@ -566,6 +566,96 @@ static void px_picto(uint32_t kind, int32_t x, int32_t y, const pdesc_t *d, int3
         px_box(p - 1, cy + 1, 3, 5, c);
         break;
     }
+    case PK_TOGGLE: {                                    /* a switch: the block left (off, FREE) or right (on) */
+        int32_t on = v > d->min;
+        px_frame(x + 1, cy - 4, 20, 9, c, 1);
+        if (on)
+            px_box(x + 11, cy - 2, 8, 5, c);
+        else
+            px_frame(x + 3, cy - 2, 8, 5, c, 1);
+        break;
+    }
+    case PK_FADE: {                                      /* a crossfade: two ramps crossing, as wide as the fade */
+        int32_t w = 2 + r * 18 / 1000, x0 = cx - w / 2, x1 = x0 + w;
+        px_line(x, y + 3, x0, y + 3, c, 1);
+        px_line(x0, y + 3, x1, b, c, 1);
+        px_line(x0, b, x1, y + 3, c, 1);
+        px_line(x1, y + 3, x + 21, y + 3, m, 2);
+        px_line(x, b, x0, b, m, 2);
+        break;
+    }
+    case PK_WINDOW: {                                    /* a grain's window: square at 0, a smooth hump at 100 */
+        int32_t py = 0;
+        px_line(x, b, x + 21, b, m, 2);
+        for (i = 0; i <= 21; i++) {
+            int32_t hump = px_sin(i * 32 / 21) * 18 / 1000, yy = b - (18 * (1000 - r) + hump * r) / 1000;
+            if (i == 0 || i == 21)
+                yy = b - (r > 950 ? 0 : 18 * (1000 - r) / 1000);
+            if (i)
+                px_line(x + i - 1, py, x + i, yy, c, 1);
+            py = yy;
+        }
+        break;
+    }
+    case PK_GATE: {                                      /* a hit's envelope and the threshold over it */
+        int32_t t = b - r * 19 / 1000;
+        px_line(x + 1, b, x + 3, y + 1, c, 1);
+        px_line(x + 3, y + 1, x + 21, b, c, 1);
+        px_line(x, t, x + 21, t, c, 2);
+        break;
+    }
+    case PK_PRE: {                                       /* pre-delay: the dry hit, a gap, the tail */
+        int32_t g = x + 3 + r * 12 / 1000;
+        px_line(x + 1, b, x + 1, y + 1, c, 1);
+        px_line(x + 2, b, g, b, m, 2);
+        px_line(g, b, g + 2, y + 8, c, 1);
+        px_line(g + 2, y + 8, x + 21, b, c, 1);
+        break;
+    }
+    case PK_MODE:                                        /* KEYS: a key pressed; FLLW: an envelope over a wave */
+        if (v == d->min) {
+            px_frame(x + 6, y + 1, 10, 19, c, 1);
+            px_box(x + 8, y + 12, 6, 6, c);
+            px_line(x + 11, y - 1, x + 11, y + 4, c, 1);
+        } else {
+            for (i = 0; i <= 21; i++)
+                px_dot(x + i, cy + px_sin(i * 9) * (8 - i * 7 / 21) / 1000, m);
+            px_line(x, cy - 8, x + 21, cy - 1, c, 1);
+            px_line(x, cy + 8, x + 21, cy + 1, c, 1);
+        }
+        break;
+    case PK_DIR: {                                       /* FWD, REV, PING (both ways), RND (scattered steps) */
+        int32_t k;
+        if (v == 3) {
+            static const int8_t RY[5] = {3, 14, 7, 17, 10};
+            for (k = 0; k < 5; k++)
+                px_box(x + 1 + k * 4, y + RY[k], 3, 3, c);
+            break;
+        }
+        px_line(x + 2, cy, x + 19, cy, c, 1);
+        if (v == 0 || v == 2) {
+            px_line(x + 19, cy, x + 15, cy - 4, c, 1);
+            px_line(x + 19, cy, x + 15, cy + 4, c, 1);
+        }
+        if (v == 1 || v == 2) {
+            px_line(x + 2, cy, x + 6, cy - 4, c, 1);
+            px_line(x + 2, cy, x + 6, cy + 4, c, 1);
+        }
+        break;
+    }
+    case PK_STEPAT: {                                    /* 16 steps, the one it starts on solid */
+        int32_t k;
+        for (k = 0; k < 16; k++) {
+            int32_t gx = x + 3 + (k % 4) * 5, gy = y + 2 + (k / 4) * 5;
+            if (k + 1 == v)
+                px_box(gx, gy, 3, 3, c);
+            else
+                px_dot(gx + 1, gy + 1, m);
+        }
+        break;
+    }
+    case PK_NONE:
+        break;
     case PK_KEYS: {                                      /* an octave: one outline, the dividers, the root marked */
         /* 7 white keys of 3 dots in one frame, black keys as solid blocks over the dividers; the root is a solid
          * foot on its white key, or a black key drawn hollow. Fewer strokes than a key-by-key drawing, so it reads
@@ -590,18 +680,27 @@ static void px_picto(uint32_t kind, int32_t x, int32_t y, const pdesc_t *d, int3
     }
 }
 
-/* the pictogram of each knob of each page */
-static const uint8_t DEV_PK[NDEV][4] = {
-    {PK_START, PK_LENGTH, PK_SPEED, PK_LAYERS},      /* TAPE: START LEN SPEED DUB */
-    {PK_SQUARE, PK_DOTS, PK_KNOB, PK_BOWTIE},        /* GRAIN: SIZE DENS PITCH SPRD */
-    {PK_KEYS, PK_LOOP, PK_DECAY, PK_MIX},            /* RESONATOR: ROOT FDBK DAMP MIX */
-    {PK_DRIVE, PK_STAIRS, PK_NOISE, PK_TONE},        /* COLOR: DRIVE CRUSH NOISE TONE */
-    {PK_CLOCK, PK_LOOP, PK_ROOM, PK_DECAY},          /* SPACE: TIME FDBK SIZE DECAY */
+/* the pictogram of each knob of each page (page 2 after page 1) */
+static const uint8_t DEV_PK[NDEV][NPK] = {
+    {PK_START, PK_LENGTH, PK_SPEED, PK_LAYERS,       /* TAPE: STRT LEN SPD DUB */
+     PK_FADE, PK_TOGGLE, PK_TOGGLE, PK_FADER},       /*       FADE REV HALF GAIN */
+    {PK_SQUARE, PK_DOTS, PK_KNOB, PK_BOWTIE,         /* GRAIN: SIZE DENS TUNE SPRD */
+     PK_MIX, PK_NOISE, PK_WINDOW, PK_DOTS},          /*        MIX JIT WIN REV */
+    {PK_KEYS, PK_LOOP, PK_DECAY, PK_MIX,             /* RESONATOR: ROOT FDBK DAMP MIX */
+     PK_NONE, PK_NONE, PK_NONE, PK_NONE},
+    {PK_DRIVE, PK_STAIRS, PK_NOISE, PK_TONE,         /* COLOR: DRIV CRSH NOIS TONE */
+     PK_FADER, PK_MIX, PK_STAIRS, PK_GATE},          /*        LVL MIX SRR GATE */
+    {PK_CLOCK, PK_LOOP, PK_ROOM, PK_DECAY,           /* SPACE: TIME FDBK SIZE DEC */
+     PK_MIX, PK_MIX, PK_PRE, PK_BOWTIE},             /*        DMIX RMIX PRE WIDE */
 };
 static const uint8_t CH_PK[NCH] = {PK_SHELF_LO, PK_SHELF_HI, PK_FILTER, PK_PAN};
-static const uint8_t ME_PK[NME][4] = {
-    {PK_KNOB, PK_SHAPE, PK_FOLD, PK_SKEW},           /* WAVE: RATE SHAPE FOLD SKEW */
-    {PK_KNOB, PK_SMOOTH, PK_BOWTIE, PK_FADER},       /* RANDOM: RATE SMTH SPRD BIAS */
-    {PK_ATTACK, PK_DECAY, PK_SUSTAIN, PK_RELEASE},   /* ADSR */
-    {PK_STEPS, PK_KNOB, PK_SLEW, PK_SWING},          /* SEQ: STEPS RATE SLEW SWING */
+static const uint8_t ME_PK[NME][NPK] = {
+    {PK_KNOB, PK_SHAPE, PK_FOLD, PK_SKEW,            /* WAVE: RATE SHPE FOLD SKEW */
+     PK_CLOCK, PK_TOGGLE, PK_TOGGLE, PK_ATTACK},     /*       PHAS TRIG CLK FADE */
+    {PK_KNOB, PK_SMOOTH, PK_BOWTIE, PK_FADER,        /* RANDOM: RATE SMTH SPRD BIAS */
+     PK_NONE, PK_NONE, PK_NONE, PK_NONE},
+    {PK_ATTACK, PK_DECAY, PK_SUSTAIN, PK_RELEASE,    /* ADSR */
+     PK_MODE, PK_KNOB, PK_TOGGLE, PK_FADER},         /*      MODE SENS LOOP VEL */
+    {PK_STEPS, PK_KNOB, PK_SLEW, PK_SWING,           /* SEQ: LEN RATE SLEW SWNG */
+     PK_DIR, PK_TOGGLE, PK_DOTS, PK_STEPAT},         /*      DIR TRIG PROB STRT */
 };

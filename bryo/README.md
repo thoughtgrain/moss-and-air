@@ -24,10 +24,10 @@ What works on the panel now (every control, in every context, with what's planne
 
 | Control | What it does |
 | --- | --- |
-| HOME | the track's source (TAPE) |
-| EDIT | GRAIN, press again for RESONATOR |
-| FX | COLOR, press again for SPACE |
-| LFO ENV SEQ ARP | modulator slots 1 to 4 |
+| HOME | the track's source (TAPE); again for TAPE 2 |
+| EDIT | GRAIN; again: GRAIN 2, RESONATOR |
+| FX | COLOR; again: COLOR 2, SPACE, SPACE 2 |
+| LFO ENV SEQ ARP | modulator slots 1 to 4; again for the slot's page 2 |
 | GLO, held | the mixer while held: white keys 1 to 4 pick the track, KNOB 1 to 4 set the levels |
 | GLO, tapped | the mixer stays up; tap again or press a page pad to leave |
 | EDIT, held on the mixer | KNOB 1 to 4 set the selected track's LOW, HIGH, FILT and PAN |

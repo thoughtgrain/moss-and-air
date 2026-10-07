@@ -228,13 +228,15 @@ static void test_input(void)
     press(B_EDIT);
     check("EDIT: GRAIN", ui.kind == FOCUS_DEV && ui.dev == DEV_GRAIN);
     press(B_EDIT);
-    check("EDIT again: RESONATOR", ui.dev == DEV_RESO);
     press(B_EDIT);
-    check("EDIT again: GRAIN", ui.dev == DEV_GRAIN);
+    check("EDIT again, past GRAIN's page 2: RESONATOR", ui.dev == DEV_RESO);
+    press(B_EDIT);
+    check("EDIT again: GRAIN", ui.dev == DEV_GRAIN && ui.page == 0u);
     press(B_FX);
     check("FX: COLOR", ui.dev == DEV_COLOR);
     press(B_FX);
-    check("FX again: SPACE", ui.dev == DEV_SPACE);
+    press(B_FX);
+    check("FX again, past COLOR's page 2: SPACE", ui.dev == DEV_SPACE && ui.page == 0u);
     press(B_ENV);
     check("ENV: modulator slot 2", ui.kind == FOCUS_SLOT && ui.slot == 1u);
     press(B_HOME);
@@ -250,6 +252,32 @@ static void test_input(void)
     check("a turned knob becomes the page's last (the visualization names it)", ui.last == 2u);
     press(B_EDIT);
     check("..and a new page starts without one", ui.last == 0xFFu);
+    press(B_HOME);
+    press(B_HOME);
+    check("HOME again: TAPE's page 2", ui.kind == FOCUS_DEV && ui.dev == DEV_SRC && ui.page == 1u);
+    press(B_EDIT);
+    check("EDIT from elsewhere: GRAIN, page 1", ui.dev == DEV_GRAIN && ui.page == 0u);
+    press(B_EDIT);
+    check("..again: GRAIN's page 2", ui.dev == DEV_GRAIN && ui.page == 1u);
+    host_enc[panel.enc[EN_K1]] = -30;
+    ui_input();
+    check("..whose KNOB 1 is MIX (100 -> 70), not SIZE", tp[0].dev[DEV_GRAIN][4] == 70 && tp[0].dev[DEV_GRAIN][0] == 80);
+    tp[0].dev[DEV_GRAIN][4] = 100;
+    press(B_EDIT);
+    check("..again: RESONATOR (one page)", ui.dev == DEV_RESO && ui.page == 0u);
+    press(B_EDIT);
+    check("..again: back to GRAIN, page 1", ui.dev == DEV_GRAIN && ui.page == 0u);
+    press(B_FX);
+    press(B_FX);
+    press(B_FX);
+    press(B_FX);
+    check("FX: COLOR, COLOR 2, SPACE, SPACE 2", ui.dev == DEV_SPACE && ui.page == 1u);
+    press(B_LFO);
+    press(B_LFO);
+    check("a slot pad again: the slot's page 2", ui.kind == FOCUS_SLOT && ui.slot == 0u && ui.page == 1u);
+    press(B_ARP);
+    press(B_ARP);
+    check("RANDOM has one page: again stays on it", ui.slot == 3u && ui.page == 0u);
     press(B_HOME);
 
     hold(B_GLO);                                         /* GLO held + white key 3: TRACK 3 */
@@ -378,12 +406,22 @@ static void screens_in(const char *pal)
     turn(1, -40);
     turn(3, 30);
     shot(pal, "tape_loop");
+    press(B_HOME);                                       /* TAPE 2: FADE 60 ms, REV on, GAIN +6 dB */
+    turn(0, 50);
+    turn(1, 1);
+    turn(3, 6);
+    shot(pal, "tape2");
     press(B_EDIT);
     shot(pal, "grain");
     turn(1, 40);                                         /* DENS 80 %, PITCH +7, SPREAD 90 % */
     turn(2, 7);
     turn(3, 60);
     shot(pal, "grain_busy");
+    press(B_EDIT);                                       /* GRAIN 2: JIT 60, WIN 100, REV 40 */
+    turn(1, 40);
+    turn(2, 50);
+    turn(3, 40);
+    shot(pal, "grain2");
     press(B_EDIT);
     shot(pal, "resonator");
     turn(1, 35);                                         /* FDBK 95: sharp peaks */
@@ -400,11 +438,22 @@ static void screens_in(const char *pal)
     shot(pal, "color_noise");
     turn(3, -30);                                        /* TONE 20: the tone filter */
     shot(pal, "color_tone");
+    press(B_FX);                                         /* COLOR 2: LVL -6 dB, MIX 70, SRR 60, GATE 40 */
+    turn(0, -6);
+    turn(1, -30);
+    turn(2, 60);
+    turn(3, 40);
+    shot(pal, "color2");
     press(B_FX);
     shot(pal, "space");
     turn(1, 40);                                         /* FDBK 70 */
     turn(3, 40);                                         /* DECAY 80 */
     shot(pal, "space_long");
+    press(B_FX);                                         /* SPACE 2: DMIX 80, RMIX 60, PRE 120 ms */
+    turn(0, 50);
+    turn(1, 30);
+    turn(2, 100);
+    shot(pal, "space2");
     for (s = 0; s < NSLOT; s++) {
         static const uint8_t B[NSLOT] = {B_LFO, B_ENV, B_SEQ, B_ARP};
         char nm[8] = {'m', 'o', 'd', (char)('1' + s), 0};
@@ -416,11 +465,28 @@ static void screens_in(const char *pal)
     turn(2, 40);
     turn(3, 50);
     shot(pal, "mod1_tri_fold");
+    press(B_LFO);                                        /* WAVE 2: PHAS 90, TRIG KEY, CLK BPM, FADE 40 */
+    turn(0, 90);
+    turn(1, 1);
+    turn(2, 1);
+    turn(3, 40);
+    shot(pal, "mod1_p2");
+    press(B_ENV);                                        /* ADSR 2: FLLW, LOOP on, VEL 40 */
+    press(B_ENV);
+    turn(0, 1);
+    turn(2, 1);
+    turn(3, 40);
+    shot(pal, "mod2_p2");
     press(B_SEQ);
     turn(0, -4);                                         /* SEQ: LEN 12, SLEW 60, SWING 50 */
     turn(2, 60);
     turn(3, 50);
     shot(pal, "mod3_seq");
+    press(B_SEQ);                                        /* SEQ 2: PING, PROB 70, STRT 5 */
+    turn(0, 2);
+    turn(2, -30);
+    turn(3, 4);
+    shot(pal, "mod3_p2");
     press(B_ARP);
     turn(1, 40);                                         /* RANDOM: SMOOTH 40 */
     shot(pal, "mod4_smooth");

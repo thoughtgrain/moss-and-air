@@ -29,6 +29,7 @@ static struct {
     uint8_t dev;                     /* DEV_* when FOCUS_DEV */
     uint8_t slot;                    /* 0..3 when FOCUS_SLOT */
     uint8_t view;
+    uint8_t page;                    /* the focused device's or slot's page, 0 or 1 (its pad pressed again) */
     uint8_t hot, hot_t;              /* the knob just turned (its dial and value in the accent), frames left */
     uint8_t last;                    /* the page's most recently turned knob (0..3; 0xFF none since the page opened):
                                       * the visualization draws its part in the accent and names it */
@@ -79,6 +80,7 @@ static const pdesc_t *ui_page(uint32_t k, int16_t **vp)
         *vp = &lv[k];
         return &LEVEL[k];
     }
+    k += 4u * ui.page;
     if (ui.kind == FOCUS_SLOT) {
         *vp = &p->mod[ui.slot][k];
         return &ME_P[p->engine[ui.slot]][k];
@@ -104,6 +106,8 @@ static void draw_head(void)
     char ti[16], box[4] = {'T', (char)('1' + sys.sel), 0, 0}, bpm[8];
     uint32_t sig;
     int slot = ui.kind == FOCUS_SLOT && ui.view == VIEW_PAGE;
+    uint32_t pages = ui.view != VIEW_PAGE ? 1u
+                   : pdesc_pages(slot ? ME_P[tp[sys.sel].engine[ui.slot]] : DEV_P[ui.dev]);
     if (ui.view == VIEW_MIXER)
         str_cpy(ti, ui.chan ? "CHANNEL" : "MIXER", sizeof ti);
     else
@@ -113,7 +117,7 @@ static void draw_head(void)
         box[1] = (char)('1' + ui.slot);
     }
     fmt_int(bpm, sys.bpm);
-    sig = hash_str(hash_str(hash_str(2166136261u, ti), bpm), box) + sys.playing * 7u + ((ui.rec >> sys.sel) & 1u) * 131u +
+    sig = hash_str(hash_str(hash_str(2166136261u, ti), bpm), box) + pages * 977u + ui.page * 61u + sys.playing * 7u + ((ui.rec >> sys.sel) & 1u) * 131u +
           ux.theme * 3u;
     if (!ui.force && sig == ui.sig_head)
         return;
@@ -125,6 +129,16 @@ static void draw_head(void)
         px_frame(0, 1, bw, 11, px_ink, 1);
         px_text(2, 3, PXF_5, box, px_ink);
         x = px_text(x, 3, PXF_5B, ti, px_ink);
+        if (pages > 1u) {                                  /* the pages, side by side: the shown one a block, the other a dot */
+            uint32_t g;
+            for (g = 0; g < pages; g++) {
+                if (g == ui.page)
+                    px_box(x + 2 + (int32_t)g * 4, 5, 3, 3, px_ink);
+                else
+                    px_dot(x + 3 + (int32_t)g * 4, 6, px_ink);
+            }
+            x += 2 + 4 * (int32_t)pages;
+        }
         bar = x + 1;
         px_box(bar, 1, 120 - bar, 11, px_ink);
         x = 118 - px_text_w(PXF_5, bpm);
@@ -162,7 +176,7 @@ static void draw_strip(void)
         if (ui.view == VIEW_MIXER && !ui.chan)          /* the faders carry the meters */
             sig = (sig ^ (uint32_t)(meter_w(track_rt[k].peak, 19) | track[k].mute << 8)) * 16777619u;
     }
-    sig += (ui.last < 4u ? ui.last + 1u : 0u) * 7919u + sys.sel * 104729u + ui.view * 31u + ui.chan * 5u + ui.kind * 131u +
+    sig += (ui.last < 4u ? ui.last + 1u : 0u) * 7919u + sys.sel * 104729u + ui.view * 31u + ui.page * 263u + ui.chan * 5u + ui.kind * 131u +
            ui.dev * 1031u + (ui.kind == FOCUS_SLOT ? tp[sys.sel].engine[ui.slot] * 65537u : 0u);
     if (!ui.force && sig == ui.sig_strip)
         return;
@@ -174,7 +188,8 @@ static void draw_strip(void)
         const pdesc_t *d = ui_page(k, &vp);
         int32_t x = 30 * (int32_t)k, v = *vp;
         uint32_t pk = ui.view == VIEW_MIXER ? CH_PK[k]
-                    : ui.kind == FOCUS_SLOT ? ME_PK[tp[sys.sel].engine[ui.slot]][k] : DEV_PK[ui.dev][k];
+                    : ui.kind == FOCUS_SLOT ? ME_PK[tp[sys.sel].engine[ui.slot]][4u * ui.page + k]
+                    : DEV_PK[ui.dev][4u * ui.page + k];
         int lvl = ui.view == VIEW_MIXER && !ui.chan, mute = lvl && track[k].mute;
         char val[12];
         const char *unit;

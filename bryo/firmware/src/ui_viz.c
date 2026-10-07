@@ -60,6 +60,30 @@ static void vz_label(int32_t x, const char *s, int on)
         px_text(x0, DLBL, PXF_3, s, px_ink);
 }
 
+/* the last-turned knob of a page 2 as an inverted tag, "MIX 80%", its right end at xr (in 3 x 5) */
+static void vz_ktag(int32_t xr, int32_t y, const pdesc_t *d, int32_t v)
+{
+    char b[16], val[12];
+    const char *u;
+    param_format(d, v, val, &u);
+    str_cpy(b, d->label, sizeof b);
+    str_cpy(b + str_len(b), " ", 2);
+    str_cpy(b + str_len(b), val, 8);
+    str_cpy(b + str_len(b), u, 4);
+    px_tag(xr - px_text_w(PXF_3, b) - 1, y, PXF_3, b, px_ink, px_bg);
+}
+
+/* a gain in dB as a factor, x1000 (2x per 6 dB, straight between) */
+static int32_t db_x1000(int32_t db)
+{
+    int32_t f = 1000;
+    for (; db >= 6; db -= 6)
+        f *= 2;
+    for (; db <= -6; db += 6)
+        f /= 2;
+    return db >= 0 ? f + f * db / 6 : f - f * (-db) / 12;
+}
+
 /* a polyline through n points of xs, ys */
 static void vz_poly(const int32_t *xs, const int32_t *ys, int32_t n, uint16_t c, int32_t step)
 {
@@ -100,6 +124,8 @@ static void viz_tape(const int16_t *v, uint32_t f)
      * chevrons and DUB as the layers kept. */
     int32_t r0 = 6, r1 = 114, rw = r1 - r0, top = 20, bot = 35, mid = 27, k, x;
     int32_t x0 = r0 + v[0] * rw / 100, x1 = x0 + v[1] * rw / 100, lit = (v[3] + 33) / 34;
+    int32_t sp = v[2] * (v[5] ? -1 : 1) / (v[6] ? 2 : 1), gain = db_x1000(v[7]);   /* REV, HALF; GAIN */
+    int32_t fw = 1 + v[4] * 8 / 100;                   /* FADE (drawn wider than to scale, so it shows) */
     if (x1 > r1)
         x1 = r1;
     vz_reel(36, 9);
@@ -107,7 +133,7 @@ static void viz_tape(const int16_t *v, uint32_t f)
     px_line(r0, top, r1, top, px_ink, 1);                             /* the run's edges */
     px_line(r0, bot, r1, bot, px_ink, 1);
     for (x = r0 + 1; x < r1; x++) {                                    /* the sample (phase 2: the take) */
-        int32_t a = tape_env(sys.sel, (x - r0) * 1000 / rw) * 6 / 1000;
+        int32_t a = clamp(tape_env(sys.sel, (x - r0) * 1000 / rw) * 6 / 1000 * gain / 1000, 0, 6);   /* (clips) */
         px_box(x, mid - a, 1, 2 * a + 1, x >= x0 && x <= x1 ? px_ink : px_dim);
     }
     for (k = 0; k < 2; k++) {                                          /* the brackets, 2 dots wide when turned */
@@ -116,12 +142,16 @@ static void viz_tape(const int16_t *v, uint32_t f)
         px_line(bx, top - 2, bx + 2 * s, top - 2, px_ink, 1);
         px_line(bx, bot + 2, bx + 2 * s, bot + 2, px_ink, 1);
     }
+    if (v[4] && x1 - x0 > 2 * fw + 2) {               /* FADE: the ramps at the loop's ends, dotted */
+        px_line(x0 + 1, bot - 1, x0 + fw, top + 1, px_ink, 2);
+        px_line(x1 - fw, top + 1, x1 - 1, bot - 1, px_ink, 2);
+    }
     {   /* the playhead: a triangle over the run, pointing down at where playing starts */
-        int32_t px = v[2] < 0 ? x1 - 3 : x0 + 3;
+        int32_t px = sp < 0 ? x1 - 3 : x0 + 3;
         for (k = 0; k < 3; k++)
             px_box(px - 2 + k, top - 5 + k, 5 - 2 * k, 1, px_ink);   /* (rows 15..17: under the reels' flanges) */
     }
-    px_chevrons(60, 5, v[2], px_ink);                                  /* SPD, between the reels */
+    px_chevrons(60, 5, sp, px_ink);                                    /* SPD (with REV, HALF), between the reels */
     for (k = 0; k < 3; k++)                                            /* DUB: the layers kept, under it */
         px_line(52 + k * 2, 16 - k * 2, 68 - k * 2, 16 - k * 2, k < lit ? px_ink : px_dim, k < lit ? 1 : 2);
     vz_label(x0, "IN", f == 0u);
@@ -129,6 +159,8 @@ static void viz_tape(const int16_t *v, uint32_t f)
         vz_label(x1, "OUT", f == 1u);
     if (f == 3u || f == 2u)
         vz_label(60, f == 3u ? "DUB" : "SPD", 1);
+    if (f >= 4u && f < 8u)
+        vz_ktag(78, DLBL - 1, &DEV_P[DEV_SRC][f], v[f]);
 }
 
 /* ------------------------------------------------------------- GRAIN --- */
@@ -141,7 +173,7 @@ static void viz_grain(const int16_t *v, uint32_t f)
     const int16_t *tv = tp[sys.sel].dev[DEV_SRC];
     int32_t n = 1 + v[1] * 24 / 100, i, x, g, gw = DW - 6;            /* (L and R at the right) */
     int32_t start = tv[0] * 10, len = tv[1] * 10, loop_ms = len * TAPE_MS / 1000, oct = 1000, span;
-    int32_t gx[25], gy[25], mid = 11, amp = 10, lane = 28;
+    int32_t gx[25], gy[25], mid = 11, amp = 10, lane = 28, jit = v[5] * 6 / 100, taper;
     char b[16];
     for (i = 0; i < v[2]; i++) oct = oct * 1059 / 1000;               /* 2^(st/12), 1/1000 */
     for (i = 0; i > v[2]; i--) oct = oct * 1000 / 1059;
@@ -160,15 +192,36 @@ static void viz_grain(const int16_t *v, uint32_t f)
     px_line(DX0, lane, DX0 + gw, lane, px_dim, 2);                     /* the stereo lane */
     px_text(DX1 - 2, lane - 7, PXF_3, "L", px_ink);
     px_text(DX1 - 2, lane + 3, PXF_3, "R", px_ink);
-    for (g = 0; g < n; g++)
-        px_box(gx[g], lane - 1 + gy[g] * 5 / 1000, span, 2, px_ink);
+    /* each grain: 3 rows, its top and bottom rows cut in from the ends as WIN smooths it (square at 0); hollow
+     * when it plays backwards (REV: that share of them); JIT as dotted whiskers, where it may land instead */
+    taper = span * v[6] / 250;
+    for (g = 0; g < n; g++) {
+        int32_t yy = lane - 1 + gy[g] * 5 / 1000, back = (g * 37 + 11) % 100 < v[7];
+        if (back) {
+            px_line(gx[g], yy, gx[g] + span - 1, yy, px_ink, 1);
+            px_line(gx[g] + taper, yy - 1, gx[g] + span - 1 - taper, yy - 1, px_ink, 1);
+            px_line(gx[g] + taper, yy + 1, gx[g] + span - 1 - taper, yy + 1, px_ink, 1);
+            px_dot(gx[g], yy, px_bg);                                  /* (an arrow's notch: it runs right to left) */
+        } else {
+            px_box(gx[g], yy, span, 1, px_ink);
+            px_box(gx[g] + taper, yy - 1, span - 2 * taper, 1, px_ink);
+            px_box(gx[g] + taper, yy + 1, span - 2 * taper, 1, px_ink);
+        }
+        if (jit) {
+            px_line(gx[g] - jit, yy, gx[g] - 1, yy, px_ink, 2);
+            px_line(gx[g] + span, yy, gx[g] + span - 1 + jit, yy, px_ink, 2);
+        }
+    }
     fmt_int(b, n);
     str_cpy(b + str_len(b), " GRAINS", 8);
     if (f == 1u)
         px_tag(1, DLBL - 1, PXF_3, b, px_ink, px_bg);
     else
         px_text(2, DLBL, PXF_3, b, px_ink);
-    px_text(118 - px_text_w(PXF_3, "DEMO WAVE"), DLBL, PXF_3, "DEMO WAVE", px_dim);   /* (phase 2: the tape) */
+    if (f >= 4u && f < 8u)
+        vz_ktag(118, DLBL - 1, &DEV_P[DEV_GRAIN][f], v[f]);
+    else
+        px_text(118 - px_text_w(PXF_3, "DEMO WAVE"), DLBL, PXF_3, "DEMO WAVE", px_dim);   /* (phase 2: the tape) */
 }
 
 /* --------------------------------------------------------- RESONATOR --- */
@@ -228,19 +281,26 @@ static void viz_reso(const int16_t *v, uint32_t f)
 }
 
 /* ------------------------------------------------------------- COLOR --- */
-/* DRIVE 0..100 -> gain 1..16 into the soft clip; CRUSH 0..100 -> 16..2 bits and a hold of 1..12 samples (the
- * rate); NOISE: noise riding the signal's envelope; TONE: a one-pole low-pass on that noise */
-static int32_t color_shape(int32_t x, const int16_t *v)             /* Q15 in -> Q15 out */
+/* DRIVE 0..100 -> gain 1..16 into the soft clip; CRUSH 0..100 -> 16..2 bits; SRR 0..100 -> a hold of 1..12
+ * samples (the rate); NOISE: noise riding the signal's envelope where it is over GATE; TONE: a one-pole low-pass
+ * on that noise; MIX: the dry and the coloured signal; LVL: the output in dB */
+static int32_t color_shape(int32_t x, const int16_t *v)             /* Q15 in -> Q15 out (before MIX, LVL) */
 {
     int32_t g = 1 + v[0] * 15 / 100, y = softclip(x * g) * 32767 / softclip(32767 * g);
     int32_t bits = 16 - v[1] * 14 / 100, q = 1 << (16 - bits);
     return q > 1 ? (y / q) * q : y;
 }
 
+static int32_t color_out(int32_t x, int32_t shaped, const int16_t *v)   /* MIX, then LVL */
+{
+    return (x + (shaped - x) * v[5] / 100) * db_x1000(v[4]) / 1000;
+}
+
 static void viz_color(const int16_t *v, uint32_t f)
 {
-    static const char *const NAME[4] = {"DRIV", "CRSH", "NOIS", "TONE"};
-    int32_t bx = DX0, bw = 32, wx = DX0 + 37, ww = DX1 - wx, i, py = 0, pi = 0, held = 0, hold = 1 + v[1] * 11 / 100;
+    static const char *const NAME[8] = {"DRIV", "CRSH", "NOIS", "TONE", "LVL", "MIX", "SRR", "GATE"};
+    int32_t bx = DX0, bw = 32, wx = DX0 + 37, ww = DX1 - wx, i, py = 0, pi = 0, held = 0, hold = 1 + v[6] * 11 / 100;
+    int32_t gate = v[7] * 327;                                         /* GATE: the envelope the noise opens at */
     int32_t lp = 0, a = 3 * (100 - v[3]) / 4 + 8, cy = DMID + 1, amp = DH / 2;   /* TONE: the low-pass step */
     px_frame(bx, DY0, bw, DH + 2, px_dim, 2);                          /* the inset */
     if (f == 3u) {                                                     /* the tone filter's response */
@@ -251,15 +311,22 @@ static void viz_color(const int16_t *v, uint32_t f)
                 px_line(bx + 1 + i, pyc, bx + 2 + i, y, px_ink, 1);
             pyc = y;
         }
-    } else if (f == 2u) {                                              /* the noise: dots, as many as NOISE */
+    } else if (f == 2u || f == 7u) {                                   /* the noise: dots, as many as NOISE */
+        int32_t gy = DY1 - v[7] * (DH - 2) / 100;                       /* .. none under GATE's line */
         vz_seed = 99u;
-        for (i = 0; i < 4 + v[2] * 2; i++)
-            px_dot(bx + 2 + (int32_t)(vz_rand() % (uint32_t)(bw - 4)), DY0 + 2 + (int32_t)(vz_rand() % (uint32_t)(DH - 2)), px_ink);
+        for (i = 0; i < 4 + v[2] * 2; i++) {
+            int32_t yy = DY0 + 2 + (int32_t)(vz_rand() % (uint32_t)(DH - 2)), xx = bx + 2 + (int32_t)(vz_rand() % (uint32_t)(bw - 4));
+            if (yy < gy)
+                px_dot(xx, yy, px_ink);
+        }
+        if (v[7])
+            px_line(bx + 1, gy, bx + bw - 2, gy, px_ink, 2);
     } else {                                                           /* the transfer curve */
         int32_t pyc = 0;
         px_line(bx + 2, cy, bx + bw - 3, cy, px_dim, 2);
         for (i = 0; i < bw - 4; i++) {
-            int32_t x = (i * 2 - (bw - 5)) * 32767 / (bw - 5), y = cy - color_shape(x, v) * (amp - 3) / 32767;
+            int32_t x = (i * 2 - (bw - 5)) * 32767 / (bw - 5);
+            int32_t y = cy - clamp(color_out(x, color_shape(x, v), v), -32767, 32767) * (amp - 3) / 32767;
             if (i)
                 px_line(bx + 1 + i, pyc, bx + 2 + i, y, px_ink, 1);
             pyc = y;
@@ -270,11 +337,12 @@ static void viz_color(const int16_t *v, uint32_t f)
     for (i = 0; i <= ww; i++) {                                        /* two cycles of a sine: in dotted, out solid */
         int32_t s = sine_i((uint32_t)i * (0xFFFFFFFFu / (uint32_t)ww) * 2u), y, yi, nz, env;
         if (i % hold == 0)
-            held = color_shape(s, v);                                  /* CRUSH's rate: hold a value */
+            held = color_shape(s, v);                                  /* SRR: hold a value */
         env = s < 0 ? -s : s;
         nz = ((int32_t)(vz_rand() & 0xFFFF) - 32768) * v[2] / 100;      /* NOISE, before TONE */
         lp += (nz - lp) * a / 100;
-        y = cy - clamp(held + (lp * env >> 16), -32767, 32767) * (amp - 1) / 32767;
+        y = color_out(s, held + (env > gate ? lp * env >> 16 : 0), v);
+        y = cy - clamp(y, -32767, 32767) * (amp - 1) / 32767;
         yi = cy - s * (amp - 1) / 32767;
         if (i) {
             if (i % 2 == 0)
@@ -285,7 +353,7 @@ static void viz_color(const int16_t *v, uint32_t f)
         pi = yi;
     }
     (void)pi;
-    vz_label(bx + bw / 2, f < 4u ? NAME[f] : "CURVE", f < 4u);
+    vz_label(bx + bw / 2, f < 8u ? NAME[f] : "CURVE", f < 8u);
     vz_label(wx + ww / 2, "IN : OUT", 0);
 }
 
@@ -294,13 +362,19 @@ static void viz_color(const int16_t *v, uint32_t f)
  * and falling over DECAY (0.2..4.2 s) */
 static void viz_space(const int16_t *v, uint32_t f)
 {
-    int32_t t, x, py = DY1, rise = 10 + v[2] * 80 / 100, len = 200 + v[3] * 40, g = 32767, first = -1;
+    /* page 2: DMIX scales the echoes, RMIX the tail, PRE holds the tail back (ms) */
+    int32_t t, x, py = DY1, rise = 10 + v[2] * 80 / 100, len = 200 + v[3] * 40, g = 32767, first = -1, pre = v[6];
     px_line(DX0, DY1 + 1, DX1, DY1 + 1, px_dim, 2);
     for (x = DX0; x <= DX1; x++) {                                     /* the tail: a dim hatch under its edge */
-        int32_t ms = (x - DX0) * 2000 / DW, e = ms < rise ? ms * 1000 / rise : 1000 - (ms - rise) * 1000 / len, y;
+        int32_t ms = (x - DX0) * 2000 / DW - pre, e, y;
+        if (ms < 0) {
+            py = DY1;
+            continue;
+        }
+        e = ms < rise ? ms * 1000 / rise : 1000 - (ms - rise) * 1000 / len;
         if (e <= 0)
             break;
-        e = e * e / 1000 * 55 / 100;
+        e = e * e / 1000 * v[5] / 100;
         y = DY1 - e * DH / 1000;
         if ((x & 1) == 0 && y < DY1)
             px_line(x, y + 2, x, DY1, px_dim, 2);
@@ -314,16 +388,18 @@ static void viz_space(const int16_t *v, uint32_t f)
         int32_t h;
         g = (t == v[0]) ? 26000 : g * v[1] / 100;
         x = DX0 + t * DW / 2000;
-        h = g * DH / 32767;
+        h = g * DH / 32767 * v[4] / 100;
         if (first < 0)
             first = x;
         px_line(x, DY1, x, DY1 - h, px_ink, 1);
-        vz_node(x, DY1 - h, f <= 1u);
+        vz_node(x, DY1 - h, f <= 1u || f == 4u);
     }
+    if (f >= 4u && f < 8u)
+        vz_ktag(118, DY0 - 1, &DEV_P[DEV_SPACE][f], v[f]);
     px_text(DX0, DLBL, PXF_3, "DRY", px_ink);
     if (first >= DX0 + 20 && first < DX1 - 20)
-        vz_label(first + 2, f == 1u ? "FDBK" : "ECHO", f <= 1u);
-    vz_label(DX1 - 10, f == 2u ? "SIZE" : f == 3u ? "DEC" : "TAIL", f >= 2u);
+        vz_label(first + 2, f == 1u ? "FDBK" : "ECHO", f <= 1u || f == 4u);
+    vz_label(DX1 - 10, f == 2u ? "SIZE" : f == 3u ? "DEC" : "TAIL", (f >= 2u && f <= 3u) || f == 5u || f == 6u);
 }
 
 /* ------------------------------------------------------------- MODS --- */
@@ -331,10 +407,19 @@ static void viz_wave(const int16_t *v, uint32_t f)
 {
     /* SHAPE 0 sine, 1 triangle, 2 square; SKEW moves the peak (-100..100); FOLD folds the top back (0..100) */
     static const char *const NAME[3] = {"SINE", "TRIANGLE", "SQUARE"};
-    int32_t i, py = DMID, sk = clamp(500 + v[3] * 5, 50, 950), sh = clamp(v[1], 0, 2);
+    /* page 2: PHAS starts it later in its cycle; FADE fades it in over that share of the first cycle; CLK BPM puts
+     * the beat ticks it locks to on the line; TRIG KEY marks the key that restarts it */
+    int32_t i, py = DMID, sk = clamp(500 + v[3] * 5, 50, 950), sh = clamp(v[1], 0, 2), fade = v[7] * DW / 200;
     px_line(DX0, DMID, DX1, DMID, px_dim, 2);
+    if (v[6])
+        for (i = 0; i <= 8; i++)
+            px_line(DX0 + i * DW / 8, DMID - 1, DX0 + i * DW / 8, DMID + 1, px_ink, 1);
+    if (v[5]) {                                                        /* a key going down, at the start */
+        px_box(DX0, DY0 - 1, 3, 4, px_ink);
+        px_line(DX0 + 1, DY0 + 3, DX0 + 1, DY1, px_ink, 3);
+    }
     for (i = 0; i <= DW; i++) {
-        int32_t p = (i * 2000 / DW) % 1000, q, y;                       /* two cycles */
+        int32_t p = (i * 2000 / DW + v[4] * 1000 / 360) % 1000, q, y;   /* two cycles, from PHAS */
         q = p < sk ? p * 500 / sk : 500 + (p - sk) * 500 / (1000 - sk); /* SKEW: a warped phase */
         if (sh == 0)
             y = sine_i((uint32_t)q * 4294967u);
@@ -345,6 +430,8 @@ static void viz_wave(const int16_t *v, uint32_t f)
         y = y * (100 + v[2] * 3) / 100;                                 /* FOLD: overdrive, then fold back */
         while (y > 32767 || y < -32767)
             y = y > 0 ? 65534 - y : -65534 - y;
+        if (i < fade)
+            y = y * i / fade;
         y = DMID - y * (DH / 2 - 1) / 32767;
         if (i)
             px_line(DX0 + i - 1, py, DX0 + i, y, px_ink, 1);
@@ -353,6 +440,8 @@ static void viz_wave(const int16_t *v, uint32_t f)
     vz_label(DX0 + 14, NAME[sh], f == 1u);
     if (f == 2u || f == 3u)
         vz_label(DX1 - 10, f == 2u ? "FOLD" : "SKEW", 1);
+    if (f >= 4u && f < 8u)
+        vz_ktag(118, DLBL - 1, &ME_P[ME_WAVE][f], v[f]);
 }
 
 static void viz_random(const int16_t *v, uint32_t f)
@@ -394,6 +483,23 @@ static void viz_adsr(const int16_t *v, uint32_t f)
     ys[2] = ys[3] = base - v[2] * (base - top) / 100;
     ys[4] = base;
     px_line(DX0, base + 1, DX1, base + 1, px_dim, 2);
+    /* page 2: FLLW draws the tape's hits it follows, dim, behind; VEL the softest key's envelope, dotted; LOOP the
+     * attack and decay coming round again, dotted, where the sustain would hold */
+    if (v[4])
+        for (k = 0; k < 8; k++) {
+            int32_t hx = DX0 + 2 + k * (DW - 4) / 8, hh = (k & 1 ? 12 : 22) * v[5] / 100 + 4;
+            px_line(hx, base, hx, base - hh, px_dim, 1);
+        }
+    if (v[7]) {
+        int32_t gy[5], m;
+        for (m = 0; m < 5; m++)
+            gy[m] = base - (base - ys[m]) * (100 - v[7]) / 100;
+        vz_poly(xs, gy, 5, px_ink, 2);
+    }
+    if (v[6]) {
+        int32_t lx[3] = {xs[2], xs[2] + (xs[1] - xs[0]), xs[2] + (xs[2] - xs[0])}, ly[3] = {ys[2], ys[1], ys[2]};
+        vz_poly(lx, ly, 3, px_ink, 2);
+    }
     vz_poly(xs, ys, 5, px_ink, 1);
     for (k = 1; k < 4; k++) {                                          /* nodes, and drop lines to the floor */
         px_line(xs[k], ys[k] + 2, xs[k], base, px_dim, 2);
@@ -403,6 +509,10 @@ static void viz_adsr(const int16_t *v, uint32_t f)
     vz_node(xs[4], ys[4], 1);
     for (k = 0; k < 4; k++)                                            /* the stages, named under their stretch */
         vz_label((xs[k] + xs[k + 1]) / 2 + 1, L[k], f == (uint32_t)k);
+    if (f >= 4u && f < 8u)
+        vz_ktag(118, DY0 - 1, &ME_P[ME_ADSR][f], v[f]);
+    else if (v[4])
+        px_text(118 - px_text_w(PXF_3, "FOLLOW"), DY0, PXF_3, "FOLLOW", px_ink);
 }
 
 static void viz_seq(const int16_t *v, uint32_t f)
@@ -420,8 +530,15 @@ static void viz_seq(const int16_t *v, uint32_t f)
         int32_t y = floor - st[k] * h / 100;
         if (on) {
             px_frame(x, top, bw, h + 1, px_dim, 2);                    /* the step's range, dotted */
-            px_box(x + 1, y, bw - 2, floor - y + 1, px_ink);           /* its value */
+            if ((k * 37 + 11) % 100 < v[6])                            /* its value (PROB: the steps that won't */
+                px_box(x + 1, y, bw - 2, floor - y + 1, px_ink);       /* play this time are hollow) */
+            else
+                px_frame(x + 1, y, bw - 2, floor - y + 1, px_ink, 1);
             px_box(x, y, bw, 1, px_ink);                               /* a cap as wide as the step */
+            if (k + 1 == v[7]) {                                       /* STRT: a triangle over the first step */
+                px_box(x, top - 2, bw, 1, px_ink);
+                px_box(x + 1, top - 1, bw - 2, 1, px_ink);
+            }
             if (v[2] && k)                                             /* SLEW: the glide from the last value */
                 px_line(px, py, x + v[2] * (bw - 1) / 100, y, px_ink, 1);
             px = x + bw - 1;
@@ -438,6 +555,10 @@ static void viz_seq(const int16_t *v, uint32_t f)
     if (f < 4u) {
         static const char *const L[4] = {"LEN", "RATE", "SLEW", "SWNG"};
         px_tag(118 - px_text_w(PXF_3, L[f]) - 1, DLBL - 1, PXF_3, L[f], px_ink, px_bg);
+    } else if (f < 8u) {
+        vz_ktag(118, DLBL - 1, &ME_P[ME_SEQ][f], v[f]);
+    } else if (v[4]) {                                                 /* not forward: the order, named */
+        px_text(118 - px_text_w(PXF_3, ME_P[ME_SEQ][4].names[v[4]]), DLBL, PXF_3, ME_P[ME_SEQ][4].names[v[4]], px_ink);
     }
 }
 
@@ -525,11 +646,11 @@ static uint32_t viz_sig(void)
             h = (h ^ (uint32_t)(tp[sys.sel].ch[t] + 32768)) * 16777619u;
         return h + ui.chan * 977u;
     }
-    for (k = 0; k < 4u; k++) {
-        int16_t *vp;
-        ui_page(k, &vp);
-        h = (h ^ (uint32_t)(*vp + 32768)) * 16777619u;
+    for (k = 0; k < NPK; k++) {                                        /* both pages: page 2 shows in the picture */
+        const int16_t *v = ui.kind == FOCUS_SLOT ? tp[sys.sel].mod[ui.slot] : tp[sys.sel].dev[ui.dev];
+        h = (h ^ (uint32_t)(v[k] + 32768)) * 16777619u;
     }
+    h += ui.page * 389u;
     if (ui.kind == FOCUS_SLOT && tp[sys.sel].engine[ui.slot] == ME_SEQ)   /* SEQ draws its step values */
         for (k = 0; k < 16u; k++)
             h = (h ^ (uint32_t)(uint8_t)tp[sys.sel].steps[ui.slot][k]) * 16777619u;
@@ -540,9 +661,8 @@ static uint32_t viz_sig(void)
 
 static void draw_viz(void)
 {
-    uint32_t sig = viz_sig(), f = ui.last;
-    int16_t v[4], *vp;
-    uint32_t k;
+    uint32_t sig = viz_sig(), f = ui.last < 4u ? 4u * ui.page + ui.last : 0xFFu;
+    const int16_t *v = ui.kind == FOCUS_SLOT ? tp[sys.sel].mod[ui.slot] : tp[sys.sel].dev[ui.dev];   /* both pages */
     if (!ui.force && sig == ui.sig_viz)
         return;
     ui.sig_viz = sig;
@@ -553,10 +673,6 @@ static void draw_viz(void)
     } else if (ui.view == VIEW_MIXER) {
         viz_channel(f);
     } else {
-        for (k = 0; k < 4u; k++) {
-            ui_page(k, &vp);
-            v[k] = *vp;
-        }
         if (ui.kind == FOCUS_SLOT) {
             switch (tp[sys.sel].engine[ui.slot]) {
             case ME_WAVE: viz_wave(v, f); break;
