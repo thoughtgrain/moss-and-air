@@ -184,7 +184,8 @@ enum {
     PK_SQUARE, PK_DOTS, PK_BOWTIE, PK_LOOP, PK_MIX, PK_DRIVE, PK_STAIRS, PK_NOISE, PK_TONE, PK_CLOCK, PK_ROOM,
     PK_SHAPE, PK_FOLD, PK_SKEW, PK_SMOOTH, PK_STEPS, PK_SLEW, PK_SWING, PK_KEYS, PK_SHELF_LO, PK_SHELF_HI, PK_FILTER,
     PK_PAN, PK_TOGGLE, PK_FADE, PK_WINDOW, PK_GATE, PK_PRE, PK_MODE, PK_DIR, PK_STEPAT, PK_NONE,
-    PK_CURVE, PK_VAR, PK_SRC, PK_OSC, PK_DETUNE, PK_CUTOFF, PK_RES, PK_ENVAMT, PK_KTRK, PK_VOICES
+    PK_CURVE, PK_VAR, PK_SRC, PK_OSC, PK_DETUNE, PK_CUTOFF, PK_RES, PK_ENVAMT, PK_KTRK, PK_VOICES, PK_PATTERN,
+    PK_SCALE, PK_SLOPE, PK_CMOD
 };
 
 /* the waveform shapes WAVE's SHAPE picks, at phase p (0..63 a cycle), x1000 */
@@ -350,11 +351,11 @@ static void px_picto(uint32_t kind, int32_t x, int32_t y, const pdesc_t *d, int3
         px_line(x + 19, b, x + 21, b, c, 1);
         px_line(x + 20, b - 1, x + 20, b + 1, c, 1);
         break;
-    case PK_LAYERS: {                                    /* three takes stacked, as many solid as DUB keeps */
-        int32_t lit = (r + 333) / 334, k;
+    case PK_LAYERS: {                                    /* DUB: the old take (two layers) under the new one (top), */
+        int32_t k, keep = v >= 0 ? 100 : 100 + v;       /* solid while that part is kept (dotted: faded out) */
         for (k = 0; k < 3; k++) {
             int32_t yy = y + 15 - k * 6;
-            if (k < lit)
+            if (k < 2 ? keep > k * 50 : v < 100)
                 px_box(x + 2 + k * 2, yy, 18 - k * 4, 4, c);
             else
                 px_frame(x + 2 + k * 2, yy, 18 - k * 4, 4, m, 2);
@@ -698,6 +699,46 @@ static void px_picto(uint32_t kind, int32_t x, int32_t y, const pdesc_t *d, int3
     }
     case PK_NONE:
         break;
+    case PK_PATTERN: {                                   /* when grains fire: EVEN, SWNG (late off-beats), CLST, RND */
+        static const int8_t AT[4][6] = {{0, 4, 8, 12, 16, 20}, {0, 6, 8, 14, 16, 20}, {0, 2, 4, 12, 14, 16},
+                                        {1, 3, 9, 10, 15, 20}};
+        int32_t k;
+        px_line(x, b, x + 21, b, m, 2);
+        for (k = 0; k < 6; k++)
+            px_box(x + AT[v & 3][k], y + 6, 2, 9, c);
+        break;
+    }
+    case PK_SCALE: {                                     /* 12 semitones round a ring, the scale's lit (OFF / HARM: */
+        static const uint16_t SC[5] = {0, 0xFFF, 0xAB5, 0x5AD, 0x295};   /* none / the harmonics' 1 5 3) */
+        uint32_t set = d->names == N_RSCAL ? (v ? SC[v + 1] : 0x091u) : SC[v % 5];
+        int32_t k;
+        for (k = 0; k < 12; k++) {
+            int32_t a = k * 64 / 12, xx = px_px(cx, 8, a), yy = px_py(cy, 8, a);
+            if ((set >> k) & 1u)
+                px_box(xx - 1, yy - 1, 3, 3, c);
+            else
+                px_dot(xx, yy, m);
+        }
+        break;
+    }
+    case PK_SLOPE: {                                     /* the filter's shape: low-pass, band-pass, high-pass */
+        static const int8_t LV[3][8] = {{4, 4, 4, 4, 6, 11, 16, 19}, {19, 14, 7, 4, 4, 7, 14, 19},
+                                        {19, 16, 11, 6, 4, 4, 4, 4}};
+        int32_t k;
+        px_line(x, b, x + 21, b, m, 2);
+        for (k = 1; k < 8; k++)
+            px_line(x + (k - 1) * 3, y + LV[v % 3][k - 1], x + k * 3, y + LV[v % 3][k], c, 1);
+        break;
+    }
+    case PK_CMOD: {                                      /* what CRUSH takes: the bits (tall steps), the rate (wide */
+        int32_t k, w = v == 0 ? 2 : 5, h = v == 1 ? 2 : 5;   /* steps), or both */
+        px_frame(x, y, 22, 21, m, 2);
+        for (k = 0; k * w < 18 && k * h < 16; k++) {
+            px_line(x + 2 + k * w, b - 2 - k * h, x + 2 + (k + 1) * w, b - 2 - k * h, c, 1);
+            px_line(x + 2 + (k + 1) * w, b - 2 - k * h, x + 2 + (k + 1) * w, b - 2 - (k + 1) * h, c, 1);
+        }
+        break;
+    }
     case PK_DETUNE: {                                    /* two saws, the second (dotted) drifting ahead with DTUN */
         int32_t sh = r * 5 / 1000, k;
         for (k = 0; k < 2; k++) {
@@ -774,16 +815,19 @@ static void px_picto(uint32_t kind, int32_t x, int32_t y, const pdesc_t *d, int3
 /* the pictogram of each knob of each page (page 2 after page 1) */
 static const uint8_t DEV_PK[NDEV][NPK] = {
     {PK_START, PK_LENGTH, PK_SPEED, PK_LAYERS,       /* TAPE: STRT LEN SPD DUB */
-     PK_FADE, PK_TOGGLE, PK_TOGGLE, PK_FADER,        /*       FADE REV HALF GAIN */
-     PK_SRC, PK_NONE, PK_NONE, PK_NONE},             /*       REEL */
-    {PK_SQUARE, PK_DOTS, PK_KNOB, PK_BOWTIE,         /* GRAIN: SIZE DENS TUNE SPRD */
-     PK_MIX, PK_NOISE, PK_WINDOW, PK_DOTS},          /*        MIX JIT WIN REV */
-    {PK_KEYS, PK_LOOP, PK_DECAY, PK_MIX,             /* RESONATOR: ROOT FDBK DAMP MIX */
-     PK_NONE, PK_NONE, PK_NONE, PK_NONE},
-    {PK_DRIVE, PK_STAIRS, PK_NOISE, PK_TONE,         /* COLOR: DRIV CRSH NOIS TONE */
-     PK_FADER, PK_MIX, PK_STAIRS, PK_GATE},          /*        LVL MIX SRR GATE */
+     PK_FADE, PK_TOGGLE, PK_TOGGLE, PK_FADER,        /*       XFAD REV HALF GAIN */
+     PK_SRC, PK_CLOCK, PK_NONE, PK_NONE},            /*       REEL ROTA */
+    {PK_SQUARE, PK_DOTS, PK_KNOB, PK_BOWTIE,         /* GRAIN: SIZE RATE PTCH SPRD */
+     PK_MIX, PK_NOISE, PK_WINDOW, PK_DOTS,           /*        WET SPRY CONT REV */
+     PK_SPEED, PK_PATTERN, PK_SCALE, PK_VAR},        /*        WARP PATN SCAL PRND */
+    {PK_KEYS, PK_DECAY, PK_TONE, PK_MIX,             /* RESONATOR: PTCH DEC TONE WET */
+     PK_CUTOFF, PK_RES, PK_SLOPE, PK_SCALE},         /*            CUT RES SLOP SCAL */
+    {PK_DRIVE, PK_STAIRS, PK_NOISE, PK_TONE,         /* COLOR: DRIV CRSH NOIS TILT */
+     PK_DECAY, PK_TONE, PK_CMOD, PK_MIX,             /*        NDEC NTON CMOD WET */
+     PK_FADER, PK_NONE, PK_NONE, PK_NONE},           /*        LVL */
     {PK_CLOCK, PK_LOOP, PK_ROOM, PK_DECAY,           /* SPACE: TIME FDBK SIZE DEC */
-     PK_MIX, PK_MIX, PK_PRE, PK_BOWTIE},             /*        DMIX RMIX PRE WIDE */
+     PK_MIX, PK_MIX, PK_FILTER, PK_BOWTIE,           /*        DLY VERB TONE SPRD */
+     PK_PRE, PK_NONE, PK_NONE, PK_NONE},             /*        PRE */
 };
 static const uint8_t SYN_PK[NPK] = {
     PK_OSC, PK_DETUNE, PK_MIX, PK_NOISE,             /* SYNTH: WAVE DTUN MIX NOIS */

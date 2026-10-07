@@ -256,7 +256,7 @@ static void test_tape(void)
         check("REC arms: track 2's reel is copied onto its tape, REEL turns to TAPE",
               tape_prepare(1) && tape_src(1) == 0u && tape_ctl[1].nblk == REELS[1].nblk);
         sys.rec = 1u << 1;
-        tp[1].dev[DEV_SRC][TK_DUB] = 0;
+        tp[1].dev[DEV_SRC][TK_DUB] = -100;                   /* (DUB -100: the input replaces the loop) */
         track[1].mute = 1;                               /* (only track 1 sounds into it) */
         track[2].mute = track[3].mute = 1;
         sys.playing = 1;
@@ -333,14 +333,17 @@ static void test_input(void)
     check("EDIT: GRAIN", ui.kind == FOCUS_DEV && ui.dev == DEV_GRAIN);
     press(B_EDIT);
     press(B_EDIT);
-    check("EDIT again, past GRAIN's page 2: RESONATOR", ui.dev == DEV_RESO);
     press(B_EDIT);
-    check("EDIT again: GRAIN", ui.dev == DEV_GRAIN && ui.page == 0u);
+    check("EDIT again, past GRAIN's pages 2 and 3: RESONATOR", ui.dev == DEV_RESO);
+    press(B_EDIT);
+    press(B_EDIT);
+    check("EDIT again, past RESONATOR's page 2: GRAIN", ui.dev == DEV_GRAIN && ui.page == 0u);
     press(B_FX);
     check("FX: COLOR", ui.dev == DEV_COLOR);
     press(B_FX);
     press(B_FX);
-    check("FX again, past COLOR's page 2: SPACE", ui.dev == DEV_SPACE && ui.page == 0u);
+    press(B_FX);
+    check("FX again, past COLOR's pages 2 and 3: SPACE", ui.dev == DEV_SPACE && ui.page == 0u);
     press(B_ENV);
     check("ENV: modulator slot 2", ui.kind == FOCUS_SLOT && ui.slot == 1u);
     press(B_HOME);
@@ -365,17 +368,23 @@ static void test_input(void)
     check("..again: GRAIN's page 2", ui.dev == DEV_GRAIN && ui.page == 1u);
     host_enc[panel.enc[EN_K1]] = -30;
     ui_input();
-    check("..whose KNOB 1 is MIX (100 -> 70), not SIZE", tp[0].dev[DEV_GRAIN][4] == 70 && tp[0].dev[DEV_GRAIN][0] == 80);
+    check("..whose KNOB 1 is WET (100 -> 70), not SIZE", tp[0].dev[DEV_GRAIN][4] == 70 && tp[0].dev[DEV_GRAIN][0] == 80);
     tp[0].dev[DEV_GRAIN][4] = 100;
     press(B_EDIT);
-    check("..again: RESONATOR (one page)", ui.dev == DEV_RESO && ui.page == 0u);
+    check("..again: GRAIN's page 3 (WARP PATN SCAL PRND)", ui.dev == DEV_GRAIN && ui.page == 2u &&
+          !strcmp(dev_p(0, DEV_GRAIN)[8].label, "WARP"));
+    press(B_EDIT);
+    check("..again: RESONATOR", ui.dev == DEV_RESO && ui.page == 0u);
+    press(B_EDIT);
+    check("..again: RESONATOR's page 2 (CUT RES SLOP SCAL)", ui.dev == DEV_RESO && ui.page == 1u);
     press(B_EDIT);
     check("..again: back to GRAIN, page 1", ui.dev == DEV_GRAIN && ui.page == 0u);
     press(B_FX);
     press(B_FX);
     press(B_FX);
     press(B_FX);
-    check("FX: COLOR, COLOR 2, SPACE, SPACE 2", ui.dev == DEV_SPACE && ui.page == 1u);
+    press(B_FX);
+    check("FX: COLOR, COLOR 2, COLOR 3, SPACE, SPACE 2", ui.dev == DEV_SPACE && ui.page == 1u);
     press(B_LFO);
     press(B_LFO);
     check("a slot pad again: the slot's page 2", ui.kind == FOCUS_SLOT && ui.slot == 0u && ui.page == 1u);
@@ -566,8 +575,9 @@ static void screens_in(const char *pal)
     turn(1, 1);
     turn(3, 6);
     shot(pal, "tape2");
-    press(B_HOME);                                       /* TAPE 3: REEL KEYS */
+    press(B_HOME);                                       /* TAPE 3: REEL KEYS, ROTA 25 % (playing starts there) */
     turn(0, 1);
+    turn(1, 25);
     shot(pal, "tape3");
     press(B_HOME);
     sys.playing = 1;                                     /* the head running, then REC armed */
@@ -606,21 +616,33 @@ static void screens_in(const char *pal)
     let_go(B_HOME);
     press(B_EDIT);
     shot(pal, "grain");
-    turn(1, 40);                                         /* DENS 80 %, PITCH +7, SPREAD 90 % */
+    turn(1, 40);                                         /* RATE 80 %, PTCH +7, SPRD 90 % */
     turn(2, 7);
     turn(3, 60);
     shot(pal, "grain_busy");
-    press(B_EDIT);                                       /* GRAIN 2: JIT 60, WIN 100, REV 40 */
+    press(B_EDIT);                                       /* GRAIN 2: SPRY 60, CONT 100, REV 40 */
     turn(1, 40);
     turn(2, 50);
     turn(3, 40);
     shot(pal, "grain2");
+    press(B_EDIT);                                       /* GRAIN 3: WARP -52 %, PATN SWNG, SCAL MAJ, PRND 5 */
+    turn(0, -38);
+    turn(1, -2);
+    turn(2, 2);
+    turn(3, 5);
+    shot(pal, "grain3");
     press(B_EDIT);
     shot(pal, "resonator");
-    turn(1, 35);                                         /* FDBK 95: sharp peaks */
-    turn(2, -30);                                        /* DAMP 10 */
-    turn(3, 80);                                         /* MIX 80 */
+    turn(1, 35);                                         /* DEC 95: sharp peaks */
+    turn(2, 30);                                         /* TONE 90: the upper partials kept */
+    turn(3, 80);                                         /* WET 80 */
     shot(pal, "resonator_wet");
+    press(B_EDIT);                                       /* RESONATOR 2: CUT down, RES 60, BP, the major chord */
+    turn(0, -40);
+    turn(1, 60);
+    turn(2, 1);
+    turn(3, 1);
+    shot(pal, "resonator2");
     press(B_FX);
     shot(pal, "color");
     turn(0, 60);                                         /* DRIVE 60: the transfer curve */
@@ -629,24 +651,30 @@ static void screens_in(const char *pal)
     shot(pal, "color_crush");
     turn(2, 50);                                         /* NOISE 50 */
     shot(pal, "color_noise");
-    turn(3, -30);                                        /* TONE 20: the tone filter */
+    turn(3, -30);                                        /* TILT -30: darker */
     shot(pal, "color_tone");
-    press(B_FX);                                         /* COLOR 2: LVL -6 dB, MIX 70, SRR 60, GATE 40 */
-    turn(0, -6);
+    press(B_FX);                                         /* COLOR 2: NDEC longer, NTON -30, CMOD BOTH, WET 70 */
+    turn(0, 30);
     turn(1, -30);
-    turn(2, 60);
-    turn(3, 40);
+    turn(2, 2);
+    turn(3, -30);
     shot(pal, "color2");
+    press(B_FX);                                         /* COLOR 3: LVL -6 dB */
+    turn(0, -6);
+    shot(pal, "color3");
     press(B_FX);
     shot(pal, "space");
     turn(1, 40);                                         /* FDBK 70 */
     turn(3, 40);                                         /* DECAY 80 */
     shot(pal, "space_long");
-    press(B_FX);                                         /* SPACE 2: DMIX 80, RMIX 60, PRE 120 ms */
+    press(B_FX);                                         /* SPACE 2: DLY 80, VERB 60, TONE -40 */
     turn(0, 50);
     turn(1, 30);
-    turn(2, 100);
+    turn(2, -40);
     shot(pal, "space2");
+    press(B_FX);                                         /* SPACE 3: PRE 120 ms */
+    turn(0, 100);
+    shot(pal, "space3");
     for (s = 0; s < NSLOT; s++) {
         static const uint8_t B[NSLOT] = {B_LFO, B_ENV, B_SEQ, B_ARP};
         char nm[8] = {'m', 'o', 'd', (char)('1' + s), 0};
@@ -1298,7 +1326,7 @@ static void test_synth(void)
     {   /* REC on a SYNTH track prints the synth onto its tape: then TAPE plays it back */
         tape_view_t v;
         int32_t pk;
-        tp[0].dev[DEV_SRC][TK_DUB] = 0;
+        tp[0].dev[DEV_SRC][TK_DUB] = -100;                   /* (DUB -100: the input replaces the loop) */
         press(B_REC);
         check("REC on a SYNTH track arms its tape", (sys.rec & 1u) && tape_ctl[0].rec_ok);
         sys.playing = 1;
@@ -1345,7 +1373,8 @@ static void test_tape_edges(void)
     tape_view_t v;
     tape_rd_t r = {0};
     int32_t ls, ll, lo, hi, inside = 1;
-    uint32_t i, len;
+    uint32_t i, len, t;
+    char b[120];
     power_on();
     check("GAIN in dB: +6 doubles, -12 quarters, 0 is unity", db_q10(6) == 2048 && db_q10(-12) == 256 &&
           db_q10(0) == 1024);
@@ -1391,6 +1420,62 @@ static void test_tape_edges(void)
     tp[0].dev[DEV_SRC][TK_STRT] = 0;
     tp[0].dev[DEV_SRC][TK_LEN] = 100;
     tp[2].dev[DEV_SRC][TK_REEL] = 3;
+
+    tp[0].dev[DEV_SRC][TK_ROTA] = 50;                    /* ROTATE: playing starts half way round the loop */
+    sys.playing = 1;
+    render(1, 0);
+    check("ROTA 50: PLAY starts the head half way through the loop", abs((tape_rt[0].pos >> 12) - (int32_t)len / 2) < 64);
+    sys.playing = 0;
+    render(400, 0);
+    tp[0].dev[DEV_SRC][TK_ROTA] = 97;                    /* slice 1 from 97 %: it runs over the seam */
+    fm1_in.notes = note_bit_of_white(0);
+    render(1, 0);
+    fm1_in.notes = 0;
+    {
+        int32_t ran = 0, s0 = (tape_rt[0].pos >> 12);
+        for (i = 0; i < 2000u && tape_rt[0].running; i++, ran++)
+            render(1, 0);
+        check("ROTA 97, stopped: slice 1 starts at 97 %, runs over the seam and stops after its length",
+              abs(s0 - (int32_t)len * 97 / 100) < 64 && abs(ran - (int32_t)len / 16 * 2 / CTL) <= 2);
+    }
+    tp[0].dev[DEV_SRC][TK_ROTA] = 0;
+
+    {   /* DUB's balance: +100 keeps the loop untouched, -50 halves it each pass under silence */
+        uint32_t k, same = 1;
+        int32_t before = 0, after = 0;
+        for (t = 0; t < NTRK; t++)
+            track[t].mute = t != 0;                       /* (only track 1 sounds into track 2) */
+        check("REC armed on track 2 (its reel copied in)", tape_prepare(1) && tape_ctl[1].rec_ok);
+        tp[1].dev[DEV_SRC][TK_DUB] = 100;
+        sys.rec = 1u << 1;
+        sys.playing = 1;
+        render(2800, 0);                                 /* a whole pass and more */
+        sys.rec = 0;
+        render(2, 0);
+        for (k = 0; k < REELS[1].nblk; k++)
+            same &= tape_ram[1].peak[k] == REELS[1].peak[k];
+        check("DUB +100: REC changes nothing (the loop untouched, bit for bit)", same &&
+              !memcmp(tape_ram[1].data, REELS[1].data, REELS[1].nblk * TAPE_BLK / 2u));
+        track[0].mute = 1;                               /* silence in */
+        tp[1].dev[DEV_SRC][TK_DUB] = -50;
+        for (k = 0; k < REELS[1].nblk; k++)
+            before += REELS[1].peak[k];
+        sys.rec = 1u << 1;
+        render(1378 * 2 + 200, 0);                       /* one pass of the 2 s loop (and a little) */
+        sys.rec = 0;
+        render(2, 0);
+        for (k = 0; k < REELS[1].nblk; k++)
+            after += tape_ram[1].peak[k];
+        snprintf(b, sizeof b, "DUB -50 under silence: the loop at half its level after a pass (%d%%)",
+                 (int)(after * 100 / (before ? before : 1)));
+        check(b, after * 100 / before >= 40 && after * 100 / before <= 60);
+        sys.playing = 0;
+        tape_unprepare(1);
+        for (t = 0; t < NTRK; t++)
+            track[t].mute = 0;
+        tp[1].dev[DEV_SRC][TK_DUB] = 0;
+        render(400, 0);
+    }
 }
 
 /* the LEDs, OCT-, the messages, panic */

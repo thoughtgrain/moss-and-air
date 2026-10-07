@@ -9,14 +9,16 @@
  *
  *   SYNTH      per page: the oscillators' cycles, the filter's response, the envelope, the keys and voices
  *   TAPE       a reel-to-reel, reels close over the middle: the run along the bottom is the whole tape with the
- *              sample on it, lit inside the loop window (STRT, LEN, bracketed); the playhead over it; between the
- *              reels SPD as chevrons and DUB as the layers kept
+ *              sample on it, lit inside the loop window (STRT, LEN, bracketed); the playhead over it (stopped: where
+ *              playing starts, moved by ROTA); between the reels SPD as chevrons and DUB as the layers kept (the old
+ *              take under, the new on top)
  *   GRAIN      the sound in TAPE's loop window, lit where grains read it (SIZE, scaled by PITCH), and one solid
- *              block per grain (DENS) in a stereo lane under it (SPRD, up = left, down = right)
- *   RESONATOR  the response over 8 octaves: peaks on ROOT's harmonics (a node on each, the root's filled and
- *              named), as sharp as FDBK makes them, rolling off with DAMP, blended with the dotted dry line by MIX
+ *              block per grain (RATE, placed by PATN) in a stereo lane under it (SPRD, up = left, down = right)
+ *   RESONATOR  the response over 8 octaves: peaks on PTCH's partials (harmonics, or a scale's chord tones; a node on
+ *              each, the root's filled and named), as sharp as DEC makes them, kept up top by TONE, shaped by the
+ *              filter before them (dotted: CUT RES SLOP), blended with the dotted dry line by WET
  *   COLOR      a sine through the device (dotted: in; solid: out); the inset follows the last-turned knob: the
- *              transfer curve (DRIVE, CRUSH), the noise (NOISE) or the tone filter (TONE)
+ *              transfer curve (DRIV, CRSH, CMOD), the noise after a hit (NOIS, NDEC), its filter (NTON), TILT
  *   SPACE      the dry hit, the echoes as stems with nodes (TIME apart, falling by FDBK) and the reverb tail
  *   MOD slots  LFO's shape (RND: its loop of steps) and its next time round dotted, ADSR's envelope with its
  *              stages named and bent, SEQ's 16 steps as bars of their values, FOLLOW's envelope over what it listens to
@@ -114,9 +116,9 @@ static void viz_tape(const int16_t *v, uint32_t f)
      * is while it runs (a dotted line through the run), else where playing starts (the end when reversed); between
      * the reels, SPD as chevrons and DUB as the layers kept; REC armed is tagged at the top right. */
     int32_t r0 = 6, r1 = 114, rw = r1 - r0, top = 20, bot = 35, mid = 27, k, x;
-    int32_t x0 = r0 + v[0] * rw / 100, x1 = x0 + v[1] * rw / 100, lit = (v[3] + 33) / 34;
+    int32_t x0 = r0 + v[0] * rw / 100, x1 = x0 + v[1] * rw / 100, keep = v[3] >= 0 ? 100 : 100 + v[3];
     int32_t sp = v[2] * (v[5] ? -1 : 1) / (v[6] ? 2 : 1), gain = db_x1000(v[7]);   /* REV, HALF; GAIN */
-    int32_t fw = 1 + v[4] * 8 / 100;                   /* FADE (drawn wider than to scale, so it shows) */
+    int32_t fw = 1 + v[4] * 8 / 100;                   /* XFAD (drawn wider than to scale, so it shows) */
     if (x1 > r1)
         x1 = r1;
     vz_reel(36, 9);
@@ -133,12 +135,14 @@ static void viz_tape(const int16_t *v, uint32_t f)
         px_line(bx, top - 2, bx + 2 * s, top - 2, px_ink, 1);
         px_line(bx, bot + 2, bx + 2 * s, bot + 2, px_ink, 1);
     }
-    if (v[4] && x1 - x0 > 2 * fw + 2) {               /* FADE: the ramps at the loop's ends, dotted */
+    if (v[4] && x1 - x0 > 2 * fw + 2) {               /* XFAD: the ramps at the loop's ends, dotted */
         px_line(x0 + 1, bot - 1, x0 + fw, top + 1, px_ink, 2);
         px_line(x1 - fw, top + 1, x1 - 1, bot - 1, px_ink, 2);
     }
     {   /* the playhead: a triangle over the run, where the head is (or where playing starts) */
-        int32_t hd = tape_head(sys.sel), px = hd >= 0 ? r0 + hd * rw / 1000 : sp < 0 ? x1 - 3 : x0 + 3;
+        int32_t xr, hd = tape_head(sys.sel), px;
+        xr = x0 + (x1 - x0) * v[9] / 100;              /* ROTATE: where playing starts in the window */
+        px = hd >= 0 ? r0 + hd * rw / 1000 : sp < 0 ? (v[9] ? xr - 1 : x1 - 3) : (v[9] ? xr : x0 + 3);
         for (k = 0; k < 3; k++)
             px_box(px - 2 + k, top - 5 + k, 5 - 2 * k, 1, px_ink);   /* (rows 15..17: under the reels' flanges) */
         if (hd >= 0) {                                 /* running: a cut through the sound, and its edges */
@@ -150,8 +154,10 @@ static void viz_tape(const int16_t *v, uint32_t f)
     if ((sys.rec >> sys.sel) & 1u)
         px_tag(105, 0, PXF_3, "REC", px_ink, px_bg);
     px_chevrons(60, 5, sp, px_ink);                                    /* SPD (with REV, HALF), between the reels */
-    for (k = 0; k < 3; k++)                                            /* DUB: the layers kept, under it */
-        px_line(52 + k * 2, 16 - k * 2, 68 - k * 2, 16 - k * 2, k < lit ? px_ink : px_dim, k < lit ? 1 : 2);
+    for (k = 0; k < 3; k++) {                                          /* DUB: the old take, the new on top */
+        int on = k < 2 ? keep > k * 50 : v[3] < 100;
+        px_line(52 + k * 2, 16 - k * 2, 68 - k * 2, 16 - k * 2, on ? px_ink : px_dim, on ? 1 : 2);
+    }
     vz_label(x0, "IN", f == 0u);
     if (x1 - x0 >= 22 || f == 1u)
         vz_label(x1, "OUT", f == 1u);
@@ -164,9 +170,10 @@ static void viz_tape(const int16_t *v, uint32_t f)
 /* ------------------------------------------------------------- GRAIN --- */
 static void viz_grain(const int16_t *v, uint32_t f)
 {
-    /* The view spans TAPE's loop window (START, LEN). DENS 0..100: 1..25 grains, placed along the loop. Each grain
-     * reads SIZE ms of the sample, times 2^(PITCH/12) (pitched up, it reads more): that slice of the waveform is
-     * lit, and it is the width of its block. SPRD scatters the blocks across the stereo lane under the waveform
+    /* The view spans TAPE's loop window (START, LEN). RATE 0..100: 1..25 grains, placed along the loop by PATN (EVEN
+     * spaced, SWNG with the off-beats late, CLST in clusters of four, RND scattered). Each grain reads SIZE ms of the
+     * sample, times 2^(PTCH/12) (pitched up, it reads more; PRND varies that per grain): that slice of the waveform
+     * is lit, and it is the width of its block. SPRD scatters the blocks across the stereo lane under the waveform
      * (up = left). Solid blocks: the grains as the engine schedules them, without the window shape. */
     const int16_t *tv = tp[sys.sel].dev[DEV_SRC];
     int32_t n = 1 + v[1] * 24 / 100, i, x, g, gw = DW - 6;            /* (L and R at the right) */
@@ -178,7 +185,14 @@ static void viz_grain(const int16_t *v, uint32_t f)
     span = clamp(v[0] * oct / 1000 * gw / (loop_ms > 0 ? loop_ms : 1), 1, gw / 2);
     vz_seed = 12345u;
     for (g = 0; g < n; g++) {
-        gx[g] = DX0 + (int32_t)(vz_rand() % (uint32_t)(gw - span));
+        int32_t room = gw - span, slot = room / n, at;
+        switch (v[9]) {                                               /* PATN */
+        case 0: at = g * slot; break;                                  /* EVEN */
+        case 1: at = g * slot + (g & 1) * slot / 2; break;              /* SWNG: the off-beats half a step late */
+        case 2: at = (g / 4) * slot * 4 + (g % 4) * slot / 3; break;    /* CLST: fours, close together */
+        default: at = (int32_t)(vz_rand() % (uint32_t)room); break;    /* RND */
+        }
+        gx[g] = DX0 + clamp(at, 0, room - 1);
         gy[g] = ((int32_t)(vz_rand() % 2001u) - 1000) * v[3] / 100;    /* -1000 (L) .. 1000 (R) */
     }
     for (x = DX0; x < DX0 + gw; x++) {                                 /* the sample: dim, lit where a grain reads */
@@ -190,11 +204,15 @@ static void viz_grain(const int16_t *v, uint32_t f)
     px_line(DX0, lane, DX0 + gw, lane, px_dim, 2);                     /* the stereo lane */
     px_text(DX1 - 2, lane - 7, PXF_3, "L", px_ink);
     px_text(DX1 - 2, lane + 3, PXF_3, "R", px_ink);
-    /* each grain: 3 rows, its top and bottom rows cut in from the ends as WIN smooths it (square at 0); hollow
-     * when it plays backwards (REV: that share of them); JIT as dotted whiskers, where it may land instead */
+    /* each grain: 3 rows, its top and bottom rows cut in from the ends as CONT smooths it (square at 0);
+     * hollow when it plays backwards (REV: that share of them); SPRY as dotted whiskers, where it may land instead */
     taper = span * v[6] / 250;
     for (g = 0; g < n; g++) {
-        int32_t yy = lane - 1 + gy[g] * 5 / 1000, back = (g * 37 + 11) % 100 < v[7];
+        int32_t yy = lane - 1 + gy[g] * 5 / 1000, back = (g * 37 + 11) % 100 < v[7], span0 = span;
+        if (v[11]) {                                                   /* PRND: each grain's pitch, so its read, varies */
+            int32_t st = (int32_t)((g * 53u + 7u) % (uint32_t)(2 * v[11] + 1)) - v[11];
+            span = clamp(span + span * st / 24, 1, gw / 2);
+        }
         if (back) {
             px_line(gx[g], yy, gx[g] + span - 1, yy, px_ink, 1);
             px_line(gx[g] + taper, yy - 1, gx[g] + span - 1 - taper, yy - 1, px_ink, 1);
@@ -209,6 +227,7 @@ static void viz_grain(const int16_t *v, uint32_t f)
             px_line(gx[g] - jit, yy, gx[g] - 1, yy, px_ink, 2);
             px_line(gx[g] + span, yy, gx[g] + span - 1 + jit, yy, px_ink, 2);
         }
+        span = span0;
     }
     fmt_int(b, n);
     str_cpy(b + str_len(b), " GRAINS", 8);
@@ -216,24 +235,46 @@ static void viz_grain(const int16_t *v, uint32_t f)
         px_tag(1, DLBL - 1, PXF_3, b, px_ink, px_bg);
     else
         px_text(2, DLBL, PXF_3, b, px_ink);
-    if (f >= 4u && f < 8u)
+    if (f >= 4u && f < 12u)
         vz_ktag(118, DLBL - 1, &DEV_P[DEV_GRAIN][f], v[f]);
     else
         px_text(118 - px_text_w(PXF_3, tape_name(sys.sel)), DLBL, PXF_3, tape_name(sys.sel), px_dim);   /* its source */
 }
 
 /* --------------------------------------------------------- RESONATOR --- */
-/* 12 log2(k) in 1/16 semitones: harmonic k's distance above the root */
-static const int16_t HARM_16[24] = {0, 192, 304, 384, 446, 496, 539, 576, 609, 638, 664, 688,
-                                    710, 731, 750, 768, 785, 801, 816, 830, 843, 856, 869, 880};
+/* the strings' partials above PTCH, in 1/16 semitones: SCAL HARM is the root's harmonics (12 log2 k); MAJ, MIN and
+ * PEN are their scale's chord tones (1 3 5, or the pentatonic's notes) stacked over three octaves */
+static const int16_t PART_16[4][24] = {
+    {0, 192, 304, 384, 446, 496, 539, 576, 609, 638, 664, 688, 710, 731, 750, 768, 785, 801, 816, 830, 843, 856, 869,
+     880},
+    {0, 64, 112, 192, 256, 304, 384, 448, 496, 576},
+    {0, 48, 112, 192, 240, 304, 384, 432, 496, 576},
+    {0, 32, 64, 112, 144, 192, 224, 256, 304, 336, 384, 416, 448, 496, 528, 576}};
+static const uint8_t PART_N[4] = {24, 10, 10, 16};
 
-/* x: MIDI 28 (E1, 41 Hz) .. 124 (8 octaves) in 1/16 semitones; peaks at ROOT's harmonics; the peak width narrows
- * as FDBK rises; DAMP rolls the upper harmonics off; MIX blends with the flat dry line (35 %); 0..1000 */
+/* x as a pitch: MIDI 28 (E1, 41 Hz) .. 124 (8 octaves), in 1/16 semitones */
+static int32_t reso_n16(int32_t x) { return 28 * 16 + (x - DX0) * 96 * 16 / DW; }
+
+/* the filter before the strings (CUT, RES, SLOP) at pitch n16, 0..1000 (+ the resonance's peak, up to 2000):
+ * CUT's index is about a semitone a step from 30 Hz (MIDI 23) */
+static int32_t reso_filter(const int16_t *v, int32_t n16)
+{
+    int32_t c16 = (23 + v[4]) * 16, d = (n16 - c16) / 16, pk = v[5] * 10 * 64 / (64 + d * d), g;
+    switch (v[6]) {
+    case 1: g = 1000 - (d < 0 ? -d : d) * 40; break;                   /* BP: 6 dB an octave each side */
+    case 2: g = d >= 0 ? 1000 : 1000 + d * 80; break;                  /* HP */
+    default: g = d <= 0 ? 1000 : 1000 - d * 80; break;                 /* LP: 12 dB an octave */
+    }
+    return clamp(g, 0, 1000) + pk;
+}
+
+/* peaks at the partials; the peak width narrows as DEC rises; TONE keeps the upper partials (dark at 0); the filter
+ * shapes what reaches them; WET blends with the flat dry line (35 %); 0..1000 */
 static int32_t reso_at(const int16_t *v, int32_t x)
 {
-    int32_t n16 = 28 * 16 + (x - DX0) * 96 * 16 / DW, width16 = 4 + (100 - v[1]) * 28 / 100, best = 0, k;
-    for (k = 0; k < 24; k++) {
-        int32_t d = n16 - (v[0] * 16 + HARM_16[k]), amp = 1000 - k * v[2] * 9, pk;
+    int32_t n16 = reso_n16(x), width16 = 4 + (100 - v[1]) * 28 / 100, best = 0, k, sc = clamp(v[7], 0, 3);
+    for (k = 0; k < PART_N[sc]; k++) {
+        int32_t d = n16 - (v[0] * 16 + PART_16[sc][k]), amp = 1000 - k * (100 - v[2]) * 9, pk;
         if (amp <= 0)
             break;
         if (d < -width16 * 6 || d > width16 * 6)
@@ -243,27 +284,33 @@ static int32_t reso_at(const int16_t *v, int32_t x)
         if (pk > best)
             best = pk;
     }
+    best = clamp(best * reso_filter(v, n16) / 1000, 0, 1000);
     return (best * v[3] + 350 * (100 - v[3])) / 100;
 }
 
 static void viz_reso(const int16_t *v, uint32_t f)
 {
-    int32_t x, k, py = 0, top = DY0 + 6, base = DY1 + 2;
+    static const char *const NAME[8] = {"PTCH", "DEC", "TONE", "WET", "CUT", "RES", "SLOP", "SCAL"};
+    int32_t x, k, py = 0, top = DY0 + 6, base = DY1 + 2, sc = clamp(v[7], 0, 3);
     px_line(DX0, base - 350 * (base - top) / 1000, DX1, base - 350 * (base - top) / 1000, px_dim, 2);   /* dry */
     px_line(DX0, base + 1, DX1, base + 1, px_dim, 2);
+    if (v[4] < 127 || v[5] || v[6] || f == 4u || f == 5u || f == 6u)   /* the filter: dotted, once it does anything */
+        for (x = DX0; x <= DX1; x += 2)
+            px_dot(x, base - clamp(reso_filter(v, reso_n16(x)), 0, 1000) * (base - top) / 1000, px_ink);
     for (x = DX0; x <= DX1; x++) {
         int32_t y = base - reso_at(v, x) * (base - top) / 1000;
         if (x > DX0)
             px_line(x - 1, py, x, y, px_ink, 1);
         py = y;
     }
-    for (k = 0; k < 24; k++) {                                         /* a node on each harmonic still sounding */
-        int32_t hx = DX0 + (v[0] * 16 + HARM_16[k] - 28 * 16) * DW / (96 * 16);
-        if (hx > DX1 - 1 || 1000 - k * v[2] * 9 <= 0 || (k && hx - (DX0 + (v[0] * 16 + HARM_16[k - 1] - 28 * 16) * DW / (96 * 16)) < 3))
+    for (k = 0; k < PART_N[sc]; k++) {                                 /* a node on each partial still sounding */
+        int32_t hx = DX0 + (v[0] * 16 + PART_16[sc][k] - 28 * 16) * DW / (96 * 16);
+        if (hx > DX1 - 1 || 1000 - k * (100 - v[2]) * 9 <= 0 ||
+            (k && hx - (DX0 + (v[0] * 16 + PART_16[sc][k - 1] - 28 * 16) * DW / (96 * 16)) < 3))
             break;                                                     /* (closer than 3 dots: the rest are a blur) */
         vz_node(hx, base - reso_at(v, hx) * (base - top) / 1000, k == 0);
     }
-    {   /* ROOT: its note over its node */
+    {   /* PTCH: its note over its node */
         int32_t rx = DX0 + (v[0] * 16 - 28 * 16) * DW / (96 * 16);
         char b[8];
         const char *u;
@@ -275,33 +322,37 @@ static void viz_reso(const int16_t *v, uint32_t f)
     }
     vz_label(DX0 + 8, "E1", 0);
     vz_label(DX1 - 8, "E9", 0);
-    vz_label((DX0 + DX1) / 2, f == 1u ? "FDBK" : f == 2u ? "DAMP" : f == 3u ? "MIX" : "HARMONICS", f >= 1u && f <= 3u);
+    vz_label((DX0 + DX1) / 2, f >= 1u && f < 8u ? NAME[f] : N_RSCAL[sc], f >= 1u && f < 8u);
+    if (f >= 4u && f < 8u)
+        vz_ktag(118, DY0 - 1, &DEV_P[DEV_RESO][f], v[f]);
 }
 
 /* ------------------------------------------------------------- COLOR --- */
-/* DRIVE 0..100 -> gain 1..16 into the soft clip; CRUSH 0..100 -> 16..2 bits; SRR 0..100 -> a hold of 1..12
- * samples (the rate); NOISE: noise riding the signal's envelope where it is over GATE; TONE: a one-pole low-pass
- * on that noise; MIX: the dry and the coloured signal; LVL: the output in dB */
-static int32_t color_shape(int32_t x, const int16_t *v)             /* Q15 in -> Q15 out (before MIX, LVL) */
+/* DRIV 0..100 -> gain 1..16 into the soft clip; CRSH 0..100 takes, by CMOD, 16..2 bits (BIT), a hold of 1..12
+ * samples (RATE), or both; NOIS: noise riding the signal's envelope, which falls over NDEC after the sound; NTON: a
+ * one-pole filter on that noise (- dark .. + bright); TILT: the low end against the high (on a sine: nothing to
+ * draw, so the inset shows it); WET: the dry and the coloured signal; LVL: the output in dB */
+static int32_t color_shape(int32_t x, const int16_t *v)             /* Q15 in -> Q15 out (before WET, LVL) */
 {
     int32_t g = 1 + v[0] * 15 / 100, y = softclip(x * g) * 32767 / softclip(32767 * g);
-    int32_t bits = 16 - v[1] * 14 / 100, q = 1 << (16 - bits);
+    int32_t bits = v[6] == 1 ? 16 : 16 - v[1] * 14 / 100, q = 1 << (16 - bits);
     return q > 1 ? (y / q) * q : y;
 }
 
-static int32_t color_out(int32_t x, int32_t shaped, const int16_t *v)   /* MIX, then LVL */
+static int32_t color_out(int32_t x, int32_t shaped, const int16_t *v)   /* WET, then LVL */
 {
-    return (x + (shaped - x) * v[5] / 100) * db_x1000(v[4]) / 1000;
+    return (x + (shaped - x) * v[7] / 100) * db_x1000(v[8]) / 1000;
 }
 
 static void viz_color(const int16_t *v, uint32_t f)
 {
-    static const char *const NAME[8] = {"DRIV", "CRSH", "NOIS", "TONE", "LVL", "MIX", "SRR", "GATE"};
-    int32_t bx = DX0, bw = 32, wx = DX0 + 37, ww = DX1 - wx, i, py = 0, pi = 0, held = 0, hold = 1 + v[6] * 11 / 100;
-    int32_t gate = v[7] * 327;                                         /* GATE: the envelope the noise opens at */
-    int32_t lp = 0, a = 3 * (100 - v[3]) / 4 + 8, cy = DMID + 1, amp = DH / 2;   /* TONE: the low-pass step */
+    static const char *const NAME[9] = {"DRIV", "CRSH", "NOIS", "TILT", "NDEC", "NTON", "CMOD", "WET", "LVL"};
+    int32_t bx = DX0, bw = 32, wx = DX0 + 37, ww = DX1 - wx, i, py = 0, held = 0;
+    int32_t hold = v[6] >= 1 ? 1 + v[1] * 11 / 100 : 1;              /* CMOD RATE or BOTH: hold a value */
+    int32_t fall = 1000 - 2000 / (2 + (int32_t)TIME_MS_X10[v[4] & 127] / 40), env = 0;   /* NDEC, per dot x1000 */
+    int32_t lp = 0, a = 8 + (v[5] + 100) * 75 / 200, cy = DMID + 1, amp = DH / 2;   /* NTON: the filter's step */
     px_frame(bx, DY0, bw, DH + 2, px_dim, 2);                          /* the inset */
-    if (f == 3u) {                                                     /* the tone filter's response */
+    if (f == 5u) {                                                     /* the noise filter's response */
         int32_t pyc = 0;
         for (i = 0; i < bw - 4; i++) {
             int32_t fr = i * 100 / (bw - 4), gg = 100 * a / (a + fr + 1), y = DY1 - 2 - gg * (DH - 6) / 100;
@@ -309,16 +360,17 @@ static void viz_color(const int16_t *v, uint32_t f)
                 px_line(bx + 1 + i, pyc, bx + 2 + i, y, px_ink, 1);
             pyc = y;
         }
-    } else if (f == 2u || f == 7u) {                                   /* the noise: dots, as many as NOISE */
-        int32_t gy = DY1 - v[7] * (DH - 2) / 100;                       /* .. none under GATE's line */
-        vz_seed = 99u;
-        for (i = 0; i < 4 + v[2] * 2; i++) {
-            int32_t yy = DY0 + 2 + (int32_t)(vz_rand() % (uint32_t)(DH - 2)), xx = bx + 2 + (int32_t)(vz_rand() % (uint32_t)(bw - 4));
-            if (yy < gy)
-                px_dot(xx, yy, px_ink);
+    } else if (f == 3u) {                                              /* TILT: one line, leaning */
+        px_line(bx + 2, cy, bx + bw - 3, cy, px_dim, 2);
+        px_line(bx + 2, cy + v[3] * (amp - 4) / 100, bx + bw - 3, cy - v[3] * (amp - 4) / 100, px_ink, 1);
+    } else if (f == 2u || f == 4u) {                                   /* the noise: a hit, and the noise falling */
+        vz_seed = 99u;                                                 /* .. after it over NDEC */
+        for (i = 2; i < bw - 2; i++) {
+            int32_t e = i < 6 ? 1000 : env * fall / 1000, k, n = (e * (4 + v[2] * 2) / 1000 + 9) / 10;
+            env = e;
+            for (k = 0; k < n; k++)
+                px_dot(bx + i, DY1 - 1 - (int32_t)(vz_rand() % (uint32_t)(1 + e * (DH - 3) / 1000)), px_ink);
         }
-        if (v[7])
-            px_line(bx + 1, gy, bx + bw - 2, gy, px_ink, 2);
     } else {                                                           /* the transfer curve */
         int32_t pyc = 0;
         px_line(bx + 2, cy, bx + bw - 3, cy, px_dim, 2);
@@ -332,14 +384,16 @@ static void viz_color(const int16_t *v, uint32_t f)
     }
     px_line(wx, cy, DX1, cy, px_dim, 2);
     vz_seed = 777u;
+    env = 0;
     for (i = 0; i <= ww; i++) {                                        /* two cycles of a sine: in dotted, out solid */
-        int32_t s = sine_i((uint32_t)i * (0xFFFFFFFFu / (uint32_t)ww) * 2u), y, yi, nz, env;
+        int32_t s = sine_i((uint32_t)i * (0xFFFFFFFFu / (uint32_t)ww) * 2u), y, yi, nz, e;
         if (i % hold == 0)
-            held = color_shape(s, v);                                  /* SRR: hold a value */
-        env = s < 0 ? -s : s;
-        nz = ((int32_t)(vz_rand() & 0xFFFF) - 32768) * v[2] / 100;      /* NOISE, before TONE */
+            held = color_shape(s, v);                                  /* CMOD RATE: hold a value */
+        e = s < 0 ? -s : s;
+        env = e > env ? e : env * fall / 1000;                         /* NDEC: the noise's envelope */
+        nz = ((int32_t)(vz_rand() & 0xFFFF) - 32768) * v[2] / 100;      /* NOISE, through NTON */
         lp += (nz - lp) * a / 100;
-        y = color_out(s, held + (env > gate ? lp * env >> 16 : 0), v);
+        y = color_out(s, held + (lp * env >> 16), v);
         y = cy - clamp(y, -32767, 32767) * (amp - 1) / 32767;
         yi = cy - s * (amp - 1) / 32767;
         if (i) {
@@ -348,11 +402,11 @@ static void viz_color(const int16_t *v, uint32_t f)
             px_line(wx + i - 1, py, wx + i, y, px_ink, 1);
         }
         py = y;
-        pi = yi;
     }
-    (void)pi;
-    vz_label(bx + bw / 2, f < 8u ? NAME[f] : "CURVE", f < 8u);
+    vz_label(bx + bw / 2, f < 9u ? NAME[f] : "CURVE", f < 9u);
     vz_label(wx + ww / 2, "IN : OUT", 0);
+    if (f >= 4u && f < 9u)
+        vz_ktag(118, DY0 - 1, &DEV_P[DEV_COLOR][f], v[f]);
 }
 
 /* ------------------------------------------------------------- SPACE --- */
@@ -360,8 +414,10 @@ static void viz_color(const int16_t *v, uint32_t f)
  * and falling over DECAY (0.2..4.2 s) */
 static void viz_space(const int16_t *v, uint32_t f)
 {
-    /* page 2: DMIX scales the echoes, RMIX the tail, PRE holds the tail back (ms) */
-    int32_t t, x, py = DY1, rise = 10 + v[2] * 80 / 100, len = 200 + v[3] * 40, g = 32767, first = -1, pre = v[6];
+    /* page 2: DLY scales the echoes, VERB the tail; TONE (- low-pass, + high-pass on the feedback) makes each echo
+     * lose a little more; page 3: PRE holds the tail back (ms) */
+    int32_t t, x, py = DY1, rise = 10 + v[2] * 80 / 100, len = 200 + v[3] * 40, g = 32767, first = -1, pre = v[8];
+    int32_t tl = 100 - (v[6] < 0 ? -v[6] : v[6]) / 5;                  /* TONE: what each pass keeps, % */
     px_line(DX0, DY1 + 1, DX1, DY1 + 1, px_dim, 2);
     for (x = DX0; x <= DX1; x++) {                                     /* the tail: a dim hatch under its edge */
         int32_t ms = (x - DX0) * 2000 / DW - pre, e, y;
@@ -384,7 +440,7 @@ static void viz_space(const int16_t *v, uint32_t f)
     vz_node(DX0 + 1, DY0 + 1, 1);
     for (t = v[0]; t < 2000 && g > 1500; t += v[0]) {                  /* the echoes: stems with nodes */
         int32_t h;
-        g = (t == v[0]) ? 26000 : g * v[1] / 100;
+        g = (t == v[0]) ? 26000 : g * v[1] / 100 * tl / 100;
         x = DX0 + t * DW / 2000;
         h = g * DH / 32767 * v[4] / 100;
         if (first < 0)
@@ -392,12 +448,12 @@ static void viz_space(const int16_t *v, uint32_t f)
         px_line(x, DY1, x, DY1 - h, px_ink, 1);
         vz_node(x, DY1 - h, f <= 1u || f == 4u);
     }
-    if (f >= 4u && f < 8u)
+    if (f >= 4u && f < 9u)
         vz_ktag(118, DY0 - 1, &DEV_P[DEV_SPACE][f], v[f]);
     px_text(DX0, DLBL, PXF_3, "DRY", px_ink);
     if (first >= DX0 + 20 && first < DX1 - 20)
         vz_label(first + 2, f == 1u ? "FDBK" : "ECHO", f <= 1u || f == 4u);
-    vz_label(DX1 - 10, f == 2u ? "SIZE" : f == 3u ? "DEC" : "TAIL", (f >= 2u && f <= 3u) || f == 5u || f == 6u);
+    vz_label(DX1 - 10, f == 2u ? "SIZE" : f == 3u ? "DEC" : "TAIL", (f >= 2u && f <= 3u) || f == 5u || f == 8u);
 }
 
 /* ------------------------------------------------------------- MODS --- */

@@ -19,7 +19,8 @@ REC records the other tracks onto the focused track's tape, with DUB for sound o
 a tape and holding SAVE undoes it. A track can also start with SYNTH instead (hold HOME, turn SELECT): a small
 subtractive synth, up to three voices, played on the white keys, which REC can print onto the track's tape. The
 devices after the source (GRAIN, RESONATOR, COLOR, SPACE) and the modulators don't make sound yet; that's phases 3
-to 7. Phases 1 and 2 are verified on the host only: nothing has been built
+to 7. Their knobs already carry the Torso S-4's names where they do the same job
+([docs/s4-alignment.md](docs/s4-alignment.md)). Phases 1 and 2 are verified on the host only: nothing has been built
 for or run on an FM-1 yet. The plan, with what the hardware allows and the order of the work, is in
 [docs/bryo-architecture.md](docs/bryo-architecture.md).
 
@@ -29,10 +30,10 @@ What works on the panel now (every control, in every context, with what's planne
 
 | Control | What it does |
 | --- | --- |
-| HOME | the track's source (TAPE or SYNTH); again for its next page (TAPE 2, TAPE 3: REEL; SYNTH's FILTER, AMP, VOICE) |
+| HOME | the track's source (TAPE or SYNTH); again for its next page (TAPE 2, TAPE 3: REEL and ROTATE; SYNTH's FILTER, AMP, VOICE) |
 | HOME held + SELECT | the track's source: TAPE or SYNTH (each keeps its own knobs) |
-| EDIT | GRAIN; again: GRAIN 2, RESONATOR |
-| FX | COLOR; again: COLOR 2, SPACE, SPACE 2 |
+| EDIT | GRAIN; again: GRAIN 2, GRAIN 3, RESONATOR, RESONATOR 2 |
+| FX | COLOR; again: COLOR 2, COLOR 3, SPACE, SPACE 2, SPACE 3 |
 | LFO ENV SEQ ARP | modulator slots 1 to 4; again for the slot's next page; held + SELECT: the slot's engine (LFO, ADSR, SEQ, FOLLOW) |
 | GLO, held | the mixer while held: white keys 1 to 4 pick the track, KNOB 1 to 4 set the levels |
 | GLO, tapped | the mixer stays up; tap again or press a page pad to leave |

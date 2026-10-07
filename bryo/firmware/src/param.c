@@ -39,42 +39,61 @@ static const char *const N_REEL[1u + NREEL + USLOT_N] = {"TAPE", REEL_NAMES_INIT
 
 static const char *const DEV_NAME[NDEV] = {"TAPE", "GRAIN", "RESONATOR", "COLOR", "SPACE"};
 
-/* Page 1 of each device is the PRD's four knobs. Page 2 (the same pad pressed again) holds what the sound needs
- * that the PRD left without a knob: wet levels, the switches the black keys flip, the grain's shape. A device
- * without a page 2 has empty labels there. */
+/* Page 1 of each device is the PRD's four knobs. The pages after it hold what the sound needs that the PRD left
+ * without a knob: wet levels, the switches the black keys flip, the shapes. The names follow the Torso S-4's
+ * devices where Bryo's does the same job (docs/s4-alignment.md): TAPE's SOS is DUB, MOSAIC's SPRAY is SPRY, and so
+ * on; the PRD's knob positions stay. A device's pages run until one whose first label is empty. */
+static const char *const N_PATN[4] = {"EVEN", "SWNG", "CLST", "RND"};
+static const char *const N_GSCAL[5] = {"OFF", "CHR", "MAJ", "MIN", "PEN"};
+static const char *const N_RSCAL[4] = {"HARM", "MAJ", "MIN", "PEN"};
+static const char *const N_SLOP[3] = {"LP", "BP", "HP"};
+static const char *const N_CMOD[3] = {"BIT", "RATE", "BOTH"};
 static const pdesc_t DEV_P[NDEV][NPK] = {
-    {   /* TAPE (the source: other source engines bring their own, phase 2) */
+    {   /* TAPE (the source when it's TAPE: SYNTH and POLY have their own tables) */
         {"STRT", 0, 100, 0, F_PCT}, {"LEN", 1, 100, 100, F_PCT},
-        {"SPD", -200, 200, 100, F_BIPCT}, {"DUB", 0, 100, 50, F_PCT},
-        /* 2: the loop's crossfade at its ends, reverse and half speed (OP5 and OP6 flip them too), the record gain */
-        {"FADE", 0, 100, 10, F_MS}, {"REV", 0, 1, 0, F_ENUM, N_OFFON},
+        {"SPD", -200, 200, 100, F_BIPCT}, {"DUB", -100, 100, 0, F_BIPCT},
+        /* 2: the crossfade at the loop's seam, reverse and half speed (OP5 and OP6 flip them too), the record gain */
+        {"XFAD", 0, 100, 10, F_MS}, {"REV", 0, 1, 0, F_ENUM, N_OFFON},
         {"HALF", 0, 1, 0, F_ENUM, N_OFFON}, {"GAIN", -12, 12, 0, F_DB},
         /* 3: what the track plays: its own tape, a factory reel or one of your reels (in flash; REC copies it onto
-         * the tape) */
-        {"REEL", 0, NREEL + USLOT_N, 0, F_ENUM, N_REEL}, {""}, {""}, {""}},
-    {   /* GRAIN */
-        {"SIZE", 5, 500, 80, F_MS}, {"DENS", 0, 100, 40, F_PCT},
-        {"TUNE", -24, 24, 0, F_ST}, {"SPRD", 0, 100, 30, F_PCT},
-        /* 2: dry/wet, the jitter of where grains read, the window (square .. smooth), the chance one plays back */
-        {"MIX", 0, 100, 100, F_PCT}, {"JIT", 0, 100, 20, F_PCT},
-        {"WIN", 0, 100, 50, F_PCT}, {"REV", 0, 100, 0, F_PCT}},
-    {   /* RESONATOR */
-        {"ROOT", 33, 81, 45, F_NOTE}, {"FDBK", 0, 100, 60, F_PCT},
-        {"DAMP", 0, 100, 40, F_PCT}, {"MIX", 0, 100, 0, F_PCT},
-        {""}, {""}, {""}, {""}},
-    {   /* COLOR */
+         * the tape); ROTATE: where in the loop playing (and slice 1) starts against the transport */
+        {"REEL", 0, NREEL + USLOT_N, 0, F_ENUM, N_REEL}, {"ROTA", 0, 99, 0, F_PCT}, {""}, {""}},
+    {   /* GRAIN (the S-4's MOSAIC) */
+        {"SIZE", 5, 500, 80, F_MS}, {"RATE", 0, 100, 40, F_PCT},
+        {"PTCH", -24, 24, 0, F_ST}, {"SPRD", 0, 100, 30, F_PCT},
+        /* 2: dry/wet, SPRAY (the jitter of where grains read), the window's contour (square .. smooth), the chance
+         * a grain plays backwards */
+        {"WET", 0, 100, 100, F_PCT}, {"SPRY", 0, 100, 20, F_PCT},
+        {"CONT", 0, 100, 50, F_PCT}, {"REV", 0, 100, 0, F_PCT},
+        /* 3: WARP: how fast the read point moves through the loop (0 freezes it, - backwards); the order grains
+         * fire in; their pitch held to a scale; a random pitch per grain, up to +-PRND semitones */
+        {"WARP", -200, 200, 100, F_BIPCT}, {"PATN", 0, 3, 3, F_ENUM, N_PATN},
+        {"SCAL", 0, 4, 0, F_ENUM, N_GSCAL}, {"PRND", 0, 12, 0, F_ST}},
+    {   /* RESONATOR (the S-4's RING) */
+        {"PTCH", 33, 81, 45, F_NOTE}, {"DEC", 0, 100, 60, F_PCT},
+        {"TONE", 0, 100, 60, F_PCT}, {"WET", 0, 100, 0, F_PCT},
+        /* 2: a filter before the strings (cutoff, resonance, its slope: low-, band- or high-pass), and the
+         * strings' tuning: the root's harmonics, or a scale's chord tones from the root */
+        {"CUT", 0, 127, 127, F_HZ}, {"RES", 0, 100, 0, F_PCT},
+        {"SLOP", 0, 2, 0, F_ENUM, N_SLOP}, {"SCAL", 0, 3, 0, F_ENUM, N_RSCAL}},
+    {   /* COLOR (the S-4's DEFORM) */
         {"DRIV", 0, 100, 0, F_PCT}, {"CRSH", 0, 100, 0, F_PCT},
-        {"NOIS", 0, 100, 0, F_PCT}, {"TONE", 0, 100, 50, F_PCT},
-        /* 2: the output level (drive adds loudness), dry/wet, the sample-rate reduction (CRSH keeps the bits), and
-         * the threshold the noise's envelope opens at */
-        {"LVL", -24, 6, 0, F_DB}, {"MIX", 0, 100, 100, F_PCT},
-        {"SRR", 0, 100, 0, F_PCT}, {"GATE", 0, 100, 0, F_PCT}},
-    {   /* SPACE */
+        {"NOIS", 0, 100, 0, F_PCT}, {"TILT", -100, 100, 0, F_BIPCT},
+        /* 2: the noise's decay after the sound that opens it, the noise's tone, what CRUSH takes (bits, the sample
+         * rate, both), dry/wet */
+        {"NDEC", 0, 127, 40, F_TIME}, {"NTON", -100, 100, 0, F_BIPCT},
+        {"CMOD", 0, 2, 0, F_ENUM, N_CMOD}, {"WET", 0, 100, 100, F_PCT},
+        /* 3: the output level (drive adds loudness) */
+        {"LVL", -24, 6, 0, F_DB}, {""}, {""}, {""}},
+    {   /* SPACE (the S-4's VAST) */
         {"TIME", 10, 370, 250, F_MS}, {"FDBK", 0, 100, 30, F_PCT},
         {"SIZE", 0, 100, 50, F_PCT}, {"DEC", 0, 100, 40, F_PCT},
-        /* 2: the delay's and the reverb's wet levels, the reverb's pre-delay, the stereo width */
-        {"DMIX", 0, 100, 30, F_PCT}, {"RMIX", 0, 100, 30, F_PCT},
-        {"PRE", 0, 200, 20, F_MS}, {"WIDE", 0, 100, 100, F_PCT}},
+        /* 2: the delay's and the reverb's levels, a tone on both (- low-pass, + high-pass, on the feedback and the
+         * tail), the stereo spread */
+        {"DLY", 0, 100, 30, F_PCT}, {"VERB", 0, 100, 30, F_PCT},
+        {"TONE", -100, 100, 0, F_BIPCT}, {"SPRD", 0, 100, 100, F_PCT},
+        /* 3: the reverb's pre-delay */
+        {"PRE", 0, 200, 20, F_MS}, {""}, {""}, {""}},
 };
 
 /* The source engines: what starts a track's chain (docs/bryo-architecture.md, "Source engines"). TAPE's knobs are

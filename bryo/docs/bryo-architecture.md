@@ -402,6 +402,8 @@ After phase 1, two changes to the screen, from your review:
   | COLOR 2 | LVL, MIX, SRR, GATE | drive adds loudness with nothing to take it back; a blend; the rate split off CRSH (which keeps the bits); where the noise's envelope opens |
   | SPACE 2 | DMIX, RMIX, PRE, WIDE | the PRD gives no wet level for the delay or the reverb; the reverb's pre-delay; the stereo width |
 
+  (Since renamed to the Torso S-4's names, with more pages: see `docs/s4-alignment.md`.)
+
   RESONATOR stays at one page: its four knobs already cover it. (The modulators' pages are under "Modulators".) Every page 2 knob also shows in the
   picture below, not only as a number: GAIN scales (and clips) the sample on the tape, FADE draws ramps at the
   loop's ends, REV and HALF turn and halve the chevrons; WIN rounds the grains, REV makes some hollow, JIT adds

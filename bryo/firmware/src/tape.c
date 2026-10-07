@@ -15,9 +15,10 @@
  * 256 samples. Two readers per track: the head, and the old head while a jump (the loop's seam, a slice) fades out.
  *
  * Writing (audio ISR, REC): the writer decodes the block under the head into a staging buffer, mixes each sample
- * (old x DUB + input x GAIN), and when the head leaves the block encodes the whole block back, starting from the
- * block's own stored state. Blocks after it keep their own states, so nothing else changes; a reader re-decodes a
- * block after it is committed, so it sees the old block or the new one, never a mix.
+ * (old x its share + input x its share x GAIN: DUB's balance, tape_dub), and when the head leaves the block encodes
+ * the whole block back, from a decoder state fitted to its new first sample (stored in the block). Blocks after it
+ * keep their own states, so nothing else changes; a reader re-decodes a block after it is committed, so it sees the
+ * old block or the new one, never a mix.
  *
  * Clearing (the POLY key, held) marks the tape empty and keeps its data, so SAVE held can undo it until the next
  * recording writes over it.
@@ -34,7 +35,7 @@
 #define TAPE_DECLICK 88              /* the shortest fade (a jump, start and stop): 2 ms at 44.1 kHz */
 
 /* the knobs (param.c DEV_P[DEV_SRC]) */
-enum { TK_STRT, TK_LEN, TK_SPD, TK_DUB, TK_FADE, TK_REV, TK_HALF, TK_GAIN, TK_REEL };
+enum { TK_STRT, TK_LEN, TK_SPD, TK_DUB, TK_FADE, TK_REV, TK_HALF, TK_GAIN, TK_REEL, TK_ROTA };
 
 typedef struct {                     /* a reel in flash (bryo_reels.h REELS_INIT) */
     const char *name;
@@ -83,7 +84,7 @@ typedef struct {                     /* ISR only */
     int32_t pos;                     /* the head, in samples Q12 (22.05 kHz units) */
     int32_t xpos;                    /* the old head during a fade */
     int32_t xf, xflen;               /* the fade: output samples left, its length */
-    int32_t stop_at;                 /* a slice played while stopped ends here (samples), -1: no end */
+    int32_t stop_left;               /* a slice played while stopped: the head's travel left (Q12), 0: no end */
     int32_t amp;                     /* start/stop ramp, Q15 */
     int32_t wlast;                   /* the last sample written, -1: none */
     uint16_t wblk;                   /* the staged block */
@@ -309,8 +310,17 @@ static void tape_commit(uint32_t t)
         rt->b.ok = 0;
 }
 
-/* sample i of the RAM tape becomes old x dub + in */
-static void tape_write(uint32_t t, int32_t i, int32_t in, int32_t dub)
+/* sample i of the RAM tape becomes old x keep % + in (in: already scaled by its share) */
+/* DUB (-100..100) as the old sound's and the new sound's shares, in %: the S-4's SOS, a Morphagene's SOS. 0 is
+ * sound on sound (both whole); toward +100 the input fades and the loop stays (+100: REC changes nothing); toward
+ * -100 the loop fades on each pass under the input (-100: the input replaces it) */
+static void tape_dub(int32_t dub, int32_t *keep, int32_t *in)
+{
+    *keep = dub >= 0 ? 100 : 100 + dub;
+    *in = dub <= 0 ? 100 : 100 - dub;
+}
+
+static void tape_write(uint32_t t, int32_t i, int32_t in, int32_t keep)
 {
     tape_rt_t *rt = &tape_rt[t];
     tape_ram_t *m = &tape_ram[t];
@@ -321,7 +331,7 @@ static void tape_write(uint32_t t, int32_t i, int32_t in, int32_t dub)
         rt->wblk = (uint16_t)b;
         rt->wstaged = 1;
     }
-    rt->stage[(uint32_t)i % TAPE_BLK] = (int16_t)clamp(rt->stage[(uint32_t)i % TAPE_BLK] * dub / 100 + in, -32767, 32767);
+    rt->stage[(uint32_t)i % TAPE_BLK] = (int16_t)clamp(rt->stage[(uint32_t)i % TAPE_BLK] * keep / 100 + in, -32767, 32767);
 }
 
 /* ------------------------------------------------------------ the head --- */
@@ -338,14 +348,21 @@ static void tape_jump(uint32_t t, int32_t pos)
 
 /* white key k: play from slice k of the loop (16 slices); stopped, play just that slice (backwards from its end
  * when the tape runs in reverse) */
+/* where in the loop window [ls, ls + ll) the head sits at its offset o from ROTATE's start (wrapped) */
+static int32_t tape_rot(uint32_t t, int32_t ls, int32_t ll, int32_t o)
+{
+    int32_t r = (ll * tp[t].dev[DEV_SRC][TK_ROTA] / 100 + o) % ll;
+    return ls + (r < 0 ? r + ll : r);
+}
+
 static void tape_slice(uint32_t t, uint32_t k, int32_t ls, int32_t ll, int32_t inc)
 {
     tape_rt_t *rt = &tape_rt[t];
-    int32_t s0 = ls + ll * (int32_t)k / 16, s1 = ls + ll * ((int32_t)k + 1) / 16;
-    tape_jump(t, (inc < 0 ? s1 - 1 : s0) << 12);
+    int32_t o0 = ll * (int32_t)k / 16, o1 = ll * ((int32_t)k + 1) / 16;   /* (counted from ROTATE's start) */
+    tape_jump(t, (inc < 0 ? tape_rot(t, ls, ll, o1 - 1) : tape_rot(t, ls, ll, o0)) << 12);
     if (!sys.playing) {
         rt->running = 1;
-        rt->stop_at = inc < 0 ? s0 : s1;
+        rt->stop_left = (o1 - o0) << 12;              /* (a slice may run over the seam: its length, not its end) */
     }
 }
 
@@ -355,19 +372,23 @@ static void tape_block(uint32_t t, uint32_t keys, const int32_t *rec_in, int32_t
 {
     tape_rt_t *rt = &tape_rt[t];
     tape_view_t v;
-    int32_t ls, ll, inc = tape_inc(t), i, dub = tp[t].dev[DEV_SRC][TK_DUB], gain = db_q10(tp[t].dev[DEV_SRC][TK_GAIN]);
+    int32_t ls, ll, inc = tape_inc(t), i, keep, inl, gain = db_q10(tp[t].dev[DEV_SRC][TK_GAIN]);
     uint32_t k, press = keys & ~rt->keys_prev, playing = sys.playing;
     int rec = rec_in && tape_ctl[t].rec_ok && tape_src(t) == 0u;
     tape_view(t, &v);
     tape_window(t, v.len ? v.len : TAPE_LEN, &ls, &ll);
     rt->keys_prev = keys;
-    if (playing != rt->was_playing) {                  /* the transport: all heads from the loop's start */
+    tape_dub(tp[t].dev[DEV_SRC][TK_DUB], &keep, &inl);
+    gain = gain * inl / 100;
+    if (!inl)
+        rec = 0;                                       /* DUB +100: nothing comes in, so nothing is re-encoded */
+    if (playing != rt->was_playing) {                  /* the transport: all heads from the loop's start (ROTATE's) */
         rt->was_playing = (uint8_t)playing;
         if (playing) {
-            rt->pos = (inc < 0 ? ls + ll - 1 : ls) << 12;
+            rt->pos = tape_rot(t, ls, ll, inc < 0 ? -1 : 0) << 12;
             rt->xf = 0;
             rt->running = 1;
-            rt->stop_at = -1;
+            rt->stop_left = 0;
         } else {
             rt->running = 0;                           /* (the ramp fades it) */
         }
@@ -402,18 +423,18 @@ static void tape_block(uint32_t t, uint32_t keys, const int32_t *rec_in, int32_t
                 int32_t d = a > w ? 1 : -1;
                 for (w += d; w != a + d; w += d)
                     if (w >= 0 && w < (int32_t)v.len)
-                        tape_write(t, w, in, dub);
+                        tape_write(t, w, in, keep);
             } else if (rt->wlast < 0 && a >= 0 && a < (int32_t)v.len) {
-                tape_write(t, a, in, dub);
+                tape_write(t, a, in, keep);
             }
             rt->wlast = a;
         } else {
             rt->wlast = -1;
         }
         rt->pos += inc;
-        if (rt->stop_at >= 0 && (inc >= 0 ? rt->pos >> 12 >= rt->stop_at : rt->pos >> 12 < rt->stop_at)) {
+        if (rt->stop_left > 0 && (rt->stop_left -= inc < 0 ? -inc : inc) <= 0) {
             rt->running = 0;                           /* a slice played while stopped: its end */
-            rt->stop_at = -1;
+            rt->stop_left = 0;
         } else if (inc >= 0 && rt->pos >= (ls + ll) << 12) {
             tape_jump(t, rt->pos - (ll << 12));        /* the seam, crossfaded */
             rt->wlast = -1;
@@ -430,7 +451,7 @@ static void tape_init(void)
     uint32_t t;
     for (t = 0; t < NTRK; t++) {
         tape_rt[t].wlast = -1;
-        tape_rt[t].stop_at = -1;
+        tape_rt[t].stop_left = 0;
         tape_ctl[t].nblk = 0;
         tape_ctl[t].empty = 0;
     }

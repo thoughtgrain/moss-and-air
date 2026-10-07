@@ -14,6 +14,20 @@ None of GRAIN, RESONATOR, COLOR or SPACE makes sound yet (phases 4 and 5). Chang
 `param.c`, the pictograms and the screens. Once the DSP exists, the same change costs a rewrite, so now is the
 time to settle them.
 
+## Where it stands (2026-10-07)
+
+Items 1 and 2 below are done: the renames and new knobs on all four devices, and TAPE's ROTATE, bipolar DUB and
+XFAD. They're in `param.c` (the tables), `ui_px.c` (the pictograms, four new ones: pattern, scale, slope, crush
+mode), `ui_viz.c` (each picture follows its new knobs) and `tape.c`. Three things came out differently from the
+tables below, and the tables now say so:
+
+- **Positions:** the PRD fixed page 1 of each device, so I kept its knob positions and gave them the S-4's names.
+  GRAIN's page 1 is SIZE RATE PTCH SPRD, not the S-4's order.
+- **SPRAY:** I had mapped it onto GRAIN's SPRD. That was wrong. SPRD is Bryo's stereo spread; the jitter of where
+  grains read was JIT, so JIT became SPRY and SPRD stayed.
+- **DUB's negative half:** I couldn't verify what the S-4 does there, so I made DUB a balance between the loop and
+  the input, the way a Morphagene's SOS works. The details are under TAPE.
+
 ## The short version
 
 | Area | S-4 | Bryo now | Gap | What I'd do |
@@ -47,9 +61,9 @@ architecture doc already plans TAPE, SYNTH and POLY.
 | SPEED | SPD | the same: bipolar, ±200 % |
 | START | STRT | the same |
 | LENGTH | LEN | On the S-4, LENGTH past the sample adds silence. Bryo's is a % of what's there. Mine is simpler, so I'm keeping it. |
-| SOS (bipolar) | DUB (0..100) | SOS sets how much of the old loop survives each overdub pass. *(Unverified: what its negative half does.)* I'd make DUB bipolar -100..100: negative fades the old loop on each pass even without new input, and that's the tape-loop decay people use SOS for. |
-| XFADE | FADE | the same idea (the seam's crossfade). Rename to XFADE. |
-| ROTATE | none | Shifts the loop's content against the window without moving the window. It's cheap here: an offset added to the read and write position. Goes on page 3 beside REEL. |
+| SOS (bipolar) | DUB (-100..100, **done**) | A balance between the loop and the input. At 0 both are kept whole: plain sound on sound. Toward +100 the input fades and the loop stays; at +100 REC changes nothing (it doesn't even re-encode). Toward -100 the loop fades on each pass under the input; at -100 the input replaces it. So -50 with nothing coming in halves the loop every pass: the tape-loop decay people use SOS for. *(Unverified: whether the S-4's negative half is the same.)* |
+| XFADE | XFAD (**done**) | the same idea (the seam's crossfade). Four letters on the strip. |
+| ROTATE | ROTA (**done**, page 3 beside REEL) | Where in the loop window playing starts, and where slice 1 is counted from, against the transport. The seam's crossfade stays where it was, so rotating never adds a click. A slice can now run over the seam, so a slice played while stopped ends after its length rather than at a position. |
 | LEVEL | GAIN (record gain) | Different jobs. The mixer fader is the S-4's LEVEL. Keep GAIN. |
 | FREE / SYNC timing | none | In SYNC, START and LENGTH are in beats and bars. That needs the sequencer clock (phase 7), so I'll note it there. |
 | none | REV, HALF | Bryo's own (OP5 and OP6 flip them). Keep. |
@@ -58,18 +72,19 @@ architecture doc already plans TAPE, SYNTH and POLY.
 
 | S-4 | Bryo | Notes |
 | --- | --- | --- |
-| PITCH | TUNE | Rename to PTCH. |
-| RATE | DENS | The grain trigger rate. Rename to RATE. Keeping "density" in the docs is fine. |
+| PITCH | PTCH (was TUNE) | **done** |
+| RATE | RATE (was DENS) | the grain trigger rate. **done** |
 | SIZE | SIZE | the same |
-| CONTOUR | WIN | the grain's window. Rename to CONT. |
-| SPRAY | SPRD | the jitter of where grains read. Rename to SPRY. On the S-4 (OS 2.2) WARP's old job moved into SPRAY's modes. |
-| WET | MIX | Rename to WET. |
-| WARP | none | How fast the read point moves through the buffer: freeze at 0, time-stretch in between, forwards or backwards. That's the big one missing. Page 3. |
-| PATTERN | none | The order grains fire in (even, swung, clustered) *(unverified detail)*. Page 3. I'd start with 4 patterns. |
-| pitch scale | none | Quantizes grain pitch to a scale. Page 3 (SCAL), sharing RESONATOR's scale list. |
-| random pitch / level / reverse | JIT, REV | JIT becomes PRND (random pitch, ± semitones). REV (reverse chance) stays. |
+| CONTOUR | CONT (was WIN) | the grain's window. **done** |
+| SPRAY | SPRY (was JIT) | the jitter of where grains read. **done** (SPRD stays: it's the stereo spread, Bryo's own) |
+| WET | WET (was MIX) | **done** |
+| WARP | WARP (-200..200 %, page 3) | How fast the read point moves through the loop: 100 % plays at speed, 0 freezes it, negative runs backwards. **done** as a knob; the sound comes with GRAIN's DSP. |
+| PATTERN | PATN (EVEN SWNG CLST RND, page 3) | The order grains fire in *(the S-4's own patterns unverified)*. RND is the default, the scatter GRAIN always had. **done** |
+| pitch scale | SCAL (OFF CHR MAJ MIN PEN, page 3) | holds grain pitch to a scale. **done** |
+| random pitch | PRND (0..12 st, page 3) | a random pitch per grain. **done** |
+| reverse | REV | the chance a grain plays backwards: stays |
 
-That gives three pages: PTCH RATE SIZE SPRY / WET CONT REV PRND / WARP PATN SCAL (one knob left).
+So three pages: SIZE RATE PTCH SPRD / WET SPRY CONT REV / WARP PATN SCAL PRND.
 
 ## RESONATOR (the S-4's RING)
 
@@ -85,7 +100,9 @@ resonator tuned to a root note. Same family, different engine. The knob names ca
 | CUTOFF, RES, SLOPE | none | A filter in front of the resonator: cutoff, resonance, and SLOPE morphing LP → BP → HP. One state-variable filter does all three cheaply. Page 2. |
 | SCALE | none | Tunes the resonator's partials (or its 4 strings) to a scale: CHR MAJ MIN PEN *(the S-4's list unverified)*. Page 2. |
 
-That gives two pages: PTCH DEC TONE WET / CUT RES SLOP SCAL.
+That gives two pages: PTCH DEC TONE WET / CUT RES SLOP SCAL. **Done.** SCAL is HARM (the root's harmonics, as
+before), MAJ, MIN or PEN (that scale's chord tones stacked over three octaves). The filter starts open (CUT at the
+top, RES 0, LP), so nothing changes until you turn it. TONE runs the other way from DAMP: 0 is dark.
 
 ## COLOR (the S-4's DEFORM)
 
@@ -100,7 +117,8 @@ That gives two pages: PTCH DEC TONE WET / CUT RES SLOP SCAL.
 | WET | MIX | Rename to WET. |
 | none | LVL | Bryo's output trim. Keep (drive adds level). |
 
-That gives two pages: DRIV CRSH NOIS TILT / NDEC NTON CMOD WET, and LVL on page 3.
+That gives two pages: DRIV CRSH NOIS TILT / NDEC NTON CMOD WET, and LVL on page 3. **Done.** TILT and NTON are
+bipolar (0 is flat).
 
 ## SPACE (the S-4's VAST)
 
@@ -116,7 +134,7 @@ That gives two pages: DRIV CRSH NOIS TILT / NDEC NTON CMOD WET, and LVL on page 
 | TONE (bipolar HP / LP on the feedback and the reverb) | none | Add: one bipolar knob, the same DJ-style filter as the mixer's FILT. |
 | none | PRE | Bryo's pre-delay. Keep, on page 3. |
 
-That gives three pages: TIME FDBK SIZE DEC / DLY VERB TONE SPRD / PRE.
+That gives three pages: TIME FDBK SIZE DEC / DLY VERB TONE SPRD / PRE. **Done.**
 
 ## Mixer
 
@@ -133,13 +151,12 @@ master compressor to the main level. Each track also has four sends into any tra
 
 ## What I'd change, and when
 
-1. **Now, while it costs only tables:** the renames and the new knobs above, for GRAIN, RESONATOR, COLOR and
+1. **Done (2026-10-07):** the renames and the new knobs above, for GRAIN, RESONATOR, COLOR and
    SPACE (`param.c`, `ui_px.c` pictograms, `ui_viz.c`, the golden screens, `docs/controls.tsv`).
-2. **Now, with sound:** TAPE's ROTATE, bipolar DUB and XFADE (`tape.c`, its tests).
+2. **Done (2026-10-07):** TAPE's ROTATE, bipolar DUB and XFADE (`tape.c`, its tests).
 3. **Phase 4–5:** the DSP behind the new knobs (WARP, PATTERN, the resonator's filter and scale, noise decay,
    SPACE's TONE).
 4. **Phase 6:** sends and the master compressor.
 5. **Phase 7:** SYNC timing for TAPE.
 
-Items 1 and 2 change what's on screen and what the knobs are called, so I'm holding them until you've looked at
-this page. SYNTH doesn't depend on any of it.
+Items 1 and 2 changed what's on screen and what the knobs are called; you OK'd them on 2026-10-07.
