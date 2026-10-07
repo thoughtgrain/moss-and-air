@@ -35,12 +35,24 @@ A few places keep the upstream name on purpose:
 - **Compatibility identifiers.** The file formats (`felucca-patch`, `felucca-library`,
   `felucca-backup`), the editor's browser storage names and the SysEx protocol keep their names, so
   files and backups move between Felucca and Bryo. The tools accept a device named Bryo or Felucca.
-- **Build internals.** The `FELUCCA_*` build flags, `felucca.c`, `felucca_dbg` and the generated
-  `felucca_*.h` headers keep upstream's names. Renaming hundreds of internal identifiers would buy
-  nothing on the device, and it would make every upstream fix painful to merge.
-- **Upstream's own documents.** `LICENSE`, `LICENSING.md`, `CONTRIBUTING.md`, `BUILDING.md`
-  (apart from the release file names) and the README text under its banner describe Felucca, and
-  I leave them as upstream wrote them.
+- **Build internals.** The `FELUCCA_*` build flags, `felucca_dbg` and the generated `felucca_*.h`
+  headers keep upstream's names. They live in the files Bryo keeps from Felucca unchanged (the hardware
+  layer, USB, storage, the update path), and renaming them would make every upstream fix to those files
+  painful to merge. Bryo's own unity file is `bryo.c`.
+- **Upstream's own documents.** `LICENSE`, `LICENSING.md`, `CONTRIBUTING.md` and `BUILDING.md` (apart
+  from the release file names and the build's file name) describe Felucca, and I leave them as upstream
+  wrote them. Felucca's README is kept as `docs/FELUCCA-README.md`.
+
+## What changed: a rewrite of the instrument
+
+Since 2026-10-07 Bryo is a different instrument, not a modified Felucca: Felucca's synth engines, voices,
+sequencer, presets, menus, UI and web editor are removed (they're in this repository's history from the
+import commit on), and Bryo's own chain, parameter table and UI replace them. What Bryo keeps from Felucca,
+with Leo Kuroshita's copyright lines intact, is the hardware layer (`firmware/hal/`), the update loader and
+M-UPGRADE path (`firmware/loader/`, `ota.c`, `ota_hw.c`), USB (`usb.c`), storage (`storage.c`,
+`storage_hw.c`), the display and text (`lcd.c`, `gfx.c`, `icons.c`), the input map and calibration
+(`panel.c`), the audio ISR frame (`audio.c`), the output stage (`master.c`, moved from `fx.c`), the settings
+record (`settings.c`, Felucca's layout), the console, the boot code (`main.c`), the tools and the installer.
 
 ## If you distribute Bryo
 

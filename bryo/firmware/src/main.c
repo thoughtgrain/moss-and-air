@@ -1,6 +1,7 @@
 /* SPDX-License-Identifier: GPL-3.0-only
  * Copyright (C) 2026 Leo Kuroshita (@kurogedelic), Hügelton Instruments */
-/* FELUCCA boot and main loop. Boot order: WDT first, boot-loop guard, fatal vectors,
+/* Bryo boot and main loop (Felucca's, kept: the watchdog, the boot-loop guard, the timers, the UBOOT countdown,
+ * the update entry and calibration; only the app's init and frame are Bryo's). Boot order: WDT first, boot-loop guard, fatal vectors,
  * guards; then LCD, input (TIMER5 IRQ, 10 kHz), audio (ALNK0 IRQ). */
 extern uint32_t _data_start[], _data_end[], _data_load[], _bss_start[], _bss_end[];
 extern uint32_t _pool_start[], _pool_end[], _rt_start[], _rt_end[], _rt_load[];
@@ -94,32 +95,16 @@ static void fm1_fault(const fm1_crash_t *c)
     fm1_reboot();
 }
 
-/* power-on: the parts with their default sounds (TRK_DEF); the sequencers empty */
-static void felucca_init(void)
+/* power-on: every track's devices and modulator slots at their defaults, the test voices ready */
+static void bryo_init(void)
 {
-    uint32_t i;
-    chain_defaults(&chain_config);
-    for (i = 0; i < G_COUNT; i++)
-        song.g[i] = GP[i].def;
-    undo_depth++;                             /* (no undo copy of the power-on loads) */
-    fm6_init();                               /* every track's FM6 patch: the init voice */
-    for (i = 0; i < NTRK; i++) {
-        track_t *t = &trk[i];
-        track_defaults(t);
-        set_engine_of(t, TRK_DEF[i][0]);
-        apply_preset_to(t, TRK_DEF[i][1]);    /* with its sends */
-        t->engine = t->eng_req;
-        track_defaults_steps(t);              /* (a sound load never touches them) */
-        if (TRK_DEF[i][2])
-            load_pat16(t, PATTERNS[TRK_DEF[i][2] - 1u].note, PATTERNS[TRK_DEF[i][2] - 1u].flags);
-        pat_sig[i] = steps_sig(t);            /* a default pattern, not the user's */
-        pat_last[i] = TRK_DEF[i][2];
-    }
-    undo_depth--;
-    song.sel = 0;
-    song.master_q12 = 2048;
-    ui.home = 1;
-    ui.force = 1;
+    param_defaults();
+    chain_init();
+    ui_init();
+    sys.sel = 0;
+    sys.bpm = 120;
+    sys.master_q12 = 2048;
+    sys.keys_live = 1;
 }
 
 static void fm1_main(void)
@@ -135,7 +120,7 @@ static void fm1_main(void)
     lcd_init();
     lcd_fill(0, 0, 240, 240, T_BG);
     draw_text_box(0, 94, 240, &AF_L, "BRYO", T_THEME, 1);
-    draw_text_box(0, 134, 240, &AF_S, "MULTI-ENGINE SYNTH", T_MID, 1);
+    draw_text_box(0, 134, 240, &AF_S, "4-TRACK SOUND SCULPTING", T_MID, 1);
     if (felucca_dbg.magic != DBG_MAGIC) {
         memset(&felucca_dbg, 0, sizeof felucca_dbg);
         felucca_dbg.magic = DBG_MAGIC;
@@ -152,7 +137,7 @@ static void fm1_main(void)
     fm1_input_init();
     fm1_adc_init();
     panel_init();
-    felucca_init();
+    bryo_init();
     audio_init();
     usb_start();
 #if FELUCCA_UART
@@ -180,7 +165,7 @@ static void fm1_main(void)
         {
             int32_t b = fm1_adc_read(FM1_ADC_BATT);     /* battery: slow IIR */
             if (b > 0)
-                song.batt_raw = song.batt_raw ? song.batt_raw + (b - song.batt_raw) / 32 : b;
+                sys.batt_raw = sys.batt_raw ? sys.batt_raw + (b - sys.batt_raw) / 32 : b;
         }
         {
             int32_t a = fm1_adc_read(FM1_ADC_MASTER);
@@ -188,7 +173,7 @@ static void fm1_main(void)
                 uint32_t k10;
                 knob += (a * 16 - knob) / 8;
                 k10 = (uint32_t)(knob / 16);
-                song.master_q12 = (k10 * k10) >> 8;            /* 0 .. ~4096 */
+                sys.master_q12 = (k10 * k10) >> 8;            /* 0 .. ~4096 */
             }
         }
         {   /* OCT- + OCT+ held 5 s: enter UBOOT with RAM intact (debug / update); a countdown
@@ -220,15 +205,15 @@ static void fm1_main(void)
             }
         }
 #if FELUCCA_OTA
-        ed_service();                                   /* web editor SysEx */
         ota_service();                                  /* M-UPGRADE handshake */
         if (usb.ota_req) {                              /* M-UPGRADE upgrade command */
             usb.ota_req = 0;
-            panic_req = (1u << NTRK) - 1u;               /* every track (bit per track) */
+            chain_panic();                              /* no key plays during the update */
             if (flash_ok)
                 ota_session();                          /* returns only if nothing was committed */
             lcd_fill(0, 0, 240, 240, T_BG);
             ui.force = 1;
+            sys.keys_live = 1;
         }
 #endif
         if (usb.uboot_req) {                            /* SysEx F0 22 24 35 7D F7 from the host */
@@ -245,8 +230,8 @@ static void fm1_main(void)
         cdc_task();
 #endif
         felucca_dbg.ui_frames++;
-        felucca_dbg.page = ui.page;
-        felucca_dbg.home = ui.home;
+        felucca_dbg.page = ui.kind == FOCUS_SLOT ? 8u + ui.slot : ui.dev;   /* breadcrumbs: what the screen shows */
+        felucca_dbg.home = ui.view;
         felucca_dbg.stage = 1;
         ui_input();
         settings_poll();                              /* queued settings save: only while stopped */
@@ -254,12 +239,8 @@ static void fm1_main(void)
         ui_leds();
         ui_draw();
         felucca_dbg.stage = 9;
-        while (fm1_ms - m < 15u) {                               /* ~60 UI frames/s at most */
+        while (fm1_ms - m < 15u)                                 /* ~60 UI frames/s at most */
             ui_input();
-#if FELUCCA_OTA
-            ed_service();                       /* editor replies without waiting for the next frame */
-#endif
-        }
     }
 }
 

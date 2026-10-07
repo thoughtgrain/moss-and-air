@@ -4,9 +4,9 @@
 """Build the main-loop code for size (build.py): the functions defined in SIZE_FILES get LLVM's
 minsize (about -Oz) while everything else (the sound, render and ISR code, the flash and OTA code,
 the main loop) keeps -Os. The JieLi clang 4 has no '#pragma clang attribute' and its minsize
-attribute is an error on variables, so build.py compiles felucca.c to LLVM IR without the
+attribute is an error on variables, so build.py compiles bryo.c to LLVM IR without the
 optimizer, this script adds 'minsize' to those definitions, and the IR is then compiled at -Os
-(without the edit, that round trip is byte-identical to compiling felucca.c directly).
+(without the edit, that round trip is byte-identical to compiling bryo.c directly).
   size_fns.py IN.ll OUT.ll"""
 import re
 import sys
@@ -14,10 +14,8 @@ from pathlib import Path
 
 _ROOT = Path(__file__).resolve().parents[1]
 SRC = _ROOT / "firmware" / "src" if (_ROOT / "firmware" / "src").is_dir() else _ROOT / "src"   # either layout
-# the UI, the stores, the editor and the console: main loop only, never called by sound code
-SIZE_FILES = ["ui.c", "favorites.c", "icons.c", "ui_graph.c", "ui_draw.c", "ui_menu.c", "ui_input.c",
-              "storage.c", "upreset.c", "project.c", "settings_persist.c",
-              "editor.c", "editor_preferences.c", "editor_backup.c", "console.c"]
+# the UI, the stores and the console: main loop only, never called by sound code (Bryo's files)
+SIZE_FILES = ["ui.c", "icons.c", "ui_input.c", "panel.c", "param.c", "storage.c", "settings.c", "console.c"]
 DEF = re.compile(r"^(?:static|void|int|uint\w*|int\w*|const)\b[^;=(]*?\b([A-Za-z_]\w*)\s*\(", re.M)
 IR_DEF = re.compile(r"^(define [^\n]*?@\"?([\w.]+)\"?\([^\n]*\)(?: unnamed_addr| local_unnamed_addr)?)( #\d+[^\n]*\{)$",
                     re.M)

@@ -3,7 +3,7 @@
 /* Physical panel: which matrix button / encoder carries which printed label.
  * The matrix ids are known, the printed labels are not, so
  * the mapping is a table with a best guess, overridable by HARDWARE CALIBRATION
- * (hold OCT- and OCT+ while powering on): FELUCCA asks for each label in turn.
+ * (hold OCT- and OCT+ while powering on): it asks for each label in turn (panel_setup, below).
  * The learned table lives in .noinit and, with FELUCCA_FLASH, in flash with
  * the settings (project.c); read it back with `fm1t memr` to bake it in. */
 enum { B_FX, B_SCL, B_ENV, B_LFO, B_EDIT, B_GLO, B_HOME, B_SAVE, B_ARP, B_SEQ, B_PLAY, B_REC,
@@ -67,7 +67,7 @@ static int32_t panel_enc(uint32_t role)
 #define SETTINGS_MAGIC_OLD 0x53455433u          /* "SET3" */
 struct { uint32_t magic, palette, lowcut, zoom; } settings __attribute__((section(".noinit")));
 
-static void settings_save(void);              /* project.c: flash copy (FELUCCA_FLASH) */
+static void settings_save(void);              /* settings.c: flash copy (FELUCCA_FLASH) */
 
 /* HOLD (menu): how long a button is held before its layer opens (ui_input.c). Saved in the settings record's
  * retired bold field as HOLD_TAG | index; any other value there (0 or 1 from older firmware) is the default */
@@ -123,4 +123,93 @@ static void settings_init(void)
     }
     palette_set(settings.palette);
     fx_lowcut = (uint8_t)(settings.lowcut % 3u);
+}
+
+/* ------------------------------------------------- HARDWARE CALIBRATION --- */
+/* OCT- + OCT+ held at power-on (main.c): press each button and turn each encoder as asked; the learned table is
+ * saved with the settings. 30 s without input cancels and keeps the old table. */
+#define SETUP_IDLE_MS 30000u
+#define SETUP_HEAD_MY CAP_IN(M, 24)              /* the title in a 24 px band, as Felucca drew it */
+static void setup_title(void)
+{
+    lcd_fill(0, 0, 240, 240, T_BG);
+    {   /* the title with its icon (the menu row's), centred together; M from y 8 as before */
+        const char *t = "HARDWARE CALIBRATION";
+        int32_t x = (240 - (16 + 6 + text_w(&AF_M, t))) / 2;
+        cv_begin(240, 24, T_BG);
+        GFX_HOOK_ALIGN(0, 0, 240, 0, AL_H | AL_N(2), "calibration title centred");
+        GFX_HOOK_ALIGN(0, SETUP_HEAD_MY + AF_M_CAP_Y, 0, SETUP_HEAD_MY + AF_M_CAP_Y + AF_M_CAP_H, AL_V | AL_PASS,
+                       "header icon on its title's line");
+        cv_icon_mid(x, 12, 16, ICON_X_DOCTOR, T_THEME, T_BG);
+        cv_text(x + 22, SETUP_HEAD_MY, &AF_M, t, T_TEXT);
+        cv_blit(0, 5);
+    }
+    draw_text_box(0, 32, 240, &AF_S, "TEACH EACH BUTTON AND KNOB", T_MID, 1);
+    lcd_fill(16, 56, 208, 1, T_LINE);
+}
+static void setup_show(const char *what, const char *name)     /* "PRESS" / "TURN RIGHT", the control */
+{
+    draw_text_box(0, 80, 240, &AF_S, what, T_MID, 1);
+    draw_text_box(0, 100, 240, &AF_L, name, T_THEME, 1);
+}
+static void panel_setup(void)
+{
+    uint32_t i, used = 0, t0 = fm1_ms;
+    const panel_t old = panel;
+    setup_title();
+    while (fm1_in.buttons) {                             /* wait for OCT-/OCT+ release */
+        fm1_wdt_feed();
+        if (fm1_ms - t0 > SETUP_IDLE_MS)
+            goto timeout;
+    }
+    fm1_input_edges(0);
+    for (i = 0; i < NB; i++) {
+        uint32_t p = 0, id;
+        setup_show("PRESS", B_NAME[i]);
+        t0 = fm1_ms;
+        while (!(p & ~used)) {
+            fm1_wdt_feed();
+            p |= fm1_input_edges(0);
+            if (fm1_ms - t0 > SETUP_IDLE_MS)
+                goto timeout;
+        }
+        for (id = 0; id < 14u; id++)
+            if (((p & ~used) >> id) & 1u)
+                break;
+        panel.btn[i] = (uint8_t)id;
+        used |= 1u << id;
+    }
+    used = 0;
+    for (i = 0; i < NE; i++) {
+        uint32_t e;
+        int32_t st = 0;
+        setup_show("TURN RIGHT", E_NAME[i]);
+        for (e = 0; e < 7u; e++)
+            fm1_enc_take(e);
+        t0 = fm1_ms;
+        for (;;) {
+            fm1_wdt_feed();
+            if (fm1_ms - t0 > SETUP_IDLE_MS)
+                goto timeout;
+            for (e = 0; e < 7u; e++)
+                if (!((used >> e) & 1u) && (st = fm1_enc_take(e)) != 0)
+                    break;
+            if (e < 7u)
+                break;
+        }
+        panel.enc[i] = (uint8_t)e;
+        panel.dir[i] = (int8_t)(st > 0 ? 1 : -1);
+        used |= 1u << e;
+        fm1_delay_ms(300);
+        fm1_enc_take(e);
+    }
+    panel.magic = PANEL_MAGIC;
+    lcd_fill(0, 0, 240, 240, T_BG);
+    ui_redraw();
+    return;
+timeout:
+    panel = old;
+    lcd_fill(0, 0, 240, 240, T_BG);
+    ui_redraw();
+    ui_message("SETUP CANCELLED");
 }

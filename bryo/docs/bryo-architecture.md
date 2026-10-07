@@ -276,13 +276,46 @@ Tests, under `bryo/tests/`, all host-run:
 - Kept from Felucca: `input_test`, `storage_test`, `usb_desc_test`, `uac_test`, `ota_test`, `ldr_test`,
   `install_test.py` and the installer's web tests, so the hardware and install paths stay covered
 
+## Phase 1, as built (2026-10-07)
+
+Done: `bryo.c` builds the kept hardware layer with Bryo's core, and Felucca's instrument is removed (96 files).
+
+| File | What it is |
+| --- | --- |
+| `firmware/src/bryo.c` | the unity build |
+| `firmware/src/bryo.h` | the shared state (`sys`), frame sizes, the key layout (white 0..15, black OP1..0) |
+| `firmware/src/chain.c` | the four tracks per control block; a test voice per track for now; shedding |
+| `firmware/src/master.c` | Felucca's output stage, moved from `fx.c` unchanged |
+| `firmware/src/param.c` | five devices and four modulator slots per track, four knobs each, with the PRD's names |
+| `firmware/src/settings.c` | the settings record, kept in Felucca's layout so calibration and USB prefs carry over |
+| `firmware/src/ui.c`, `ui_input.c` | the header, the 4-value strip with dials, the track tiles, the footer; pads, keys, knobs, LEDs |
+| `firmware/src/panel.c` | the panel map plus HARDWARE CALIBRATION (moved here from Felucca's UI) |
+| `tests/bryo_host.c` | the chain, the input mapping, the settings carry-over, every screen in every palette |
+| `tests/bryo_golden.txt` | the screens' pixel fingerprints |
+| `tests/run_tests.sh` | everything above plus a clang type check of the firmware and the kept hardware tests |
+
+How I verified it without the JieLi toolchain: `clang -fsyntax-only -m32` over `bryo.c` in every build-flag
+combination (zero diagnostics; the unchanged Felucca tree also gives zero, so it's a fair stand-in for the
+compiler's front end), `build.py`'s register-access rules, the kept hardware tests, and Bryo's own host tests.
+**Not verified: a device build and a run on the FM-1.** That needs `./build.sh` on a machine with the toolchain.
+
+The installer also learned one thing: on a device running Bryo, "Return to official V15" skips Felucca's backup
+step (Bryo has no Felucca-format data) and asks for a confirmation instead.
+
+Porting the material files: they're gone from the tree but not from history. For example
+`git show 6aa6073:moss/firmware/src/eng_grain.c` prints Felucca's GRAIN engine as imported.
+
+Still open from phase 1: Felucca's MENU is gone (palette, speaker EQ, LEDs, HOLD, USB serial, ABOUT with the
+source QR code). The settings it wrote still apply. **Which gesture opens Bryo's system menu is a question for
+you** (Felucca used HOME held; Bryo's HOME is a device pad).
+
 ## Build order
 
 Each phase ends in something you can flash and hear or see, and each is its own commit series.
 
 | Phase | What | Done when |
 | --- | --- | --- |
-| 1. Skeleton | `bryo.c` boots on the kept hardware layer; the old app code is removed; silence plus a test tone; the header and an empty strip; install, UBOOT and calibration still work | it installs from the web installer and returns to stock |
+| 1. Skeleton (**done**, host-verified) | `bryo.c` boots on the kept hardware layer; the old app code is removed; silence plus a test tone; the header and an empty strip; install, UBOOT and calibration still work | it installs from the web installer and returns to stock |
 | 2. Sources + TAPE + reels | the source_t interface; tapes play factory reels; slices on the white keys; REC and overdub (resampling); the upload tool fills reel slots | you can load, slice, record and overdub a loop |
 | 3. USB audio in + SYNTH | the UAC OUT endpoint, drift handling, INPUT = USB; the SYNTH source | you can record your computer and play the synth onto a tape |
 | 3b. GRAIN | the scheduler, the sounding cap, FREEZE (key 0) | grains run on 4 tracks inside the budget |

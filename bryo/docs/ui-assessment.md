@@ -1,3 +1,7 @@
+> **Historical.** This assessment is of Felucca 1.0.3's screens, before Bryo's rewrite removed them
+> (2026-10-07). The files it names are in the repository's history; Bryo's own screens are drawn by
+> `firmware/src/ui.c` and tested by `tests/bryo_host.c`.
+
 # Bryo UI assessment: every screen, and how many share one pattern
 
 Written 2026-10-07 against the Felucca 1.0.3 import (`b22a24b`). I haven't changed any firmware yet. This is

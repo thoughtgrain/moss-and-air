@@ -110,26 +110,12 @@ static inline int32_t tsvf_lp(const tsvf_t *c, int32_t in, int32_t *ic1, int32_t
     return v2;
 }
 
-/* amplitude ramp over the block. Blocks are always CTL long, so x / CTL is a
- * shift (rounded towards zero, as a division); the compiler at -Os keeps
- * even constant divisions as a hardware divide, once per sample and voice */
+/* Blocks are always CTL long, so x / CTL is a shift (the compiler at -Os keeps even constant divisions as a
+ * hardware divide) */
 #define CTL_LOG2 5
 #if (1 << CTL_LOG2) != CTL
 #error "CTL_LOG2 does not match CTL"
 #endif
-static inline int32_t amp_at(const vmod_t *m, uint32_t i)
-{
-    int32_t x = (m->amp1 - m->amp0) * (int32_t)i;
-    return m->amp0 + ((x + ((x >> 31) & (CTL - 1))) >> CTL_LOG2);
-}
-
-/* a voice's sample s (Q15) at the amplitude ramp's sample i, scaled to the voice level (VOICE_FS);
- * engines whose signal peaks near half scale add it << 1 */
-static inline int32_t voice_amp(int32_t s, const vmod_t *m, uint32_t i)
-{
-    return mulq15(mulq15(s, amp_at(m, i)), VOICE_FS);
-}
-
 /* linear up to k, then a soft knee: only the peaks above k saturate (|y| - k must stay < 2^30) */
 static inline int32_t soft_knee(int32_t y, int32_t k)
 {

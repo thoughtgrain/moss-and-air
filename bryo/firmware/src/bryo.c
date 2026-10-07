@@ -1,12 +1,9 @@
-/* SPDX-License-Identifier: GPL-3.0-only
- * Copyright (C) 2026 Leo Kuroshita (@kurogedelic), Hügelton Instruments */
-/* FELUCCA: one compilation unit (the HAL is header-only). Each file uses what the files above it
- * define, so the order matters. */
+/* SPDX-License-Identifier: GPL-3.0-only */
+/* Bryo: the whole app as one translation unit (the unity build Felucca used: tools/build.py compiles this file).
+ * Felucca's hardware layer, update path, USB, storage, display and input are kept as they were; the instrument
+ * (the four tracks, their devices, the UI) is Bryo's. Build flags keep their FELUCCA_* names (NOTICE.md says
+ * why). Order: config, HAL, generated tables, base and display, the Bryo core, sound, I/O, UI, stores, main. */
 
-/* ---------------------------------------------------- build options --- */
-/* build.py: FELUCCA_<NAME>=0 / 1 in the environment overrides these. Elsewhere: FELUCCA_SLICE, FELUCCA_FM4
- * (core.h: the SLICE engine, the DIGITAL engine), FELUCCA_ICONS (icons.c, the parameter icons; on by default),
- * FELUCCA_OTA_RAMONLY (ota.c). */
 #ifndef FELUCCA_FLASH
 #define FELUCCA_FLASH 1          /* flash driver + storage.c: settings, projects, user presets */
 #endif
@@ -57,46 +54,41 @@
 #include "lcd.c"
 #include "gfx.c"
 
-/* ----------------------------------------------------------- sound --- */
-#include "core.h"
-#include "engines.c"             /* dsp.c, the eng_*.c files, the factory patterns */
-#include "params.c"
-#include "mod.c"               /* the modulation matrix, used by voice.c and fx.c */
-#include "voice.c"
-#include "slicer.c"              /* per-track SLICER insert, used by fx.c */
-#include "fx.c"
+/* ------------------------------------------------------- Bryo core --- */
+#include "bryo.h"
+static void ui_message(const char *s);   /* ui.c: used by panel.c's calibration */
+static void ui_redraw(void);
 
-/* ------------------------------------------------- MIDI, sequencer --- */
+/* ----------------------------------------------------------- sound --- */
+#include "dsp.c"                 /* fixed-point helpers (Felucca's) */
+#include "master.c"              /* the output stage: DC block, speaker EQ, limiter, USB level */
+#include "param.c"               /* the parameter table: devices and modulator slots per track */
+#include "chain.c"               /* the four tracks, rendered per control block */
+
+/* ------------------------------------------------------------- I/O --- */
 #include "usb.c"
 #if FELUCCA_UART
 #include "midi_uart.c"
 #endif
-#include "song_chain.c"
-#include "seq.c"
 #include "audio.c"
 
 /* -------------------------------------------------------------- UI --- */
-#include "panel.c"
-#include "ui.c"
-#include "icons.c"               /* parameter icons (FELUCCA_ICONS), used by ui_draw.c */
-#include "ui_graph.c"
-#include "ui_draw.c"
-#include "ui_menu.c"
-#include "ui_input.c"
-#include "ui_layer.c"              /* the quick layers (FX GLO SCL EDIT held) */
+#include "icons.c"
+#include "panel.c"               /* the panel map, the settings in RAM, HARDWARE CALIBRATION */
 
-/* --------------------------------------------- storage, update, editor --- */
+/* ---------------------------------------------------------- stores --- */
 #if FELUCCA_FLASH
 #include "fm1_flash.h"
 #include "storage_hw.c"
 #include "storage.c"
 #endif
-#include "upreset.c"             /* user presets (RAM mirror; flash with FELUCCA_FLASH) */
-#include "project.c"
+#include "settings.c"            /* the settings record (Felucca's layout, kept) */
+
+#include "ui.c"
+#include "ui_input.c"
 #if FELUCCA_OTA
 #include "ota.c"
 #include "ota_hw.c"
-#include "editor.c"              /* web editor SysEx (needs the OTA SysEx plumbing) */
 #endif
 #if FELUCCA_CDC
 #include "console.c"

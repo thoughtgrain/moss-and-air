@@ -48,7 +48,7 @@ and the version string `v1.0`; the package is `build/bryo-1.0.fwsc`, and
 (`bryo-1.0-app.bin`), `SHA256SUMS`, the sample attribution, `LICENSE`, `LICENSING.md` and
 `LICENSES/` (the package contains Apache-2.0 SDK files, so the licence texts travel with it).
 
-Build options (environment, `0` or `1`; defaults in `firmware/src/felucca.c`, `core.h` and `icons.c`):
+Build options (environment, `0` or `1`; defaults in `firmware/src/bryo.c` and `icons.c`):
 
 | Flag | Default | |
 | --- | --- | --- |

@@ -2,8 +2,8 @@
  * Copyright (C) 2026 Leo Kuroshita (@kurogedelic), Hügelton Instruments */
 /* Icons: 4-bit alpha cells of the Fukiai icon font (MIT), 12 px (parameters, lists) and 16 px
  * (header, dialogs, menu): web/fukiai.ttf -> build/gen/ui_icons.h
- * (tools/gen_aa_icons.py; names from assets/icons.json). Which icon a parameter gets is decided
- * here, by its label. FELUCCA_ICONS=0 turns the parameter icons off (labels get their full width back). */
+ * (tools/gen_aa_icons.py; names from assets/icons.json). Bryo keeps the cells and the label lookup; Felucca's
+ * per-parameter, engine and page icons went with its instrument. FELUCCA_ICONS=0 turns the parameter icons off (labels get their full width back). */
 #include "ui_icons.h"
 #ifndef FELUCCA_ICONS
 #define FELUCCA_ICONS 1
@@ -171,110 +171,6 @@ static uint32_t icon_for_label(const char *l)
     return ICON_GENERIC;
 }
 
-/* WAVE / WAVE2 set to a shape: that shape's icon (value names of the engines and the LFO) */
-static const icon_map_t WAVE_ICON[] = {
-    {"SIN", ICON_W_SIN}, {"TRI", ICON_W_TRI}, {"SAW", ICON_W_SAW}, {"SQR", ICON_W_SQR},
-    {"PLS", ICON_W_PLS}, {"PWM", ICON_W_PWM}, {"S&H", ICON_W_SH}, {"NOIS", ICON_NOISE},
-    {"DSIN", ICON_W_DSIN}, {"SPLS", ICON_W_SPLS}, {"RSAW", ICON_W_RSAW}, {"RTRI", ICON_W_RTRI},
-    {"RTRP", ICON_W_RTRP},
-};
-
-static uint32_t param_icon(const param_desc_t *d, int32_t v)
-{
-    uint32_t i;
-    if (!d)
-        return ICON_NONE;
-    if (d->fmt == F_ENUM && d->names && v >= d->min && v <= d->max &&
-        (str_eq(d->label, "WAVE") || str_eq(d->label, "WAVE2")))
-        for (i = 0; i < sizeof(WAVE_ICON) / sizeof(WAVE_ICON[0]); i++)
-            if (str_eq(d->names[v], WAVE_ICON[i].label))
-                return WAVE_ICON[i].icon;
-    if (d == &TP[P_LWAVE])
-        return ICON_LFO_WAVE;                 /* "WAVE" is also the oscillator wave */
-    if (d == &TP[P_ARATE] || d == &TP[P_SLRATE])
-        return ICON_DIVISION;                 /* arp / SLICER RATE is a note division, not Hz */
-    if (d->names == N_TRIO_MODE)
-        return ICON_CUTOFF;                   /* TRIO's MODE is the filter type, not the arp mode */
-    if (d->names == N_NOISE_MODE)
-        return ICON_NOISE;                    /* NOISE's MODE is the source; its CLK the register clock */
-    if (d == &NOISE_CLK)
-        return ICON_RATE;
-#if FELUCCA_SLICE
-    if (d->names == N_SLC_DIV)
-        return ICON_SLICE;                    /* SLICE: DIV is the slicing, MODE the gate, REV the direction */
-    if (d->names == N_SLC_MODE)
-        return ICON_GATE;
-    if (d->names == N_SLC_REV)
-        return ICON_ORDER;
-#endif
-    return icon_for_label(d->label);
-}
-
-/* the MOD page: the icon of a source, of a destination (an engine parameter: its own) */
-static uint32_t mod_src_icon(int32_t s)
-{
-    static const uint8_t I[MS_N] = {ICON_MOD, ICON_LFO_WAVE, ICON_ENV, ICON_ACCENT, ICON_KEYTRACK, ICON_PROB,
-                                    ICON_MOD, ICON_MIDI, ICON_LEVEL};
-    return I[clamp(s, 0, MS_N - 1)];
-}
-static uint32_t mod_dst_icon(const track_t *t, int32_t d)
-{
-    static const uint8_t I[MD_E1] = {ICON_MOD, ICON_PITCH, ICON_CUTOFF, ICON_SHAPE, ICON_LEVEL, ICON_PAN, ICON_DIST,
-                                     ICON_CHORUS, ICON_DELAY, ICON_REVERB, ICON_RATE, ICON_VIBRATO};
-    uint32_t id;
-    d = clamp(d, 0, MD_N - 1);
-    if (d < MD_E1)
-        return I[d];
-    id = P_E0 + (uint32_t)(d - MD_E1);
-    return param_icon(track_desc(t, id), t->p[id]);
-}
-
-/* engine name (ENGINES[]->name) -> icon */
-static uint32_t engine_icon(const char *name)
-{
-    static const icon_map_t M[] = {
-        {"ANALOG", ICON_WAVE},
-#if FELUCCA_FM4
-        {"DIGITAL", ICON_ALGORITHM},
-#endif
-        {"PHASE", ICON_PHASE}, {"LOFI", ICON_BITS},
-        {"SAMPLE", ICON_SAMPLE}, {"VOICE", ICON_MOUTH}, {"TRIO", ICON_TRIO}, {"WHEEL", ICON_DRAWBAR},
-        {"SLICE", ICON_SLICE},
-        {"GRAIN", ICON_GRAIN},
-        {"PHYS", ICON_PHYS},
-        {"DRUM", ICON_DRUM},
-        {"NOISE", ICON_NOISE},
-        {"FM6", ICON_MOD},                    /* (symbol_modular: six operators patched; a glyph of its own wanted) */
-    };
-    uint32_t i;
-    for (i = 0; i < sizeof M / sizeof M[0]; i++)
-        if (str_eq(name, M[i].label))
-            return M[i].icon;
-    return ICON_GENERIC;
-}
-
-/* MOTION: the knob and its trace; recording into it (REC armed on the selected track, playing): its REC form */
-static uint32_t motion_icon(void) { return rec_on(TSEL) ? ICON_X_MOTION_REC : ICON_X_MOTION; }
-
-/* the icon beside a page's title in the footer (the pages that have one of their own; else ICON_NONE) */
-static uint32_t page_icon(const page_t *pg)
-{
-    switch (pg->graph) {
-    case GR_TRK: return ICON_X_MIXER;         /* MIXER (GLO): vertical faders */
-    case GR_PATS: return ICON_X_PATTERN;      /* SEQ > PHRASES: the pattern loader */
-    case GR_SONG: return ICON_X_SONG;         /* SONG: the disc */
-    case GR_CHANCE: return ICON_PROB;         /* CHANCE: the die */
-    case GR_MOTION: return motion_icon();
-    default: return ICON_NONE;
-    }
-}
-
 #else
 static uint32_t icon_for_label(const char *l) { (void)l; return ICON_NONE; }
-static uint32_t param_icon(const param_desc_t *d, int32_t v) { (void)d; (void)v; return ICON_NONE; }
-static uint32_t engine_icon(const char *name) { (void)name; return ICON_NONE; }
-static uint32_t mod_src_icon(int32_t s) { (void)s; return ICON_NONE; }
-static uint32_t mod_dst_icon(const track_t *t, int32_t d) { (void)t; (void)d; return ICON_NONE; }
-static uint32_t motion_icon(void) { return ICON_NONE; }
-static uint32_t page_icon(const page_t *pg) { (void)pg; return ICON_NONE; }
 #endif

@@ -189,26 +189,18 @@ static void con_uac(void)                              /* USB audio input: strea
 
 static void con_status(void)
 {
-    const engine_t *e = ENGINES[TSEL->eng_req % NENGINES];
     con_puts("bryo ");
     con_puts(FELUCCA_VERSION);
     con_puts("\r\n");
     con_kv("uptime_ms", (int32_t)fm1_ms);
-    con_kv("cpu_pct", (int32_t)(song.cpu_q8 * 100u / 256u));
+    con_kv("cpu_pct", (int32_t)(sys.cpu_q8 * 100u / 256u));
     con_kv("audio_max_us", (int32_t)felucca_dbg.max_us);
     con_kv("audio_late", (int32_t)felucca_dbg.late);
-    con_kv("voices_shed", (int32_t)shed_count);
-    con_kv("voices_given_up", (int32_t)voice_kills);
-    con_kv("track", (int32_t)song.sel + 1);
-    con_kv("batt_raw", song.batt_raw);
-    con_puts("engine ");
-    con_puts(e->name);
-    con_puts("\r\n");
-    con_puts("preset ");
-    con_puts(TSEL->preset < e->npresets ? e->presets[TSEL->preset].name : "-");
-    con_puts("\r\n");
-    con_kv("bpm", song.g[G_BPM]);
-    con_kv("playing", song.playing);
+    con_kv("load_shed", (int32_t)chain_shed_count);
+    con_kv("track", (int32_t)sys.sel + 1);
+    con_kv("batt_raw", sys.batt_raw);
+    con_kv("bpm", sys.bpm);
+    con_kv("playing", sys.playing);
     con_kv("boots", (int32_t)felucca_dbg.boots);
     con_kv("usb_resets", (int32_t)usb.resets);
     con_kv("usb_sof", (int32_t)usb.sof_seen);
@@ -328,14 +320,28 @@ static void con_crash(void)
     con_kv("early", (int32_t)fm1_crash.early);
 }
 
-static void con_params(void)
+static void con_params(void)                    /* the focused track: five devices x four values, then the slots */
 {
-    uint32_t i;
-    for (i = 0; i < P_COUNT; i++) {
-        con_dec((int32_t)i);
-        con_putc('=');
-        con_dec(TSEL->p[i]);
-        con_puts(i % 8u == 7u || i + 1u == P_COUNT ? "\r\n" : " ");
+    const track_params_t *p = &tp[sys.sel];
+    uint32_t d, k;
+    for (d = 0; d < NDEV; d++) {
+        con_puts(DEV_NAME[d]);
+        for (k = 0; k < 4u; k++) {
+            con_putc(' ');
+            con_dec(p->dev[d][k]);
+        }
+        con_puts("\r\n");
+    }
+    for (d = 0; d < NSLOT; d++) {
+        con_puts("MOD");
+        con_dec((int32_t)d + 1);
+        con_putc(' ');
+        con_puts(ME_NAME[p->engine[d]]);
+        for (k = 0; k < 4u; k++) {
+            con_putc(' ');
+            con_dec(p->mod[d][k]);
+        }
+        con_puts("\r\n");
     }
 }
 
