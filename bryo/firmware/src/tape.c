@@ -143,9 +143,11 @@ static void ima_dec(const uint8_t *data, int32_t pred, int32_t idx, int16_t *out
         out[i] = (int16_t)ima_step(&pred, &idx, (data[i >> 1] >> ((i & 1u) * 4u)) & 15u);
 }
 
-/* n samples into a block, from the state (pred, idx): the encoder tools/gen_reels.py runs */
-static void ima_enc(const int16_t *in, int32_t pred, int32_t idx, uint8_t *data, uint32_t n)
+/* n samples into a block, from the state (*pred, *idx), which is left at the block's end: the encoder
+ * tools/gen_reels.py runs */
+static void ima_enc_st(const int16_t *in, int32_t *pst, int32_t *ist, uint8_t *data, uint32_t n)
 {
+    int32_t pred = *pst, idx = *ist;
     uint32_t i;
     for (i = 0; i < n; i++) {
         int32_t step = IMA_STEP[idx], diff = in[i] - pred, code = 0;
@@ -169,15 +171,35 @@ static void ima_enc(const int16_t *in, int32_t pred, int32_t idx, uint8_t *data,
         else
             data[i >> 1] = (uint8_t)code;
     }
+    *pst = pred;
+    *ist = idx;
+}
+
+static void ima_enc(const int16_t *in, int32_t pred, int32_t idx, uint8_t *data, uint32_t n)
+{
+    ima_enc_st(in, &pred, &idx, data, n);
 }
 
 /* -------------------------------------------------------------- views --- */
-/* the reel a track has chosen, 0: its RAM tape */
-static uint32_t tape_src(uint32_t t) { return (uint32_t)clamp(tp[t].dev[DEV_SRC][TK_REEL], 0, (int32_t)NREEL); }
+static int uslot_view(uint32_t s, tape_view_t *v);   /* reel.c: a user reel in flash */
+
+/* what a track has chosen: 0 its RAM tape, 1..NREEL a factory reel, then the user reels */
+static uint32_t tape_src(uint32_t t) { return (uint32_t)clamp(tp[t].dev[DEV_SRC][TK_REEL], 0, (int32_t)(NREEL + USLOT_N)); }
 
 static void tape_view(uint32_t t, tape_view_t *v)
 {
     uint32_t s = tape_src(t);
+    if (s > NREEL) {                                   /* a user reel (an empty slot plays nothing) */
+        if (!uslot_view(s - NREEL - 1u, v)) {
+            v->len = 0;
+            v->ram = 0;
+            v->data = tape_ram[t].data;                /* (never read: len 0) */
+            v->pred = tape_ram[t].pred;
+            v->idx = tape_ram[t].idx;
+            v->peak = tape_ram[t].peak;
+        }
+        return;
+    }
     if (s) {
         const reel_t *r = &REELS[s - 1u];
         v->data = r->data;
@@ -415,21 +437,28 @@ static int tape_prepare(uint32_t t)
     uint32_t s = tape_src(t), b;
     if (c->rec_ok)
         return 1;
-    if (s) {
-        const reel_t *r = &REELS[s - 1u];
+    if (s) {                                           /* a reel (factory or yours): copied onto the tape */
+        tape_view_t v;
+        uint32_t nb;
         if (c->nblk && !c->empty)
             return 0;
-        for (b = 0; b < r->nblk * (TAPE_BLK / 2u); b++)
-            m->data[b] = r->data[b];
-        for (b = 0; b < r->nblk; b++) {
-            m->pred[b] = r->pred[b];
-            m->idx[b] = r->idx[b];
-            m->peak[b] = r->peak[b];
+        tape_view(t, &v);
+        nb = v.len / TAPE_BLK;
+        if (!nb)                                       /* an empty user slot: record onto a blank tape */
+            goto blank;
+        for (b = 0; b < nb * (TAPE_BLK / 2u); b++)
+            m->data[b] = v.data[b];
+        for (b = 0; b < nb; b++) {
+            m->pred[b] = v.pred[b];
+            m->idx[b] = v.idx[b];
+            m->peak[b] = v.peak[b];
         }
-        c->nblk = r->nblk;
+        c->nblk = (uint16_t)nb;
         c->empty = 0;
         tp[t].dev[DEV_SRC][TK_REEL] = 0;               /* the track plays its tape (the same sound) */
     } else if (c->empty || !c->nblk) {
+    blank:
+        tp[t].dev[DEV_SRC][TK_REEL] = 0;
         for (b = 0; b < TAPE_LEN / 2u; b++)
             m->data[b] = 0;                            /* (zero nibbles from 0, 0: silence) */
         for (b = 0; b < TAPE_NBLK; b++) {
@@ -509,5 +538,7 @@ static int32_t tape_ms(uint32_t t)
 static const char *tape_name(uint32_t t)
 {
     uint32_t s = tape_src(t);
+    if (s > NREEL)
+        return uslot_name[s - NREEL - 1u];
     return s ? REELS[s - 1u].name : tape_ctl[t].empty || !tape_ctl[t].nblk ? "EMPTY" : "TAPE";
 }

@@ -29,7 +29,10 @@ static const char *const N_SHAPE[5] = {"SIN", "TRI", "SQR", "SAW", "RND"};
 static const char *const N_SRC[6] = {"SELF", "T1", "T2", "T3", "T4", "USB"};
 static const char *const N_HOLD[5] = {"OFF", "1/32", "1/16", "1/8", "1/4"};
 #include "bryo_reels.h"              /* the factory reels' names (tools/gen_reels.py) */
-static const char *const N_REEL[NREEL + 1u] = {"TAPE", REEL_NAMES_INIT};
+#define USLOT_N 6u                   /* user reels: your sounds in flash (reel.c) */
+static char uslot_name[USLOT_N][6];  /* their names (reel.c uslot_names) */
+static const char *const N_REEL[1u + NREEL + USLOT_N] = {"TAPE", REEL_NAMES_INIT, uslot_name[0], uslot_name[1],
+                                                         uslot_name[2], uslot_name[3], uslot_name[4], uslot_name[5]};
 
 #define NPK 16u                  /* knobs a device or engine can have: up to four pages of four */
 
@@ -45,8 +48,9 @@ static const pdesc_t DEV_P[NDEV][NPK] = {
         /* 2: the loop's crossfade at its ends, reverse and half speed (OP5 and OP6 flip them too), the record gain */
         {"FADE", 0, 100, 10, F_MS}, {"REV", 0, 1, 0, F_ENUM, N_OFFON},
         {"HALF", 0, 1, 0, F_ENUM, N_OFFON}, {"GAIN", -12, 12, 0, F_DB},
-        /* 3: what the track plays: its own tape, or a factory reel (in flash; REC copies it onto the tape) */
-        {"REEL", 0, NREEL, 0, F_ENUM, N_REEL}, {""}, {""}, {""}},
+        /* 3: what the track plays: its own tape, a factory reel or one of your reels (in flash; REC copies it onto
+         * the tape) */
+        {"REEL", 0, NREEL + USLOT_N, 0, F_ENUM, N_REEL}, {""}, {""}, {""}},
     {   /* GRAIN */
         {"SIZE", 5, 500, 80, F_MS}, {"DENS", 0, 100, 40, F_PCT},
         {"TUNE", -24, 24, 0, F_ST}, {"SPRD", 0, 100, 30, F_PCT},

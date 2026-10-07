@@ -99,6 +99,8 @@ static void fm1_fault(const fm1_crash_t *c)
 static void bryo_init(void)
 {
     param_defaults();
+    uslot_init();                                 /* your reels' names (after the flash's plain window is set up) */
+    vdisk_mount();
     chain_init();
     ui_init();
     sys.sel = 0;

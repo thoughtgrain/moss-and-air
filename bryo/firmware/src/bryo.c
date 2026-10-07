@@ -83,6 +83,8 @@ static void ui_redraw(void);
 #include "storage_hw.c"
 #include "storage.c"
 #endif
+#include "reel.c"                /* user reels: your sounds in flash */
+#include "vdisk.c"               /* the drive: the volume behind USB Mass Storage */
 #include "settings.c"            /* the settings record (shared with Felucca installs: settings.c) */
 
 #include "ui_px.c"              /* the dot grid: bitmap type, strokes, the pictograms */

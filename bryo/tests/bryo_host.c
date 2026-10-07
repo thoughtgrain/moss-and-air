@@ -70,11 +70,30 @@ static void ui_redraw(void);
 #include "../firmware/src/chain.c"
 #include "../firmware/src/icons.c"
 #include "../firmware/src/panel.c"
+/* the flash under the user reels: a NOR model (erase to 0xFF, program clears bits) */
+#define RF_HOST
+static uint8_t host_nor[0x100000];
+static uint32_t host_prog_limit = 0xFFFFFFFFu;           /* bytes a save may program before the "power cut" */
+static const uint8_t *rf_ptr(uint32_t off) { return host_nor + off; }
+static int rf_erase(uint32_t off) { memset(host_nor + off, 0xFF, 4096); return 0; }
+static int rf_prog(uint32_t off, const void *src, uint32_t n)
+{
+    uint32_t i;
+    for (i = 0; i < n; i++) {
+        if (!host_prog_limit)
+            return -1;
+        host_prog_limit--;
+        host_nor[off + i] &= ((const uint8_t *)src)[i];
+    }
+    return 0;
+}
+#include "../firmware/src/reel.c"
 #include "../firmware/src/settings.c"
 #include "../firmware/src/ui_px.c"
 #include "../firmware/src/ui.c"
 #include "../firmware/src/ui_viz.c"
 #include "../firmware/src/ui_input.c"
+#include "../firmware/src/vdisk.c"
 
 static int fails;
 static void check(const char *what, int ok)
@@ -96,7 +115,9 @@ static void power_on(void)
     memset(&fm1_in, 0, sizeof fm1_in);
     panel = PANEL_DEFAULT;
     param_defaults();
+    uslot_init();
     chain_init();
+    vdisk_mount();
     ui_init();
     sys.bpm = 120;
     sys.master_q12 = 2048;
@@ -699,10 +720,307 @@ static void screens_in(const char *pal)
     shot(pal, "uboot");
 }
 
+/* ---------------------------------------------------------- user reels --- */
+static void test_uslots(void)
+{
+    tape_view_t v;
+    power_on();
+    check("blank flash: every user slot empty, named U1..U6", uslot_free() == 0 && !uslot_valid(5) &&
+          !strcmp(uslot_name[0], "U1") && !strcmp(uslot_name[5], "U6"));
+    check("a save: slot 1 holds BEAT under the name 'kick drum.wav' -> KICK",
+          uslot_save(0, REELS[0].data, REELS[0].pred, REELS[0].idx, REELS[0].peak, REELS[0].nblk, "kick drum.wav") == 0 &&
+          uslot_valid(0) && !strcmp(uslot_name[0], "KICK") && uslot_free() == 1);
+    tp[0].dev[DEV_SRC][TK_REEL] = (int16_t)(NREEL + 1u);
+    tape_view(0, &v);
+    check("..and a track plays it straight from flash (REEL KICK)", v.len == REELS[0].nblk * TAPE_BLK && !v.ram &&
+          !memcmp(v.data, REELS[0].data, 64) && !strcmp(tape_name(0), "KICK"));
+    check("..REC copies it onto the tape like a factory reel", tape_prepare(0) && tape_src(0) == 0u &&
+          tape_ctl[0].nblk == REELS[0].nblk);
+    tape_unprepare(0);
+    host_prog_limit = 20000;                             /* a power cut halfway through the data */
+    check("a save torn by a power cut leaves the slot empty, not half old and half new",
+          uslot_save(0, REELS[1].data, REELS[1].pred, REELS[1].idx, REELS[1].peak, REELS[1].nblk, "PIANO") != 0 &&
+          !uslot_valid(0) && !strcmp(uslot_name[0], "U1"));
+    host_prog_limit = 0xFFFFFFFFu;
+    memset(host_nor, 0xFF, sizeof host_nor);
+    uslot_names();
+}
+
+/* ---------------------------------------------------------------- drive --- */
+/* the computer's side: a FAT12 reader and writer that knows only what the disk says */
+static uint8_t hd_boot[512], hd_fat[12 * 512], hd_root[64 * 32];
+static uint32_t hd_spc, hd_fat0, hd_nfat, hd_fats, hd_root0, hd_data, hd_nclus;
+static void hd_mount(void)
+{
+    uint32_t i;
+    vdisk_read(0, hd_boot);
+    hd_spc = hd_boot[13];
+    hd_fat0 = rd16(hd_boot + 14);
+    hd_nfat = hd_boot[16];
+    hd_fats = rd16(hd_boot + 22);
+    hd_root0 = hd_fat0 + hd_nfat * hd_fats;
+    hd_data = hd_root0 + rd16(hd_boot + 17) * 32u / 512u;
+    hd_nclus = ((rd16(hd_boot + 19) ? rd16(hd_boot + 19) : rd32(hd_boot + 32)) - hd_data) / hd_spc;
+    for (i = 0; i < hd_fats; i++)
+        vdisk_read(hd_fat0 + i, hd_fat + 512 * i);
+    for (i = 0; i < 4; i++)
+        vdisk_read(hd_root0 + i, hd_root + 512 * i);
+}
+static uint32_t hd_fat_get(uint32_t c) { uint32_t v = rd16(hd_fat + c + c / 2); return c & 1 ? v >> 4 : v & 0xFFF; }
+static void hd_fat_set(uint32_t c, uint32_t v)
+{
+    uint32_t o = c + c / 2, w = rd16(hd_fat + o);
+    w = c & 1 ? (w & 0xF) | (v << 4) : (w & 0xF000) | (v & 0xFFF);
+    wr16(hd_fat + o, w);
+}
+static uint8_t *hd_find(const char *n83)
+{
+    uint32_t i;
+    for (i = 0; i < 64; i++)
+        if (!memcmp(hd_root + 32 * i, n83, 11))
+            return hd_root + 32 * i;
+    return 0;
+}
+/* the file at dir entry e into buf (max n bytes); returns its size */
+static uint32_t hd_read_file(const uint8_t *e, uint8_t *buf, uint32_t n)
+{
+    uint32_t c = rd16(e + 26), size = rd32(e + 28), got = 0, s;
+    uint8_t sec[512];
+    while (c >= 2 && c < 0xFF8 && got < size) {
+        for (s = 0; s < hd_spc && got < size; s++) {
+            uint32_t k = size - got < 512 ? size - got : 512;
+            vdisk_read(hd_data + (c - 2) * hd_spc + s, sec);
+            if (got + k <= n)
+                memcpy(buf + got, sec, k);
+            got += k;
+        }
+        c = hd_fat_get(c);
+    }
+    return size;
+}
+/* write a file of n bytes: into the clusters of an existing entry e (in place), or new clusters and a new entry
+ * named short83 (+ a long name); the data first, then the FAT, then the directory, as file managers tend to */
+static void hd_write_file(uint8_t *e, const char *short83, const char *lfn, const uint8_t *data, uint32_t n,
+                          int name_it)
+{
+    uint32_t need = (n + hd_spc * 512 - 1) / (hd_spc * 512), cl[512], k = 0, c, i, w = 0;
+    uint8_t sec[512];
+    if (e) {
+        for (c = rd16(e + 26); c >= 2 && c < 0xFF8 && k < need; c = hd_fat_get(c))
+            cl[k++] = c;
+    }
+    for (c = k ? cl[k - 1] + 1 : 2; k < need && c < hd_nclus + 2; c++)   /* next fit: on from the file's end */
+        if (!hd_fat_get(c))
+            cl[k++] = c;
+    for (i = 0; i < need; i++) {
+        uint32_t s;
+        for (s = 0; s < hd_spc; s++, w += 512) {
+            memset(sec, 0, 512);
+            if (w < n)
+                memcpy(sec, data + w, n - w < 512 ? n - w : 512);
+            vdisk_write(hd_data + (cl[i] - 2) * hd_spc + s, sec);
+        }
+        hd_fat_set(cl[i], i + 1 < need ? cl[i + 1] : 0xFFF);
+    }
+    for (i = 0; i < hd_fats; i++) {
+        vdisk_write(hd_fat0 + i, hd_fat + 512 * i);
+        vdisk_write(hd_fat0 + hd_fats + i, hd_fat + 512 * i);
+    }
+    if (!name_it)
+        return;
+    if (!e) {
+        uint32_t slot;
+        for (slot = 0; slot < 63 && hd_root[32 * slot] && hd_root[32 * slot] != 0xE5; slot++)
+            ;
+        if (lfn) {                                       /* one long-name entry (up to 13 characters) */
+            static const uint8_t AT[13] = {1, 3, 5, 7, 9, 14, 16, 18, 20, 22, 24, 28, 30};
+            uint8_t *l = hd_root + 32 * slot;
+            memset(l, 0xFF, 32);
+            l[0] = 0x41;
+            l[11] = 0x0F;
+            l[12] = 0;
+            wr16(l + 26, 0);
+            for (i = 0; i < 13; i++)
+                wr16(l + AT[i], i < strlen(lfn) ? (uint8_t)lfn[i] : i == strlen(lfn) ? 0 : 0xFFFF);
+            slot++;
+        }
+        e = hd_root + 32 * slot;
+        memset(e, 0, 32);
+        memcpy(e, short83, 11);
+    }
+    wr16(e + 26, cl[0]);
+    wr32(e + 28, n);
+    for (i = 0; i < 4; i++)
+        vdisk_write(hd_root0 + i, hd_root + 512 * i);
+}
+/* a WAV: rate, channels, bits, frames of a sine at hz (amplitude 0.5) */
+static uint32_t make_wav(uint8_t *o, uint32_t rate, uint32_t ch, uint32_t bits, uint32_t tag, uint32_t frames, double hz)
+{
+    uint32_t bpf = ch * bits / 8, n = frames * bpf, i, c;
+    memcpy(o, "RIFF", 4);
+    wr32(o + 4, 36 + 8 + 26 + n);
+    memcpy(o + 8, "WAVELIST", 8);                        /* a chunk Bryo skips */
+    wr32(o + 16, 18);
+    memcpy(o + 20, "INFOISFT\x06\0\0\0bryo\0\0", 18);
+    memcpy(o + 38, "fmt ", 4);
+    wr32(o + 42, 16);
+    wr16(o + 46, tag);
+    wr16(o + 48, ch);
+    wr32(o + 50, rate);
+    wr32(o + 54, rate * bpf);
+    wr16(o + 58, bpf);
+    wr16(o + 60, bits);
+    memcpy(o + 62, "data", 4);
+    wr32(o + 66, n);
+    for (i = 0; i < frames; i++)
+        for (c = 0; c < ch; c++) {
+            double v = 0.5 * sin(2 * M_PI * hz * i / rate);
+            uint8_t *p = o + 70 + i * bpf + c * bits / 8;
+            if (tag == 3) {
+                float f = (float)v;
+                memcpy(p, &f, 4);
+            } else if (bits == 16) {
+                wr16(p, (uint16_t)(int16_t)(v * 32767));
+            } else if (bits == 24) {
+                int32_t x = (int32_t)(v * 8388607);
+                p[0] = (uint8_t)x; p[1] = (uint8_t)(x >> 8); p[2] = (uint8_t)(x >> 16);
+            }
+        }
+    return 70 + n;
+}
+/* the tape or reel's sound: zero crossings per second (its pitch, for a sine) and its peak */
+static double view_hz(const tape_view_t *v, int32_t *peak)
+{
+    tape_rd_t r = {0};
+    uint32_t i, cross = 0, n = v->len - 512 > 22050 ? 22050 : v->len - 512;   /* (not the last block's padding) */
+    int32_t prev = 0, pk = 0;
+    for (i = 2000; i < n; i++) {
+        int32_t x = tape_at(v, &r, (int32_t)i);
+        cross += prev < 0 && x >= 0;
+        prev = x;
+        pk = abs(x) > pk ? abs(x) : pk;
+    }
+    *peak = pk;
+    return cross * 22050.0 / (n - 2000);
+}
+
+static void test_drive(void)
+{
+    static uint8_t buf[400000], wav[1200000];
+    uint8_t *e;
+    tape_view_t v;
+    uint32_t n, i, ok;
+    int32_t pk;
+    double hz;
+    char b[120];
+    power_on();
+    hd_mount();
+    check("the drive: a FAT12 volume BRYO (512 B sectors, 63.5 MiB, 16 KiB clusters, under 4085 clusters)",
+          rd16(hd_boot + 11) == 512 && hd_boot[510] == 0x55 && hd_boot[511] == 0xAA && !memcmp(hd_boot + 54, "FAT12", 5) &&
+          hd_nclus < 4085 && hd_nclus > 4000 && !memcmp(hd_root, "BRYO       ", 11) && hd_root[11] == 0x08);
+    check("..with README.TXT, TAPE1-4.WAV and REEL1-4.WAV (factory reels read-only), no USER files on a blank flash",
+          hd_find("README  TXT") && hd_find("TAPE1   WAV") && hd_find("TAPE4   WAV") && hd_find("REEL1   WAV") &&
+          (hd_find("REEL4   WAV")[11] & 1) && !hd_find("USER1   WAV"));
+    n = hd_read_file(hd_find("README  TXT"), buf, sizeof buf);
+    check("README.TXT reads as text", n > 200 && !memcmp(buf, "BRYO", 4));
+    n = hd_read_file(hd_find("TAPE1   WAV"), buf, sizeof buf);
+    tape_view(0, &v);
+    ok = n == 44 + v.len * 2 && !memcmp(buf, "RIFF", 4) && rd32(buf + 24) == 22050 && rd16(buf + 22) == 1 && rd16(buf + 34) == 16;
+    {
+        tape_rd_t r = {0};
+        for (i = 0; i < v.len && ok; i += 97)
+            ok = (int16_t)rd16(buf + 44 + 2 * i) == tape_at(&v, &r, (int32_t)i);
+    }
+    check("TAPE1.WAV is track 1's sound: a 22,050 Hz 16-bit mono WAV, sample for sample", ok);
+
+    n = make_wav(wav, 44100, 2, 16, 1, 44100, 441.0);   /* 1 s of 441 Hz, stereo 16-bit 44.1 kHz, a LIST chunk */
+    hd_write_file(0, "KICKDR~1WAV", "kick drum.wav", wav, n, 1);
+    vdisk_poll();
+    ok = uslot_valid(0) && !strcmp(uslot_name[0], "KICK");
+    uslot_view(0, &v);
+    hz = view_hz(&v, &pk);
+    snprintf(b, sizeof b, "a WAV copied on as 'kick drum.wav' (44.1 kHz stereo) lands in user reel 1 as KICK: %.0f Hz, peak %d", hz, (int)pk);
+    check(b, ok && fabs(hz - 441) < 8 && pk > 12000 && pk < 20000 && v.len == 22050u / 256u * 256u + 256u);
+
+    e = hd_find("TAPE2   WAV");                          /* overwrite TAPE2.WAV in place: 24-bit 48 kHz mono */
+    n = make_wav(wav, 48000, 1, 24, 1, 48000 * 4, 220.0);
+    hd_write_file(e, 0, 0, wav, n, 1);
+    vdisk_poll();
+    tape_view(1, &v);
+    hz = view_hz(&v, &pk);
+    snprintf(b, sizeof b, "TAPE2.WAV overwritten (24-bit 48 kHz, 4 s) replaces track 2's tape, cut to 3.3 s: %.0f Hz", hz);
+    check(b, tape_src(1) == 0 && tape_ctl[1].nblk == TAPE_NBLK && fabs(hz - 220) < 6 && pk > 12000);
+
+    n = make_wav(wav, 22050, 1, 32, 3, 11025, 1000.0);   /* float32, into a folder: never named in the root */
+    hd_write_file(0, 0, 0, wav, n, 0);
+    vdisk_poll();
+    check("..a WAV with no name in the root waits", !uslot_valid(1));
+    fm1_ms += 3500;
+    vdisk_poll();
+    uslot_view(1, &v);
+    hz = view_hz(&v, &pk);
+    snprintf(b, sizeof b, "..then goes to the next free user reel as U2 (float32 read): %.0f Hz", hz);
+    check(b, uslot_valid(1) && !strcmp(uslot_name[1], "U2") && fabs(hz - 1000) < 20);
+
+    n = make_wav(wav, 22050, 1, 16, 2, 2000, 100.0);     /* format 2 (MS ADPCM): not readable */
+    hd_write_file(0, "BAD     WAV", 0, wav, n, 1);
+    ui.msg_t = 0;
+    vdisk_poll();
+    check("a WAV in a format Bryo can't read is refused, with a message, nothing saved", !uslot_valid(2) && ui.msg_t &&
+          !strcmp(ui.msg, "THAT WAV COULDN'T BE READ"));
+    {   /* scattered: two runs of clusters with a used cluster between them, the FAT written before the data */
+        uint32_t cl[64] = {0}, k = 0, c, w = 0, j, need;
+        uint8_t sec[512];
+        n = make_wav(wav, 22050, 1, 16, 1, 22050, 300.0);
+        need = (n + hd_spc * 512 - 1) / (hd_spc * 512);
+        for (c = 2; k < need; c++)
+            if (!hd_fat_get(c) && (k != 1 || c > cl[0] + 1))   /* a gap after the first cluster */
+                cl[k++] = c;
+        hd_fat_set(cl[0] + 1, 0xFFF);                      /* (something else's cluster in the gap) */
+        for (j = 0; j < need; j++)
+            hd_fat_set(cl[j], j + 1 < need ? cl[j + 1] : 0xFFF);
+        for (j = 0; j < hd_fats; j++) {
+            vdisk_write(hd_fat0 + j, hd_fat + 512 * j);
+            vdisk_write(hd_fat0 + hd_fats + j, hd_fat + 512 * j);
+        }
+        for (j = 0; j < need; j++)
+            for (c = 0; c < hd_spc; c++, w += 512) {
+                memset(sec, 0, 512);
+                if (w < n)
+                    memcpy(sec, wav + w, n - w < 512 ? n - w : 512);
+                vdisk_write(hd_data + (cl[j] - 2) * hd_spc + c, sec);
+            }
+        for (j = 0; j < 64 && hd_root[32 * j]; j++)
+            ;
+        memset(hd_root + 32 * j, 0, 32);
+        memcpy(hd_root + 32 * j, "SCATTER WAV", 11);
+        wr16(hd_root + 32 * j + 26, cl[0]);
+        wr32(hd_root + 32 * j + 28, n);
+        for (j = 0; j < 4; j++)
+            vdisk_write(hd_root0 + j, hd_root + 512 * j);
+        vdisk_poll();
+        uslot_view(2, &v);
+        hz = view_hz(&v, &pk);
+        snprintf(b, sizeof b, "a WAV in two scattered runs (the FAT written first) arrives whole: SCAT, %.0f Hz", hz);
+        check(b, uslot_valid(2) && !strcmp(uslot_name[2], "SCAT") && fabs(hz - 300) < 6 && v.len >= 22050u);
+    }
+    hd_mount();
+    check("the computer reads back the FAT and directory as it wrote them", hd_find("KICKDR~1WAV") && hd_find("BAD     WAV"));
+    vdisk_mount();
+    hd_mount();
+    check("plugged in again: USER1.WAV and USER2.WAV are files now", hd_find("USER1   WAV") && hd_find("USER2   WAV") &&
+          rd32(hd_find("USER1   WAV") + 28) == 44 + REELS[0].nblk * 0 + 2 * (22050u / 256u * 256u + 256u));
+    memset(host_nor, 0xFF, sizeof host_nor);
+    uslot_names();
+}
+
 int main(int argc, char **argv)
 {
     out_dir = argc > 1 ? argv[1] : "build/bryo_ui";
+    memset(host_nor, 0xFF, sizeof host_nor);
     test_tape();
+    test_uslots();
+    test_drive();
     test_input();
     test_settings();
     palette_set(UI_GREY_INDEX);                          /* (the screens are one ink now, whatever the palette) */
