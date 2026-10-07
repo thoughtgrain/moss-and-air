@@ -1,10 +1,11 @@
 /* SPDX-License-Identifier: GPL-3.0-only */
-/* Bryo: the screen. Four regions, each redrawn only when what it shows changes (a signature per region):
+/* Bryo: the screen. Four regions, each redrawn only when what it shows changes (a signature per region), all on
+ * the dot grid of ui_px.c (2 x 2 px dots, one ink; dot rows in brackets):
  *
- *   y   0..25   header  [TRACK 2 : COLOR], [MOD 1 : WAVE]; the transport and the tempo at the right
- *   y  26..123  strip   the 4-value strip: KNOB 1..4 as dials, their labels and values (PRD 5)
- *   y 124..215  viz     what the page does, drawn from its values (ui_viz.c); the mixer's tracks under GLO
- *   y 216..239  footer  what the keys do now, the track and its octave
+ *   y   0..25   header  [T1] COLOR, [M1] WAVE in bold, the inverted tempo bar with REC and the transport  (0..12)
+ *   y  26..123  strip   KNOB 1..4 as pictograms that show their values, the labels and the values (PRD 5)  (13..61)
+ *   y 124..215  viz     what the page does, drawn from its values (ui_viz.c); the mixer's meters; messages  (62..107)
+ *   y 216..239  footer  what the keys do now, the track and its octave                                      (108..119)
  *
  * The tracks themselves live in the mixer (GLO): hold GLO and press white key 1..4 to pick one. The pages don't
  * repeat them; the header and the footer name the focused track.
@@ -18,7 +19,7 @@
 #define UI_VIZ_Y 124
 #define UI_FOOT_Y 216
 #define UI_FOOT_H 24
-#define UI_MSG_FRAMES 70             /* a message holds the header ~1 s (~66 frames/s) */
+#define UI_MSG_FRAMES 70             /* a message holds the visualization panel ~1 s (~66 frames/s) */
 
 enum { FOCUS_DEV, FOCUS_SLOT };      /* what the strip shows: a device of the track, or a modulator slot */
 enum { VIEW_PAGE, VIEW_MIXER };      /* VIEW_MIXER: GLO, the four track levels on the knobs, the tracks below */
@@ -39,7 +40,7 @@ static struct {
     uint8_t rec;                     /* REC armed, bit per track (TAPE recording arrives in phase 2) */
     uint8_t force;                   /* redraw everything next frame */
     uint8_t msg_t;
-    char msg[28];
+    char msg[40];
     uint32_t sig_head, sig_strip, sig_viz, sig_foot;
 } ui;
 
@@ -69,8 +70,8 @@ static void ui_init(void)
 static const pdesc_t *ui_page(uint32_t k, int16_t **vp)
 {
     track_params_t *p = &tp[sys.sel];
-    static const pdesc_t LEVEL[NTRK] = {{"T1 LVL", 0, 127, 100, F_NUM}, {"T2 LVL", 0, 127, 100, F_NUM},
-                                        {"T3 LVL", 0, 127, 100, F_NUM}, {"T4 LVL", 0, 127, 100, F_NUM}};
+    static const pdesc_t LEVEL[NTRK] = {{"T1", 0, 127, 100, F_NUM}, {"T2", 0, 127, 100, F_NUM},
+                                        {"T3", 0, 127, 100, F_NUM}, {"T4", 0, 127, 100, F_NUM}};
     static int16_t lv[NTRK];
     if (ui.view == VIEW_MIXER) {
         lv[k] = track[k].level;
@@ -85,26 +86,6 @@ static const pdesc_t *ui_page(uint32_t k, int16_t **vp)
     return &DEV_P[ui.dev][k];
 }
 
-static void ui_title(char *b)                /* "[TRACK 2 : COLOR]", "[MOD 1 : WAVE]", "[GLOBAL MIXER]" */
-{
-    if (ui.view == VIEW_MIXER) {
-        str_cpy(b, "[GLOBAL MIXER]", 24);
-        return;
-    }
-    if (ui.kind == FOCUS_SLOT) {
-        str_cpy(b, "[MOD ", 24);
-        fmt_int(b + str_len(b), (int32_t)ui.slot + 1);
-        str_cpy(b + str_len(b), " : ", 4);
-        str_cpy(b + str_len(b), ME_NAME[tp[sys.sel].engine[ui.slot]], 8);
-    } else {
-        str_cpy(b, "[TRACK ", 24);
-        fmt_int(b + str_len(b), (int32_t)sys.sel + 1);
-        str_cpy(b + str_len(b), " : ", 4);
-        str_cpy(b + str_len(b), DEV_NAME[ui.dev], 12);
-    }
-    str_cpy(b + str_len(b), "]", 2);
-}
-
 static uint32_t hash_str(uint32_t h, const char *s)
 {
     while (*s)
@@ -113,150 +94,138 @@ static uint32_t hash_str(uint32_t h, const char *s)
 }
 
 /* ------------------------------------------------------------ header --- */
+/* [T1] RESONATOR  [rec play metronome 120]: the box names the track (a modulator page: the slot, M1..M4, with its
+ * colour under the box), the title the page in bold, and the tempo bar (inverted, like a groovebox's) fills the rest. */
+static const char *const PX_METRO[7] = {"..#..", ".#..#", ".#.#.", "#.#.#", "##..#", "#...#", "#####"};
+
 static void draw_head(void)
 {
-    char ti[28], bpm[8];
+    char ti[16], box[4] = {'T', (char)('1' + sys.sel), 0, 0}, bpm[8];
     uint32_t sig;
-    const char *t = ui.msg_t ? ui.msg : ti;
-    ui_title(ti);
+    int slot = ui.kind == FOCUS_SLOT && ui.view == VIEW_PAGE;
+    if (ui.view == VIEW_MIXER)
+        str_cpy(ti, "MIXER", sizeof ti);
+    else
+        str_cpy(ti, slot ? ME_NAME[tp[sys.sel].engine[ui.slot]] : DEV_NAME[ui.dev], sizeof ti);
+    if (slot) {
+        box[0] = 'M';
+        box[1] = (char)('1' + ui.slot);
+    }
     fmt_int(bpm, sys.bpm);
-    sig = hash_str(hash_str(2166136261u, t), bpm) + sys.playing * 7u + ui.rec * 131u +
-          (ui.kind == FOCUS_SLOT && ui.view == VIEW_PAGE ? 1009u * (ui.slot + 1u) : 0u);
+    sig = hash_str(hash_str(hash_str(2166136261u, ti), bpm), box) + sys.playing * 7u + ((ui.rec >> sys.sel) & 1u) * 131u +
+          ux.theme * 3u;
     if (!ui.force && sig == ui.sig_head)
         return;
     ui.sig_head = sig;
+    px_colors();
     cv_begin(240, UI_HEAD_H, T_BG);
-    {   /* right first: REC, the transport (a triangle playing, a square stopped) and the tempo; the title gets the
-         * rest (the longest, [TRACK 1 : RESONATOR], is 165 px in M) */
-        int32_t x = cv_text_r(234, 3, &AF_M, bpm, T_THEME, T_BG) - 18, xl = 6, right = x;
-        if (sys.playing) {
-            cv_line_t(x + 2, 7, x + 2, 19, T_ACCENT, 2);
-            cv_line_t(x + 2, 7, x + 12, 13, T_ACCENT, 2);
-            cv_line_t(x + 2, 19, x + 12, 13, T_ACCENT, 2);
+    {
+        int32_t bw = px_text_w(PXF_5, box) + 4, x = bw + 2, bar;
+        px_frame(0, 1, bw, 11, px_ink, 1);
+        px_text(2, 3, PXF_5, box, px_ink);
+        if (slot)
+            px_box(0, 12, bw, 1, SLOT_COLOR[ui.slot]);     /* the slot's colour, under its number */
+        x = px_text(x, 3, PXF_5B, ti, px_ink);
+        bar = x + 1;
+        px_box(bar, 1, 120 - bar, 11, px_ink);
+        x = 118 - px_text_w(PXF_5, bpm);
+        px_text(x, 3, PXF_5, bpm, px_bg);
+        if (x - 7 - bar >= 13)                             /* the metronome, when the title leaves room */
+            px_art(x -= 7, 3, PX_METRO, 7, px_bg);
+        x -= 6;
+        if (sys.playing) {                                 /* a triangle playing, a square stopped */
+            int32_t r;
+            for (r = 0; r < 7; r++)
+                px_box(x, 3 + r, 4 - (r < 4 ? 3 - r : r - 3), 1, px_bg);
         } else {
-            cv_rrect(x + 2, 8, 10, 10, 2, T_MID, T_BG);
+            px_box(x, 4, 4, 5, px_bg);
         }
-        if ((ui.rec >> sys.sel) & 1u) {
-            cv_rrect(x - 14, 8, 10, 10, 5, T_REC, T_BG);
-            right = x - 14;
+        if ((ui.rec >> sys.sel) & 1u) {                    /* REC armed: a round dot in a ring of the background, so */
+            x -= 7;                                        /* it shows where REC's colour is the ink (GREY, MONO) */
+            px_box(x, 4, 5, 5, px_bg);
+            px_dot(x, 4, px_ink);
+            px_dot(x + 4, 4, px_ink);
+            px_dot(x, 8, px_ink);
+            px_dot(x + 4, 8, px_ink);
+            px_box(x + 1, 5, 3, 3, T_REC);
         }
-        if (!ui.msg_t && ui.kind == FOCUS_SLOT && ui.view == VIEW_PAGE) {   /* the slot's colour, with its number */
-            cv_rrect(xl, 5, 6, 15, 2, SLOT_COLOR[ui.slot], T_BG);
-            xl += 10;
-        }
-        cv_text_fit(xl, 3, &AF_M, t, ui.msg_t ? T_ACCENT : T_TEXT, T_BG, right - 6 - xl);
     }
-    cv_rect(0, UI_HEAD_H - 1, 240, 1, T_LINE);
     cv_blit(0, 0);
 }
 
-/* ------------------------------------------------------------- dials --- */
-/* A dial's ring: 270 degrees (7:30 .. 4:30 o'clock), anti-aliased, from the quadrant mask of its size
- * (tools/gen_aa_keycaps.py precomputes coverage and angle for one quadrant; the other three mirror it, no
- * trigonometry at run time). Angles in 1/1024 turn from 12 o'clock, clockwise, -384..384. The arc
- * lo..hi is drawn in vc, the rest of the ring in tr; bg lies under the ring. */
-#define KA_END 384
-static void dial_arc(int32_t x, int32_t y, int32_t r, const uint8_t *cov, const uint8_t *ang, int32_t lo, int32_t hi,
-                     uint16_t tr, uint16_t vc, uint16_t bg)
-{
-    const uint16_t *rt = ramp(tr, bg), *rv = ramp(vc, bg);
-    int32_t i, j, m;
-    for (j = 0; j < r; j++)
-        for (i = 0; i < r; i++) {
-            uint32_t k = (uint32_t)(j * r + i), a = (cov[k >> 1] >> ((k & 1u) ? 0 : 4)) & 15u;
-            int32_t q = ang[k];
-            if (!a)
-                continue;
-            for (m = 0; m < 4; m++) {                /* top right, bottom right, bottom left, top left */
-                int32_t s = m == 0 ? q : m == 1 ? 512 - q : m == 2 ? q - 512 : -q;
-                int32_t px = m < 2 ? x + r + i : x + r - 1 - i, py = (m == 0 || m == 3 ? y + r - 1 - j : y + r + j) + cv_oy;
-                if (s < -KA_END || s > KA_END || (uint32_t)px >= cv_w || (uint32_t)py >= cv_h)
-                    continue;
-                cv_px[(uint32_t)py * cv_w + (uint32_t)px] = (s >= lo && s <= hi ? rv : rt)[a];
-            }
-        }
-}
-
-/* the base position of d's value v: unipolar from the start of the ring, bipolar from 12 o'clock with a nub at 0 */
-static void dial(int32_t x, int32_t y, const pdesc_t *d, int32_t v, uint16_t vc, uint16_t bg)
-{
-    int32_t a0, a1;
-    if (d->min < 0) {
-        int32_t s = v * KA_END / (v < 0 ? -d->min : d->max);
-        a0 = (s < 0 ? s : 0) - 8;
-        a1 = (s > 0 ? s : 0) + 8;
-    } else {
-        a0 = -KA_END;
-        a1 = -KA_END + param_ratio(d, v) * 2 * KA_END / 1000;
-    }
-    dial_arc(x, y, KNOB_BIG_R, KNOB_BIG_COV, KNOB_BIG_ANG, a0, a1, T_DIM, vc, bg);   /* the track stays visible at 0 */
-}
-
 /* ------------------------------------------------------------- strip --- */
+/* four cells of 30 dots: the knob's pictogram (it shows the value), its label, the value. The page's last-turned
+ * knob has its label inverted. */
 static void draw_strip(void)
 {
-    uint32_t k, sig = 2166136261u;
-    uint16_t vc = ui.kind == FOCUS_SLOT && ui.view == VIEW_PAGE ? SLOT_COLOR[ui.slot] : T_THEME;
+    uint32_t k, sig = 2166136261u + ux.theme * 3u;
     for (k = 0; k < 4u; k++) {
         int16_t *vp;
         const pdesc_t *d = ui_page(k, &vp);
         sig = hash_str(sig, d->label) + (uint32_t)(*vp + 32768) * 2654435761u;
+        if (ui.view == VIEW_MIXER)
+            sig += track[k].mute * 977u;
     }
-    sig += vc * 3u + (ui.hot_t ? ui.hot + 1u : 0u) * 7919u;
+    sig += (ui.last < 4u && ui.view == VIEW_PAGE ? ui.last + 1u : 0u) * 7919u + ui.view * 31u + ui.kind * 131u +
+           ui.dev * 1031u + (ui.kind == FOCUS_SLOT ? tp[sys.sel].engine[ui.slot] * 65537u : 0u);
     if (!ui.force && sig == ui.sig_strip)
         return;
     ui.sig_strip = sig;
+    px_colors();
     cv_begin(240, UI_STRIP_H, T_BG);
     for (k = 0; k < 4u; k++) {
         int16_t *vp;
         const pdesc_t *d = ui_page(k, &vp);
-        int32_t cx = 30 + 60 * (int32_t)k, r = KNOB_BIG_R, v = *vp;
-        int hot = ui.hot_t && ui.hot == k;
+        int32_t x = 30 * (int32_t)k, v = *vp;
+        uint32_t pk = ui.view == VIEW_MIXER ? PK_FADER
+                    : ui.kind == FOCUS_SLOT ? ME_PK[tp[sys.sel].engine[ui.slot]][k] : DEV_PK[ui.dev][k];
+        int mute = ui.view == VIEW_MIXER && track[k].mute;
         char val[12];
         const char *unit;
-        int32_t w;
-        /* the base arc: the knob's own (unmodulated) position; bipolar ranges grow from 12 o'clock */
-        dial(cx - r, 10, d, v, hot ? T_ACCENT : vc, T_BG);
-        cv_text_in(cx - 30, 52, 60, &AF_S, d->label, hot ? T_ACCENT : T_MID, T_BG);
-        param_format(d, v, val, &unit);
-        w = text_w(&AF_M, val) + (unit[0] ? 2 + text_w(&AF_S, unit) : 0);
-        {
-            int32_t x = cx - w / 2;
-            x = cv_text_on(x, 70, &AF_M, val, hot ? T_ACCENT : T_TEXT, T_BG);
-            if (unit[0])
-                cv_text_on(x + 2, 70, &AF_S, unit, T_MID, T_BG);
+        px_picto(pk, x + 4, 2, d, v, mute ? px_dim : px_ink);
+        if (ui.view == VIEW_PAGE && ui.last == k)
+            px_tag(x + (30 - px_text_w(PXF_5, d->label)) / 2 - 1, 26, PXF_5, d->label, px_ink, px_bg);
+        else
+            px_text_c(x, 30, 27, PXF_5, d->label, px_ink);
+        if (mute) {
+            px_text_c(x, 30, 37, PXF_5, "MUTE", px_ink);
+            continue;
         }
+        param_format(d, v, val, &unit);
+        str_cpy(val + str_len(val), unit, 4);          /* "-140%", "250MS": at most 5, 29 dots */
+        px_text_c(x, 30, 37, PXF_5, val, px_dim);
     }
-    cv_rect(0, UI_STRIP_H - 1, 240, 1, T_LINE);
     cv_blit(0, UI_STRIP_Y);
 }
 
 /* ------------------------------------------------------------ footer --- */
 static void draw_foot(void)
 {
-    char a[40], b[16];
+    char a[24], b[16];
     uint32_t sig;
     if (ui.glo_held)
-        str_cpy(a, "WHITE KEYS 1-4: TRACK", sizeof a);
+        str_cpy(a, "KEYS 1-4: TRACK", sizeof a);
     else if (ui.view == VIEW_MIXER)
-        str_cpy(a, "KNOBS 1-4: TRACK LEVELS", sizeof a);
+        str_cpy(a, "KNOBS: LEVELS", sizeof a);
     else
-        str_cpy(a, "WHITE KEYS: TEST TONE", sizeof a);
-    str_cpy(b, "T", sizeof b);                        /* "T2  OCT 3": the track, its keys' octave */
+        str_cpy(a, "KEYS: TEST TONE", sizeof a);
+    str_cpy(b, "T", sizeof b);                        /* "T2 OCT 3": the track, its keys' octave */
     fmt_int(b + 1, (int32_t)sys.sel + 1);
-    str_cpy(b + str_len(b), "  OCT ", 8);
+    str_cpy(b + str_len(b), " OCT ", 8);
     fmt_int(b + str_len(b), track[sys.sel].octave);
-    sig = hash_str(hash_str(5381u, a), b) + track[sys.sel].mute;
+    sig = hash_str(hash_str(5381u, a), b) + track[sys.sel].mute + ux.theme * 3u;
     if (!ui.force && sig == ui.sig_foot)
         return;
     ui.sig_foot = sig;
+    px_colors();
     cv_begin(240, UI_FOOT_H, T_BG);
-    cv_rect(0, 0, 240, 1, T_LINE);
-    cv_text_fit(6, 6, &AF_S, a, T_MID, T_BG, 160);
+    px_line(0, 1, 119, 1, px_dim, 2);
+    px_text(1, 5, PXF_3, a, px_dim);
     {
-        int32_t x = cv_text_r(234, 6, &AF_S, b, T_TEXT, T_BG);
-        if (track[sys.sel].mute)
-            cv_text_r(x - 6, 6, &AF_S, "MUTE", T_ACCENT, T_BG);   /* the focused track is muted: say so */
+        int32_t x = 119 - px_text_w(PXF_3, b);
+        px_text(x, 5, PXF_3, b, px_ink);
+        if (track[sys.sel].mute)                      /* the focused track is muted: say so */
+            px_tag(x - 4 - px_text_w(PXF_3, "MUTE"), 4, PXF_3, "MUTE", px_ink, px_bg);
     }
     cv_blit(0, UI_FOOT_Y);
 }
@@ -266,13 +235,14 @@ static void draw_foot(void)
 static void draw_uboot(void)
 {
     char n[4];
+    px_colors();
     cv_begin(240, 107, T_BG);
-    cv_text_in(0, 70, 240, &AF_M, "UPDATE MODE IN", T_TEXT, T_BG);
+    px_text_c(0, 120, 38, PXF_5B, "UPDATE MODE IN", px_ink);
     cv_blit(0, UI_HEAD_H);
     cv_begin(240, 107, T_BG);
     fmt_int(n, ui.uboot);
-    cv_text_in(0, 0, 240, &AF_L, n, T_THEME, T_BG);
-    cv_text_in(0, 46, 240, &AF_S, "LET GO OF OCT- AND OCT+ TO CANCEL", T_MID, T_BG);
+    px_text_big(60 - (6 * 4 * (int32_t)str_len(n) - 4) / 2, 0, 4, n, px_ink);
+    px_text_c(0, 120, 36, PXF_3, "LET GO OF OCT-/OCT+ TO CANCEL", px_dim);
     cv_blit(0, UI_HEAD_H + 107);
 }
 
@@ -289,7 +259,7 @@ static void ui_draw(void)
     draw_viz();
     draw_foot();
     if (ui.msg_t && !--ui.msg_t)
-        ui.sig_head = 0;                          /* the message ends: the title comes back */
+        ui.sig_viz = 0;                           /* the message ends: the picture comes back */
     if (ui.hot_t)
         ui.hot_t--;
     ui.force = 0;

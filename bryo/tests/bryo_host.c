@@ -70,6 +70,7 @@ static void ui_redraw(void);
 #include "../firmware/src/icons.c"
 #include "../firmware/src/panel.c"
 #include "../firmware/src/settings.c"
+#include "../firmware/src/ui_px.c"
 #include "../firmware/src/ui.c"
 #include "../firmware/src/ui_viz.c"
 #include "../firmware/src/ui_input.c"

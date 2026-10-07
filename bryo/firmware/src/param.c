@@ -4,8 +4,9 @@
  * screen shows (the PRD's "4-value strip"), so a page is just (device or slot, track).
  *
  * The values live here as integers in each parameter's own range; the DSP reads them once per control block and
- * maps them (the device modules own that mapping). The labels are what the strip prints: at most 6 capitals, so
- * four fit across 240 px in the S face without cutting. */
+ * maps them (the device modules own that mapping). The labels are what the strip prints under each pictogram: at
+ * most 4 capitals, so four sit apart across the screen in the 5 x 7 face (ui_px.c), the way groovebox screens
+ * abbreviate. */
 
 enum { DEV_SRC, DEV_GRAIN, DEV_RESO, DEV_COLOR, DEV_SPACE, NDEV };
 #define NSLOT 4u                 /* modulator slots per track */
@@ -21,30 +22,30 @@ static const char *const DEV_NAME[NDEV] = {"TAPE", "GRAIN", "RESONATOR", "COLOR"
 
 static const pdesc_t DEV_P[NDEV][4] = {
     {   /* TAPE (the source: other source engines bring their own four, phase 2) */
-        {"START", 0, 100, 0, F_PCT}, {"LENGTH", 1, 100, 100, F_PCT},
-        {"SPEED", -200, 200, 100, F_BIPCT}, {"DUB", 0, 100, 50, F_PCT}},
+        {"STRT", 0, 100, 0, F_PCT}, {"LEN", 1, 100, 100, F_PCT},
+        {"SPD", -200, 200, 100, F_BIPCT}, {"DUB", 0, 100, 50, F_PCT}},
     {   /* GRAIN */
         {"SIZE", 5, 500, 80, F_MS}, {"DENS", 0, 100, 40, F_PCT},
-        {"PITCH", -24, 24, 0, F_ST}, {"SPREAD", 0, 100, 30, F_PCT}},
+        {"TUNE", -24, 24, 0, F_ST}, {"SPRD", 0, 100, 30, F_PCT}},
     {   /* RESONATOR */
         {"ROOT", 33, 81, 45, F_NOTE}, {"FDBK", 0, 100, 60, F_PCT},
         {"DAMP", 0, 100, 40, F_PCT}, {"MIX", 0, 100, 0, F_PCT}},
     {   /* COLOR */
-        {"DRIVE", 0, 100, 0, F_PCT}, {"CRUSH", 0, 100, 0, F_PCT},
-        {"NOISE", 0, 100, 0, F_PCT}, {"TONE", 0, 100, 50, F_PCT}},
+        {"DRIV", 0, 100, 0, F_PCT}, {"CRSH", 0, 100, 0, F_PCT},
+        {"NOIS", 0, 100, 0, F_PCT}, {"TONE", 0, 100, 50, F_PCT}},
     {   /* SPACE */
         {"TIME", 10, 370, 250, F_MS}, {"FDBK", 0, 100, 30, F_PCT},
-        {"SIZE", 0, 100, 50, F_PCT}, {"DECAY", 0, 100, 40, F_PCT}},
+        {"SIZE", 0, 100, 50, F_PCT}, {"DEC", 0, 100, 40, F_PCT}},
 };
 
 /* the modulator engines (phase 7 runs them; their knobs exist now so a slot's page can be edited) */
 enum { ME_WAVE, ME_RANDOM, ME_ADSR, ME_SEQ, NME };
 static const char *const ME_NAME[NME] = {"WAVE", "RANDOM", "ADSR", "SEQ"};
 static const pdesc_t ME_P[NME][4] = {
-    {{"RATE", 0, 127, 64, F_NUM}, {"SHAPE", 0, 2, 0, F_NUM}, {"FOLD", 0, 100, 0, F_PCT}, {"SKEW", -100, 100, 0, F_BIPCT}},
-    {{"RATE", 0, 127, 64, F_NUM}, {"SMOOTH", 0, 100, 0, F_PCT}, {"SPREAD", 0, 100, 100, F_PCT}, {"BIAS", -100, 100, 0, F_BIPCT}},
+    {{"RATE", 0, 127, 64, F_NUM}, {"SHPE", 0, 2, 0, F_NUM}, {"FOLD", 0, 100, 0, F_PCT}, {"SKEW", -100, 100, 0, F_BIPCT}},
+    {{"RATE", 0, 127, 64, F_NUM}, {"SMTH", 0, 100, 0, F_PCT}, {"SPRD", 0, 100, 100, F_PCT}, {"BIAS", -100, 100, 0, F_BIPCT}},
     {{"ATK", 0, 127, 10, F_NUM}, {"DEC", 0, 127, 50, F_NUM}, {"SUS", 0, 100, 60, F_PCT}, {"REL", 0, 127, 50, F_NUM}},
-    {{"STEPS", 1, 16, 16, F_NUM}, {"RATE", 0, 5, 2, F_NUM}, {"SLEW", 0, 100, 0, F_PCT}, {"SWING", 0, 100, 0, F_PCT}},
+    {{"LEN", 1, 16, 16, F_NUM}, {"RATE", 0, 5, 2, F_NUM}, {"SLEW", 0, 100, 0, F_PCT}, {"SWNG", 0, 100, 0, F_PCT}},
 };
 /* the slots' default engines: the pads are labelled LFO ENV SEQ ARP (PRD 2.2) */
 static const uint8_t SLOT_DEF_ENGINE[NSLOT] = {ME_WAVE, ME_ADSR, ME_SEQ, ME_RANDOM};

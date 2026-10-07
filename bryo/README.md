@@ -38,13 +38,13 @@ What works on the panel now (every control, in every context, with what's planne
 | Black keys OP1 to OP4 | track mutes |
 | SCL | nothing yet (proposed: hold for the system menu) |
 
-Under the strip, each page draws what it does from its values, in the style of an Elektron screen: one icon and
-a name on the left of a caption bar, the last knob you turned as a solid tag on the right (its icon, label and
-value), and filled shapes underneath. TAPE is a strip of film with the loop bracketed, a playhead and speed
-chevrons; GRAIN lights the sample where each grain reads it and drops one solid block per grain in a stereo lane;
-RESONATOR is a filled response with its root tagged; COLOR runs a sine through the device with an inset that
-follows your last knob (the drive curve, the noise or the tone filter); SPACE shows the echoes and the tail; and
-each modulator draws its shape in its slot colour (ADSR and SEQ get tagged stages and numbered steps).
+The screen is drawn like a groovebox OLED: a grid of 2 x 2 px dots, bitmap type, one ink from your palette.
+Each knob is a pictogram that shows its value (a dial's pointer, a fader's fill, a slope's length, a keyboard
+with the root lit), with a 4-letter label under it. Under the four of them, each page plots what it does in the
+same dotted language: the tape with its loop bracketed and chevrons for speed, the sample lit where grains read
+it with one block per grain, the resonator's peaks with a node on each harmonic, a sine through COLOR (with an
+inset that follows your last knob), SPACE's echoes as stems and its tail, and each modulator's shape (ADSR names
+its stages, SEQ numbers its steps). The last knob you turned has its label inverted in both places.
 
 Not there yet, and on purpose: Felucca's MENU (palette, speaker EQ, LEDs, USB serial, ABOUT and credits). Your
 settings from Felucca are kept and still apply; the menu to change them comes back in a later phase.

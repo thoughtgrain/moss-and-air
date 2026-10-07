@@ -84,6 +84,7 @@ static void ui_redraw(void);
 #endif
 #include "settings.c"            /* the settings record (shared with Felucca installs: settings.c) */
 
+#include "ui_px.c"              /* the dot grid: bitmap type, strokes, the pictograms */
 #include "ui.c"
 #include "ui_viz.c"              /* the visualization panel */
 #include "ui_input.c"

@@ -338,16 +338,31 @@ After phase 1, two changes to the screen, from your review:
   last-turned knob is drawn in the accent and named in the panel's caption with its value, and on COLOR the
   inset follows it (the drive curve, the noise, or the tone filter). The DSP will use the same mappings the
   pictures do, so what's drawn is what you'll hear.
-- **The panels read like an Elektron box: a pictogram, a shape, a tag.** Every panel opens with a caption bar:
-  the page's 16 px icon and name on the left, and on the right a solid accent tag holding the last-turned knob's
-  own icon, label and value (so `SPREAD 90%` sits right above the grains it's spreading). Under it, filled
-  shapes instead of thin lines, because filled reads at arm's length on a 240 px screen and a hairline doesn't.
-  TAPE is a strip of film with sprocket holes, a bracketed loop window, a playhead triangle, speed chevrons (one
-  per 50 %, flipped for reverse, a pause sign at 0) and three stacked DUB layers. RESONATOR is a filled response
-  with a `ROOT` tag on the fundamental and dots under each harmonic. ADSR labels its four stages with tags and
-  makes the focused one solid. SEQ is 16 blocks in groups of four, numbered like a step sequencer's pads. A
-  muted track in the mixer gets the crossed speaker on a solid key. All of it is drawn from palette tokens, so
-  it holds up in all ten palettes; the icon set has no 12 px record glyph, so DUB's tag uses the plus.
+- **The screen is a groovebox OLED now: a dot grid, bitmap type, pictograms that carry the value.** The first
+  pass (icons, tags, filled shapes in anti-aliased type) didn't land; what you wanted was the Syntakt/Digitakt
+  screen, so I rebuilt the main screens on a 120 x 120 grid of 2 x 2 px dots (`firmware/src/ui_px.c`). Why a
+  grid: at 240 px on a 1.5" panel, a 1 px stroke is a hairline, while a 2 px dot is about the size of an
+  Elektron OLED's pixel, and drawing everything on the same grid is what makes the type, the pictograms and the
+  plots read as one system.
+  - **Type** is two bitmap faces I drew as ASCII art in `tools/gen_px_font.py` (generated into
+    `build/gen/ui_pxfont.h` like the other headers): 5 x 7 for labels and values (doubled to the right for the
+    bold titles) and 3 x 5 for small print. Square corners on purpose.
+  - **One ink.** Everything is the palette's THEME colour plus a dim version of it (40 % from the background),
+    so the palette still picks the screen's character (amber, green, paper...). Emphasis is inversion, never
+    colour: the last-turned knob's label is inverted in the strip and in the plot under it. A modulator slot's
+    colour only survives as a 1-dot stripe under its `M1`..`M4` box.
+  - **The header** is a box with the track (`T1`) or slot (`M2`), the page in bold, and an inverted tempo bar
+    holding REC, the transport and the metronome, like the references.
+  - **The strip** is four pictograms, and each one is the value: a dial's pointer, a fader's fill, a slope's
+    length, a keyboard with the root key lit, chevrons for tape speed, stacked takes for DUB, a dot field for
+    density. The label sits under it (4 letters, Elektron-style: `STRT`, `TUNE`, `DRIV`, `SWNG`), the value
+    under that in the dim ink.
+  - **The plot below** speaks the same language: 1-dot lines, square nodes where a value sits, dotted drop
+    lines and guides, 3 x 5 labels under the stretch they name (the ADSR page is the clearest example of the
+    pattern). Messages show as an inverted box over the plot, so the title never moves.
+  - **Kept as it was:** the region signatures (a region redraws only when what it shows changes), the
+    mappings each plot uses (they're still the DSP's), and the update path. UPDATE MODE moved onto the grid
+    too; HARDWARE CALIBRATION keeps Felucca's look since it's a one-time setup screen.
 
 The controls are mapped in `docs/controls.tsv` (one row per context, control and gesture, with status and
 phase), validated by `tests/controls_check.py`, which also fails if a physical control goes unmentioned.
