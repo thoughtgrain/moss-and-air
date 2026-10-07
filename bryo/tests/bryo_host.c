@@ -696,6 +696,11 @@ static void screens_in(const char *pal)
     press(B_FX);                                         /* SPACE 3: PRE 120 ms */
     turn(0, 100);
     shot(pal, "space3");
+    tp[0].dev[DEV_SPACE][5] = 0;                         /* VERB 0, SPRD 0: clean rings, the notches at 12 o'clock */
+    tp[0].dev[DEV_SPACE][7] = 0;
+    shot(pal, "space_clean");
+    tp[0].dev[DEV_SPACE][5] = 60;
+    tp[0].dev[DEV_SPACE][7] = 100;
     for (s = 0; s < NSLOT; s++) {
         static const uint8_t B[NSLOT] = {B_LFO, B_ENV, B_SEQ, B_ARP};
         char nm[8] = {'m', 'o', 'd', (char)('1' + s), 0};
