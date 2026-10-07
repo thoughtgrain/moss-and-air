@@ -81,7 +81,7 @@ static inline uint32_t noise32(int32_t *st)
 
 /* Trapezoidal SVF (A. Simper), unconditionally stable. Coefficients per
  * block in Q13; signals stay within +-150000 so products fit in 32 bits. */
-typedef struct { int32_t a1, a2, a3; } tsvf_t;
+typedef struct { int32_t a1, a2, a3, k; } tsvf_t;
 static inline void tsvf_coef_k(tsvf_t *c, int32_t cut, int32_t k)   /* cut: 0..127 << 8, k: damping Q12 */
 {
     int32_t i, g, den;
@@ -90,6 +90,7 @@ static inline void tsvf_coef_k(tsvf_t *c, int32_t cut, int32_t k)   /* cut: 0..1
     g = SVF_G[i];
     if (i < 127)                                       /* between table points: sweeps without 128 steps */
         g += ((SVF_G[i + 1] - g) * (cut & 255)) >> 8;
+    c->k = k;
     den = 4096 + ((g * (g + k)) >> 12);
     c->a1 = (int32_t)((4096u << 13) / (uint32_t)den);
     c->a2 = (c->a1 * g) >> 12;
@@ -108,6 +109,17 @@ static inline int32_t tsvf_lp(const tsvf_t *c, int32_t in, int32_t *ic1, int32_t
     *ic1 = clamp(2 * v1 - *ic1, -150000, 150000);
     *ic2 = clamp(2 * v2 - *ic2, -150000, 150000);
     return v2;
+}
+
+/* the same filter, one of its three outputs: 0 low-pass, 1 band-pass, 2 high-pass (in - k band - low) */
+static inline int32_t tsvf_mode(const tsvf_t *c, int32_t in, int32_t *ic1, int32_t *ic2, uint32_t mode)
+{
+    int32_t v3 = in - *ic2;
+    int32_t v1 = (c->a1 * *ic1 + c->a2 * v3) >> 13;
+    int32_t v2 = *ic2 + ((c->a2 * *ic1 + c->a3 * v3) >> 13);
+    *ic1 = clamp(2 * v1 - *ic1, -150000, 150000);
+    *ic2 = clamp(2 * v2 - *ic2, -150000, 150000);
+    return mode == 1u ? v1 : mode == 2u ? in - ((c->k * v1) >> 12) - v2 : v2;
 }
 
 /* Blocks are always CTL long, so x / CTL is a shift (the compiler at -Os keeps even constant divisions as a

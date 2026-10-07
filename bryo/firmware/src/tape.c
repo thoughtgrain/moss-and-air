@@ -187,9 +187,10 @@ static int uslot_view(uint32_t s, tape_view_t *v);   /* reel.c: a user reel in f
 /* what a track has chosen: 0 its RAM tape, 1..NREEL a factory reel, then the user reels */
 static uint32_t tape_src(uint32_t t) { return (uint32_t)clamp(tp[t].dev[DEV_SRC][TK_REEL], 0, (int32_t)(NREEL + USLOT_N)); }
 
-static void tape_view(uint32_t t, tape_view_t *v)
+/* what reel choice s (0: track t's RAM tape, 1..NREEL a factory reel, then the user reels) holds; POLY reads any of
+ * them this way, whatever the track's TAPE plays */
+static void tape_view_of(uint32_t t, uint32_t s, tape_view_t *v)
 {
-    uint32_t s = tape_src(t);
     if (s > NREEL) {                                   /* a user reel (an empty slot plays nothing) */
         if (!uslot_view(s - NREEL - 1u, v)) {
             v->len = 0;
@@ -218,6 +219,8 @@ static void tape_view(uint32_t t, tape_view_t *v)
     v->len = tape_ctl[t].empty ? 0u : tape_ctl[t].nblk * TAPE_BLK;
     v->ram = 1;
 }
+
+static void tape_view(uint32_t t, tape_view_t *v) { tape_view_of(t, tape_src(t), v); }
 
 /* the loop window in samples: STRT and LEN in % of what the track plays (at least one block long) */
 static void tape_window(uint32_t t, uint32_t len, int32_t *ls, int32_t *ll)
@@ -565,10 +568,11 @@ static int32_t tape_ms(uint32_t t)
 }
 
 /* the name of what track t plays: a reel's, TAPE, or EMPTY */
-static const char *tape_name(uint32_t t)
+static const char *tape_name_of(uint32_t t, uint32_t s)   /* reel choice s, as the screen names it */
 {
-    uint32_t s = tape_src(t);
     if (s > NREEL)
         return uslot_name[s - NREEL - 1u];
     return s ? REELS[s - 1u].name : tape_ctl[t].empty || !tape_ctl[t].nblk ? "EMPTY" : "TAPE";
 }
+
+static const char *tape_name(uint32_t t) { return tape_name_of(t, tape_src(t)); }

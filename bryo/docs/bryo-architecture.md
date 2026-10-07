@@ -94,19 +94,8 @@ sound-making front end stays open, and a new engine is one file plus one table r
 - **TAPE:** the ADPCM looper below. White keys are 16 slices.
 - **SYNTH:** a simple subtractive voice built from Felucca's ANALOG engine (`eng_analog.c`: oscillators,
   filter, envelope), trimmed to a few voices. White keys are chromatic, and OCT−/OCT+ shift octaves.
-- **POLY:** a polyphonic sample player. A key starts a voice (4 per track) that plays a sample from flash at the
-  key's pitch, through its own ADSR and its own state-variable filter, which the envelope also sweeps by ENV AMT;
-  the voices sum into the track's chain. It reads samples straight from flash, as Felucca's SAMPLE engine did
-  (ADPCM through the XIP window), so it costs no tape RAM: about 100 bytes of state per voice. White keys are
-  chromatic; OCT-/OCT+ shift. HOME steps through three pages (as EDIT and FX toggle theirs):
-
-  | Page | KNOB 1 | KNOB 2 | KNOB 3 | KNOB 4 |
-  | --- | --- | --- | --- | --- |
-  | SAMPLE | REEL (which sample) | START | TUNE | VOICES (1..4) |
-  | ENV | ATK | DEC | SUS | REL |
-  | FILTER | CUTOFF | RES | TYPE (LP, BP, HP) | ENV AMT (-100..100) |
-
-  The modulator slots can still move CUTOFF (or anything else on these pages) for the whole track.
+- **POLY:** a sound played across the keys, up to four notes at once, each through its own ADSR and filter
+  (see "POLY, as built").
 - **Later engines:** to be defined; each is one file plus a row in the `source_t` table.
 
 Any source's output can still be printed onto the track's tape with REC, so every track keeps a tape
@@ -164,7 +153,8 @@ Why:
 | Screen canvas | 29,760 | 240×62 strip (Felucca uses 240×124, 59 KiB); the UI draws in strips |
 | GRAIN state | 4,096 | 4 × 64 slots × 16 B |
 | USB audio in | 16,384 | ring buffer: 4,096 stereo frames × 4 B (93 ms) for drift and jitter |
-| SYNTH | ~2,000 | 4 tracks × a few voices of oscillator and filter state |
+| SYNTH | 576 | 4 tracks × 3 voices of oscillator and filter state (.bss) |
+| POLY | 8,288 | 4 tracks × 4 voices × a 256-sample block reader (pool), plus 448 B of voice state (.bss) |
 | Spare | ~13,000 | build.py already enforces at least 8 KiB free; SPACE delay is the first thing to shrink |
 
 What gives way if the budget breaks: SPACE delay length first, then tape length. Both are single
@@ -595,6 +585,49 @@ and the fourth taking one; VOIC 1's glide up and back; the filter darkening a sa
 the tape (220.0 Hz back off it); and the crossfade from SYNTH to TAPE with no step bigger than the note's own.
 The five screens are in the golden set.
 
+## POLY, as built (2026-10-07)
+
+POLY is the third source engine: a sound played across the keys, up to four notes at once.
+
+**Files:** `poly.c` (the voices), `param.c` (`POL_P`, `tp[t].pol`), `source.c` (its row), `tape.c` (`tape_view_of`
+and `tape_name_of`: a view of any reel choice, not only the one the track's TAPE plays), `dsp.c` (`tsvf_mode`: the
+SVF's band-pass and high-pass outputs), `ui_px.c` (its pictograms), `ui_viz.c` (`viz_poly`, and `vz_filter`, which
+SYNTH's filter page now shares).
+
+**What it plays.** REEL is the same list TAPE's REEL is: the track's own tape, the factory reels, your reels. A
+voice reads straight from where the sound is: flash through the XIP window, or the RAM tape. So POLY copies nothing
+and costs no tape RAM, and choosing TAPE means you can record a phrase onto the track and then play it as an
+instrument. Each voice has its own 256-sample block reader (tape.c's), 520 bytes each, 8 KB for all sixteen.
+
+**Pitch.** White key 1 at OCT 3 plays the sound as it was recorded: the head reads 0.5 tape samples per output
+sample, as TAPE does at 100 %. Each key above is a semitone higher (the step comes from `pitch_inc`, so it's exact
+to the table). TUNE moves the whole range; the SAMPLE page prints it ("C3-D#4").
+
+**Each voice:** starts at STRT, runs the ADSR (the same block-rate envelope as SYNTH's), and passes a
+state-variable filter: TYPE LP, BP or HP, with ENV moving the cutoff by the envelope. With the filter wide open as
+LP (the default) it's skipped, so an untouched POLY plays the sound bit for bit. At the sound's end a voice fades
+over one block and frees itself, even with the key held. Voices are taken the way SYNTH takes them.
+
+**Pages:**
+
+| Page | KNOB 1 | KNOB 2 | KNOB 3 | KNOB 4 |
+| --- | --- | --- | --- | --- |
+| SAMPLE | REEL | STRT | TUNE | VOIC (1..4) |
+| ENV | ATK | DEC | SUS | REL |
+| FILTER | CUT | RES | TYPE (LP BP HP) | ENV (-100..100) |
+
+**Tests** (`test_poly`): a 440 Hz sine saved as a user reel plays at 440.0 Hz on key 1, 659.2 on key 8 and 880.0 on
+key 13; four keys take four voices and a fifth takes the oldest; VOIC turned down releases the voices above it;
+STRT 50 starts half way, and a held note plays to the end and frees itself; LP and HP each take the sine down; REEL
+TAPE plays nothing while the tape is empty and the sound once it holds one. Three screens are in the golden set.
+
+**A budget problem it brought into view.** The pool now holds 282 KB of its 344 KB: the tapes (152 KB), the screen
+canvas (59.5 KB, twice what the budget table planned), the drive's WAV inbox (38 KB, which the plan didn't have)
+and POLY's readers (8 KB). That leaves about 62 KB, and phases 3b to 5 plan about 151 KB more (RESONATOR, SPACE,
+GRAIN, the USB audio ring). Something has to give before RESONATOR lands. The candidates are: the inbox sharing the
+canvas's memory (it's only in use while a WAV arrives), a shorter SPACE delay (the plan's first choice), and a
+smaller canvas.
+
 ## Build order
 
 Each phase ends in something you can flash and hear or see, and each is its own commit series.
@@ -603,7 +636,7 @@ Each phase ends in something you can flash and hear or see, and each is its own 
 | --- | --- | --- |
 | 1. Skeleton (**done**, host-verified) | `bryo.c` boots on the kept hardware layer; the old app code is removed; silence plus a test tone; the header and an empty strip; install, UBOOT and calibration still work | it installs from the web installer and returns to stock |
 | 2. TAPE + reels (**done**, host-verified; see "Phase 2, as built") | tapes play factory reels; the loop window, speed, reverse, half speed, FADE; slices on the white keys; REC and overdub (resampling the other tracks); clear and undo | you can load, slice, record and overdub a loop |
-| 3. USB audio in + SYNTH + POLY (SYNTH and source_t **done**, host-verified; see "SYNTH, as built") | the source_t interface; the UAC OUT endpoint, drift handling, INPUT = USB; the SYNTH source; the POLY source (voices with their own envelope and filter, three HOME pages) | you can record your computer, and play the synth and samples onto a tape |
+| 3. USB audio in + SYNTH + POLY (SYNTH, POLY and source_t **done**, host-verified; see "SYNTH, as built" and "POLY, as built") | the source_t interface; the UAC OUT endpoint, drift handling, INPUT = USB; the SYNTH source; the POLY source (voices with their own envelope and filter, three HOME pages) | you can record your computer, and play the synth and samples onto a tape |
 | 3b. GRAIN | the scheduler, the sounding cap, FREEZE (key 0) | grains run on 4 tracks inside the budget |
 | 4. RESONATOR | strings, chromatic keys, OCT shifts | tuned feedback chords from the keys |
 | 5. COLOR + SPACE | drive, crush, noise; delay and reverb | the full chain on 4 tracks inside the budget |

@@ -99,8 +99,8 @@ static const pdesc_t DEV_P[NDEV][NPK] = {
 /* The source engines: what starts a track's chain (docs/bryo-architecture.md, "Source engines"). TAPE's knobs are
  * DEV_P[DEV_SRC]; each other source has its own table, and each track keeps every source's values, so switching
  * back and forth loses nothing. */
-enum { SRC_TAPE, SRC_SYNTH, NSRC };
-static const char *const SRC_NAME[NSRC] = {"TAPE", "SYNTH"};
+enum { SRC_TAPE, SRC_SYNTH, SRC_POLY, NSRC };
+static const char *const SRC_NAME[NSRC] = {"TAPE", "SYNTH", "POLY"};
 
 /* SYNTH (synth.c): a small subtractive voice from Felucca's ANALOG engine, up to three per track. Four pages, the
  * way a synth's panel reads left to right: the oscillators, the filter, the envelope (one ADSR for the level and,
@@ -119,6 +119,22 @@ static const pdesc_t SYN_P[NPK] = {
      * the tuning in semitones */
     {"VOIC", 1, SYN_NV, SYN_NV, F_NUM}, {"GLID", 0, 127, 0, F_TIME}, {"DRV", 0, 100, 0, F_PCT},
     {"TUNE", -24, 24, 0, F_ST}};
+
+/* POLY (poly.c): a sound played at the keys' pitches, up to four at once, each through its own envelope and filter.
+ * The sound is any reel choice: a factory reel, one of yours, or this track's own tape (record into it, then play it
+ * across the keys). White key 1 at OCT 3 plays it as it was recorded. */
+enum { PL_REEL, PL_STRT, PL_TUNE, PL_VOIC, PL_ATK, PL_DEC, PL_SUS, PL_REL, PL_CUT, PL_RES, PL_TYPE, PL_ENV };
+#define POL_NV 4u                /* voices per track */
+static const pdesc_t POL_P[NPK] = {
+    /* SAMPLE: which sound, where in it a note starts, the tuning, how many notes at once */
+    {"REEL", 0, NREEL + USLOT_N, 1, F_ENUM, N_REEL}, {"STRT", 0, 99, 0, F_PCT}, {"TUNE", -24, 24, 0, F_ST},
+    {"VOIC", 1, POL_NV, POL_NV, F_NUM},
+    /* ENV: each voice's envelope */
+    {"ATK", 0, 127, 0, F_TIME}, {"DEC", 0, 127, 60, F_TIME}, {"SUS", 0, 100, 100, F_PCT}, {"REL", 0, 127, 40, F_TIME},
+    /* FILTER: each voice's state-variable filter, and how far its envelope moves the cutoff */
+    {"CUT", 0, 127, 127, F_HZ}, {"RES", 0, 100, 0, F_PCT}, {"TYPE", 0, 2, 0, F_ENUM, N_SLOP},
+    {"ENV", -100, 100, 0, F_BIPCT},
+    {""}, {""}, {""}, {""}};
 
 /* an unused knob on a page (no label) */
 static int pdesc_empty(const pdesc_t *d) { return !d->label || !d->label[0]; }
@@ -196,12 +212,23 @@ typedef struct {
     int8_t steps[NSLOT][16];     /* a SEQ slot's step values, 0..100 (set per step from phase 7: slot + key + knob) */
     uint8_t src;                 /* the source engine (SRC_*): the main loop writes it, the ISR follows */
     int16_t syn[NPK];            /* SYNTH's knobs (TAPE's are dev[DEV_SRC]) */
+    int16_t pol[NPK];            /* POLY's */
 } track_params_t;
 static track_params_t tp[NTRK];
 
 /* device d of track t as the pages see it: the source's knobs are the chosen source's */
-static const pdesc_t *dev_p(uint32_t t, uint32_t d) { return d == DEV_SRC && tp[t].src == SRC_SYNTH ? SYN_P : DEV_P[d]; }
-static int16_t *dev_v(uint32_t t, uint32_t d) { return d == DEV_SRC && tp[t].src == SRC_SYNTH ? tp[t].syn : tp[t].dev[d]; }
+static const pdesc_t *dev_p(uint32_t t, uint32_t d)
+{
+    if (d != DEV_SRC || tp[t].src == SRC_TAPE)
+        return DEV_P[d];
+    return tp[t].src == SRC_SYNTH ? SYN_P : POL_P;
+}
+static int16_t *dev_v(uint32_t t, uint32_t d)
+{
+    if (d != DEV_SRC || tp[t].src == SRC_TAPE)
+        return tp[t].dev[d];
+    return tp[t].src == SRC_SYNTH ? tp[t].syn : tp[t].pol;
+}
 static const char *dev_name(uint32_t t, uint32_t d) { return d == DEV_SRC ? SRC_NAME[tp[t].src % NSRC] : DEV_NAME[d]; }
 
 /* slot s of track t runs engine e: its knobs start from that engine's defaults */
@@ -223,8 +250,11 @@ static void param_defaults(void)
         for (k = 0; k < NCH; k++)
             tp[t].ch[k] = CH_P[k].def;
         tp[t].src = SRC_TAPE;
-        for (k = 0; k < NPK; k++)
+        for (k = 0; k < NPK; k++) {
             tp[t].syn[k] = SYN_P[k].def;
+            tp[t].pol[k] = pdesc_empty(&POL_P[k]) ? 0 : POL_P[k].def;
+        }
+        tp[t].pol[PL_REEL] = (int16_t)(t < NREEL ? t + 1u : 1u);       /* POLY starts on the track's reel too */
         tp[t].dev[DEV_SRC][8] = (int16_t)(t < NREEL ? t + 1u : 0u);   /* track n plays reel n to start */
         for (s = 0; s < NSLOT; s++) {
             param_engine(t, s, SLOT_DEF_ENGINE[s]);

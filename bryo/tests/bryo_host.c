@@ -68,6 +68,7 @@ static void ui_redraw(void);
 #include "../firmware/src/param.c"
 #include "../firmware/src/tape.c"
 #include "../firmware/src/synth.c"
+#include "../firmware/src/poly.c"
 #include "../firmware/src/source.c"
 #include "../firmware/src/chain.c"
 #include "../firmware/src/icons.c"
@@ -115,6 +116,7 @@ static void power_on(void)
     memset(tape_ram, 0, sizeof tape_ram);
     memset(&tape_undo, 0, sizeof tape_undo);
     memset(syn, 0, sizeof syn);
+    memset(pol, 0, sizeof pol);
     memset(&sys, 0, sizeof sys);
     memset(&fm1_in, 0, sizeof fm1_in);
     panel = PANEL_DEFAULT;
@@ -610,8 +612,27 @@ static void screens_in(const char *pal)
     turn(2, 60);
     turn(3, -5);
     shot(pal, "synth_voice");
-    hold(B_HOME);                                        /* back to TAPE */
-    host_enc[panel.enc[EN_SELECT]] = -1;
+    hold(B_HOME);                                        /* POLY: its three pages */
+    host_enc[panel.enc[EN_SELECT]] = 1;
+    ui_input();
+    let_go(B_HOME);
+    shot(pal, "poly");
+    turn(1, 30);                                         /* STRT 30 %, TUNE -5, VOIC 3 */
+    turn(2, -5);
+    turn(3, -1);
+    shot(pal, "poly_start");
+    press(B_HOME);                                       /* ENV: a slower attack, SUS 70 */
+    turn(0, 40);
+    turn(2, -30);
+    shot(pal, "poly_env");
+    press(B_HOME);                                       /* FILTER: HP, CUT 60, RES 50, ENV +40 */
+    turn(0, -67);
+    turn(1, 50);
+    turn(2, 2);
+    turn(3, 40);
+    shot(pal, "poly_filter");
+    hold(B_HOME);                                        /* back to TAPE (round past POLY) */
+    host_enc[panel.enc[EN_SELECT]] = 1;
     ui_input();
     let_go(B_HOME);
     press(B_EDIT);
@@ -1367,6 +1388,162 @@ static void test_synth(void)
     }
 }
 
+/* ----------------------------------------------------------------- POLY --- */
+/* user reel `slot`: a sine of hz, nblk blocks, encoded as a recording is (tape.c tape_commit) */
+static void make_sine_reel(uint32_t slot, double hz, uint32_t nblk)
+{
+    static uint8_t data[TAPE_LEN / 2];
+    static int16_t pred[TAPE_NBLK];
+    static uint8_t idx[TAPE_NBLK], peak[TAPE_NBLK];
+    int16_t blk[TAPE_BLK];
+    uint32_t b, i;
+    for (b = 0; b < nblk; b++) {
+        int32_t d, id = 0;
+        for (i = 0; i < TAPE_BLK; i++)
+            blk[i] = (int16_t)(16000.0 * sin(2 * M_PI * hz * (b * TAPE_BLK + i) / TAPE_SR));
+        d = abs(blk[1] - blk[0]);
+        while (id < 88 && IMA_STEP[id] < d)
+            id++;
+        pred[b] = blk[0];
+        idx[b] = (uint8_t)id;
+        peak[b] = 16000 >> 7;
+        ima_enc(blk, pred[b], idx[b], data + b * (TAPE_BLK / 2), TAPE_BLK);
+    }
+    uslot_save(slot, data, pred, idx, peak, nblk, "SINE");
+}
+static uint32_t pol_sounding(uint32_t t)
+{
+    uint32_t j, n = 0;
+    for (j = 0; j < POL_NV; j++)
+        n += pol[t].v[j].stage != 0;
+    return n;
+}
+/* white key k held for NB blocks into s, then let go and silent again; returns the pitch */
+static double pol_note(uint32_t k, int32_t *s, uint32_t nb)
+{
+    double hz;
+    fm1_in.notes = note_bit_of_white(k);
+    render(nb, s);
+    hz = buf_hz(s, nb * CTL / 4, nb * CTL);
+    fm1_in.notes = 0;
+    render(nb * 2, 0);
+    return hz;
+}
+
+static void test_poly(void)
+{
+    enum { NB = 690 };                                   /* 0.5 s */
+    static int32_t s[NB * CTL];
+    int16_t *p;
+    char b[120];
+    double h0, h7, h12;
+    int32_t pk_open, pk;
+    uint32_t i;
+    power_on();
+    make_sine_reel(0, 440.0, 200);                       /* user reel 1: 2.3 s of A4 */
+    hold(B_HOME);                                        /* HOME held + SELECT, twice round: POLY */
+    host_enc[panel.enc[EN_SELECT]] = 2;
+    ui_input();
+    let_go(B_HOME);
+    p = tp[0].pol;
+    check("HOME held + SELECT: POLY, three pages (SAMPLE ENV FILTER), its own knobs", tp[0].src == SRC_POLY &&
+          !strcmp(dev_name(0, DEV_SRC), "POLY") && pdesc_pages(dev_p(0, DEV_SRC)) == 3u && dev_v(0, DEV_SRC) == p &&
+          p[PL_REEL] == 1);
+    {
+        int32_t q = 0;
+        for (i = 0; i < NB; i++) {
+            render(1, 0);
+            q = peak_of(track_rt[0].last, CTL) > q ? peak_of(track_rt[0].last, CTL) : q;
+        }
+        check("POLY, no key down: silence", q == 0);
+    }
+    p[PL_REEL] = (int16_t)(NREEL + 1u);                  /* the sine */
+    h0 = pol_note(0, s, NB);
+    pk_open = peak_of(s, NB * CTL);
+    h7 = pol_note(7, s, NB);
+    h12 = pol_note(12, s, NB);
+    snprintf(b, sizeof b, "white key 1 plays the sound as recorded (%.1f Hz), key 8 a fifth up (%.1f), key 13 "
+             "an octave (%.1f)", h0, h7, h12);
+    check(b, fabs(h0 - 440.0) < 2 && fabs(h7 - 659.3) < 3 && fabs(h12 - 880.0) < 4 && pk_open > 3000);
+    check("..each note let go releases and frees its voice", pol_sounding(0) == 0);
+
+    fm1_in.notes = note_bit_of_white(0) | note_bit_of_white(4) | note_bit_of_white(7) | note_bit_of_white(11);
+    render(8, 0);
+    check("four keys: four voices", pol_sounding(0) == 4);
+    fm1_in.notes |= note_bit_of_white(14);
+    render(8, 0);
+    {
+        uint32_t j, has = 0;
+        for (j = 0; j < POL_NV; j++)
+            has |= pol[0].v[j].key == 14 && pol[0].v[j].stage && pol[0].v[j].stage != 3;
+        check("..a fifth takes the oldest (no more than four sound)", pol_sounding(0) == 4 && has);
+    }
+    p[PL_VOIC] = 2;
+    render(2, 0);
+    check("..VOIC turned down to 2: the voices above it let go", pol[0].v[2].stage == 3 && pol[0].v[3].stage == 3);
+    fm1_in.notes = 0;
+    render(NB * 2, 0);
+    p[PL_VOIC] = POL_NV;
+
+    p[PL_STRT] = 50;                                     /* STRT 50: every note from half way */
+    fm1_in.notes = note_bit_of_white(0);
+    render(1, 0);
+    check("STRT 50: a note starts half way through the sound",
+          abs((pol[0].v[0].pos >> 12) - 200 * (int32_t)TAPE_BLK / 2) < 32);
+    {
+        uint32_t ran = 0;
+        while (pol_sounding(0) && ran < NB * 4u) {
+            render(1, 0);
+            ran++;
+        }
+        snprintf(b, sizeof b, "..held, it plays to the sound's end, fades and frees the voice (%u blocks, key still "
+                 "down)", ran);
+        check(b, !pol_sounding(0) && abs((int32_t)ran - 200 * 256 / 2 * 2 / CTL) < 8 && fm1_in.notes);   /* (half the reel, 2 outputs a sample) */
+    }
+    fm1_in.notes = 0;
+    render(NB, 0);
+    p[PL_STRT] = 0;
+
+    p[PL_CUT] = 30;                                      /* the filter: LP low, HP high, BP on the note */
+    fm1_in.notes = note_bit_of_white(0);
+    render(NB, s);
+    pk = peak_of(s + NB * CTL / 2, NB * CTL / 2);
+    fm1_in.notes = 0;
+    render(NB * 2, 0);
+    snprintf(b, sizeof b, "TYPE LP, CUT 30: the sine falls (peak %d, open %d)", (int)pk, (int)pk_open);
+    check(b, pk < pk_open / 4);
+    p[PL_TYPE] = 2;
+    p[PL_CUT] = 110;
+    fm1_in.notes = note_bit_of_white(0);
+    render(NB, s);
+    pk = peak_of(s + NB * CTL / 2, NB * CTL / 2);
+    fm1_in.notes = 0;
+    render(NB * 2, 0);
+    snprintf(b, sizeof b, "TYPE HP, CUT 110: the sine falls (peak %d)", (int)pk);
+    check(b, pk < pk_open / 4);
+    p[PL_TYPE] = 0;
+    p[PL_CUT] = 127;
+
+    p[PL_REEL] = 0;                                      /* the track's own tape: empty, then a reel copied in */
+    fm1_in.notes = note_bit_of_white(0);
+    render(NB / 2, s);
+    pk = peak_of(s, NB / 2 * CTL);
+    fm1_in.notes = 0;
+    render(NB, 0);
+    tape_prepare(0);
+    tape_unprepare(0);
+    fm1_in.notes = note_bit_of_white(0);
+    render(NB / 2, s);
+    fm1_in.notes = 0;
+    render(NB, 0);
+    check("REEL TAPE: an empty tape plays nothing; once it holds a sound, the keys play it",
+          pk == 0 && peak_of(s, NB / 2 * CTL) > 2000);
+    tp[0].src = SRC_TAPE;
+    render(NB / 2, 0);
+    memset(host_nor, 0xFF, sizeof host_nor);
+    uslot_names();
+}
+
 /* the tape's edges: an empty user reel, a loop shorter than a block, the seam running backwards */
 static void test_tape_edges(void)
 {
@@ -1686,6 +1863,7 @@ int main(int argc, char **argv)
     test_tape_edges();
     test_controls_more();
     test_synth();
+    test_poly();
     test_input();
     test_settings();
     palette_set(UI_GREY_INDEX);                          /* (the screens are one ink now, whatever the palette) */

@@ -8,6 +8,7 @@
  * envelope. The page's last-turned knob gets its label inverted here too, where the picture has one.
  *
  *   SYNTH      per page: the oscillators' cycles, the filter's response, the envelope, the keys and voices
+ *   POLY       per page: the sound with STRT and the keys' range, the envelope, the filter with its TYPE
  *   TAPE       a reel-to-reel, reels close over the middle: the run along the bottom is the whole tape with the
  *              sample on it, lit inside the loop window (STRT, LEN, bracketed); the playhead over it (stopped: where
  *              playing starts, moved by ROTA); between the reels SPD as chevrons and DUB as the layers kept (the old
@@ -659,6 +660,55 @@ static int32_t vz_lp_db10(int32_t i, int32_t c, int32_t res)
     return pk * 16 / (16 + d * d) - (d > 0 ? d * 10 : 0);   /* 12 dB an octave above it (1 dB a step) */
 }
 
+/* the same for a filter of TYPE type: 0 low-pass, 1 band-pass (6 dB an octave each side), 2 high-pass */
+static int32_t vz_filt_db10(int32_t i, int32_t c, int32_t res, int32_t type)
+{
+    int32_t d = i - c;
+    if (type == 1)
+        return res * 18 * 16 / (16 + d * d) - (d < 0 ? -d : d) * 5;
+    if (type == 2)
+        return res * 18 * 16 / (16 + d * d) - (d < 0 ? -d * 10 : 0);
+    return vz_lp_db10(i, c, res);
+}
+
+/* a filter page: the response over the cutoff scale (CUT c, RES res, TYPE type), dotted where the envelope at its
+ * top takes it (ENV env, -100..100, 96 steps at full), KTRK's arrow (ktrk %: where it sits an octave up the keys);
+ * fi: the page's last-turned knob (0..3, 0xFF none), page: its four knobs (for the tag), knobs CUT RES TYPE|- ENV */
+static void vz_filter(int32_t c, int32_t res, int32_t type, int32_t env, int32_t ktrk, uint32_t fi,
+                      const pdesc_t *page, const int16_t *pv, uint32_t env_k)
+{
+    int32_t x, ce = clamp(c + env * 96 / 100, 0, 127), ck = clamp(c + ktrk * 12 / 100, 0, 127);
+    int32_t py = 0, z = DY0 + 13;                     /* 0 dB at z; 18 dB of peak above it, 24 below */
+    px_line(DX0, z, DX1, z, px_dim, 2);
+    for (x = DX0; x <= DX1; x++) {
+        int32_t i = (x - DX0) * 127 / DW;
+        int32_t yy = clamp(z - vz_filt_db10(i, c, res, type) * 9 / 100, DY0, DY1);
+        int32_t ye = clamp(z - vz_filt_db10(i, ce, res, type) * 9 / 100, DY0, DY1);
+        if (x > DX0) {
+            px_line(x - 1, py, x, yy, px_ink, 1);
+            if (env && (x & 1) == 0)
+                px_dot(x, ye, px_ink);
+        }
+        py = yy;
+    }
+    {
+        int32_t cx = DX0 + c * DW / 127, ex = DX0 + ce * DW / 127, kx = DX0 + ck * DW / 127;
+        vz_node(cx, clamp(z - vz_filt_db10(c, c, res, type) * 9 / 100, DY0 + 1, DY1 - 1), 1);
+        px_line(cx, DY1 - 3, cx, DY1, px_ink, 1);
+        if (env && ex != cx) {
+            vz_node(ex, clamp(z - vz_filt_db10(ce, ce, res, type) * 9 / 100, DY0 + 1, DY1 - 1), 0);
+            px_line(cx, DY1 - 1, ex, DY1 - 1, px_ink, 2);
+        }
+        if (ktrk && kx > cx + 2)                      /* KTRK: an octave up the keys */
+            px_line(cx, DY1 + 1, kx, DY1 + 1, px_dim, 1);
+        vz_label(cx, "CUT", fi == 0u);
+        if (env && (ex - cx > 14 || cx - ex > 14))
+            vz_label(ex, "ENV", fi == env_k);
+    }
+    if (fi < 4u && fi != 0u)
+        vz_ktag(118, DY0 - 1, &page[fi], pv[fi]);
+}
+
 static void viz_synth(const int16_t *v, uint32_t f)
 {
     int32_t x, k;
@@ -684,36 +734,7 @@ static void viz_synth(const int16_t *v, uint32_t f)
         vz_label(75, "MIX", f == 2u);
         vz_label(105, "NOIS", f == 3u);
     } else if (ui.page == 1u) {
-        int32_t c = v[SY_CUT], ce = clamp(c + v[SY_ENV] * 96 / 100, 0, 127), ck = clamp(c + v[SY_KTRK] * 12 / 100, 0, 127);
-        int32_t py = 0, z = DY0 + 13;                 /* 0 dB at z; 18 dB of peak above it, 24 below */
-        px_line(DX0, z, DX1, z, px_dim, 2);
-        for (x = DX0; x <= DX1; x++) {
-            int32_t i = (x - DX0) * 127 / DW;
-            int32_t yy = clamp(z - vz_lp_db10(i, c, v[SY_RES]) * 9 / 100, DY0, DY1);
-            int32_t ye = clamp(z - vz_lp_db10(i, ce, v[SY_RES]) * 9 / 100, DY0, DY1);
-            if (x > DX0) {
-                px_line(x - 1, py, x, yy, px_ink, 1);
-                if (v[SY_ENV] && (x & 1) == 0)
-                    px_dot(x, ye, px_ink);
-            }
-            py = yy;
-        }
-        {
-            int32_t cx = DX0 + c * DW / 127, ex = DX0 + ce * DW / 127, kx = DX0 + ck * DW / 127;
-            vz_node(cx, clamp(z - vz_lp_db10(c, c, v[SY_RES]) * 9 / 100, DY0 + 1, DY1 - 1), 1);
-            px_line(cx, DY1 - 3, cx, DY1, px_ink, 1);
-            if (v[SY_ENV] && ex != cx) {
-                vz_node(ex, clamp(z - vz_lp_db10(ce, ce, v[SY_RES]) * 9 / 100, DY0 + 1, DY1 - 1), 0);
-                px_line(cx, DY1 - 1, ex, DY1 - 1, px_ink, 2);
-            }
-            if (v[SY_KTRK] && kx > cx + 2)                /* KTRK: an octave up the keys */
-                px_line(cx, DY1 + 1, kx, DY1 + 1, px_dim, 1);
-            vz_label(cx, "CUT", f == 0u);
-            if (v[SY_ENV] && (ex - cx > 14 || cx - ex > 14))
-                vz_label(ex, "ENV", f == 2u);
-        }
-        if (f < NPK && f != 0u)
-            vz_ktag(118, DY0 - 1, &SYN_P[4u + f % 4u], v[4u + f % 4u]);
+        vz_filter(v[SY_CUT], v[SY_RES], 0, v[SY_ENV], v[SY_KTRK], f < NPK ? f % 4u : 0xFFu, SYN_P + 4, v + 4, 2u);
     } else if (ui.page == 2u) {
         int16_t a[NPK] = {0};
         a[0] = v[SY_ATK];
@@ -770,6 +791,63 @@ static void viz_synth(const int16_t *v, uint32_t f)
         vz_label(48, "GLID", f == 1u);
         vz_label(78, "DRV", f == 2u);
         vz_label(105, "TUNE", f == 3u);
+    }
+}
+
+/* -------------------------------------------------------------- POLY --- */
+/* SAMPLE: the sound (its blocks' peaks; named), lit from STRT on, where every note starts; the keys' range under it
+ * (OCT, TUNE) and how fast the top and bottom keys read it; the voices as boxes. ENV: the envelope, as SYNTH's.
+ * FILTER: the response, its TYPE, dotted where ENV takes it */
+static void viz_poly(const int16_t *v, uint32_t f)
+{
+    static const char NOTE[12][3] = {"C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"};
+    int32_t x, k;
+    if (ui.page == 0u) {
+        tape_view_t vw;
+        int32_t sx = DX0 + v[PL_STRT] * DW / 100, mid = 11, lo, hi, nv = v[PL_VOIC];
+        char b[24];
+        tape_view_of(sys.sel, (uint32_t)clamp(v[PL_REEL], 0, (int32_t)(NREEL + USLOT_N)), &vw);
+        for (x = DX0; x <= DX1; x++) {                                 /* the sound */
+            uint32_t blk = vw.len ? (uint32_t)(x - DX0) * (vw.len / TAPE_BLK) / (uint32_t)(DW + 1) : 0;
+            int32_t a = vw.len ? vw.peak[blk] * 9 / 255 : 0;
+            px_box(x, mid - a, 1, 2 * a + 1, x >= sx ? px_ink : px_dim);
+        }
+        if (!vw.len)
+            px_text_c(0, 120, mid - 2, PXF_3, "EMPTY", px_ink);
+        px_box(sx, DY0, 1, 22, px_ink);                                /* STRT: where every note starts */
+        for (k = 0; k < 3; k++)
+            px_box(sx - 2 + k, DY0 + k, 5 - 2 * k, 1, px_ink);
+        lo = clamp(12 * ((int32_t)track[sys.sel].octave + 1) + v[PL_TUNE], 0, 127);   /* the keys' range */
+        hi = clamp(lo + 15, 0, 127);
+        str_cpy(b, NOTE[lo % 12], 3);
+        fmt_int(b + str_len(b), lo / 12 - 1);
+        str_cpy(b + str_len(b), "-", 2);
+        str_cpy(b + str_len(b), NOTE[hi % 12], 3);
+        fmt_int(b + str_len(b), hi / 12 - 1);
+        px_text(DX0, 26, PXF_3, b, f == 2u ? px_ink : px_dim);
+        for (k = 0; k < (int32_t)POL_NV; k++)                          /* the voices */
+            if (k < nv)
+                px_box(DX1 - 30 + k * 8, 26, 6, 5, px_ink);
+            else
+                px_frame(DX1 - 30 + k * 8, 26, 6, 5, px_dim, 2);
+        vz_label(DX0 + 14, tape_name_of(sys.sel, (uint32_t)clamp(v[PL_REEL], 0, (int32_t)(NREEL + USLOT_N))), f == 0u);
+        if (sx > DX0 + 34 || f == 1u)                                  /* (clear of the name, unless just turned) */
+            vz_label(clamp(sx, DX0 + 14, DX1 - 30), "STRT", f == 1u);
+        vz_label(DX1 - 18, "VOIC", f == 3u);
+        if (f == 2u)
+            vz_ktag(78, DLBL - 1, &POL_P[PL_TUNE], v[PL_TUNE]);
+    } else if (ui.page == 1u) {
+        int16_t a[NPK] = {0};
+        a[0] = v[PL_ATK];
+        a[1] = v[PL_DEC];
+        a[2] = v[PL_SUS];
+        a[3] = v[PL_REL];
+        a[10] = 100;
+        viz_adsr(a, f >= 4u && f < 8u ? f - 4u : 0xFFu);
+    } else {
+        vz_filter(v[PL_CUT], v[PL_RES], clamp(v[PL_TYPE], 0, 2), v[PL_ENV], 0, f < NPK ? f % 4u : 0xFFu, POL_P + 8,
+                  v + 8, 3u);
+        px_text(DX0, DY0, PXF_3, N_SLOP[clamp(v[PL_TYPE], 0, 2)], px_ink);
     }
 }
 
@@ -950,8 +1028,10 @@ static uint32_t viz_sig(void)
     if (ui.kind == FOCUS_SLOT && tp[sys.sel].engine[ui.slot] == ME_SEQ)   /* SEQ draws its step values */
         for (k = 0; k < 16u; k++)
             h = (h ^ (uint32_t)(uint8_t)tp[sys.sel].steps[ui.slot][k]) * 16777619u;
-    if (ui.kind == FOCUS_DEV && ui.dev == DEV_SRC)                     /* the source; SYNTH's range: the octave */
+    if (ui.kind == FOCUS_DEV && ui.dev == DEV_SRC)                     /* the source; the keys' range: the octave */
         h = (h ^ (tp[sys.sel].src * 7u + track[sys.sel].octave * 131u)) * 16777619u;
+    if (ui.kind == FOCUS_DEV && ui.dev == DEV_SRC && tp[sys.sel].src == SRC_POLY)   /* POLY on the track's tape */
+        h = (h ^ (tape_ver[sys.sel] * 31u)) * 16777619u;
     if (ui.kind == FOCUS_DEV && ((ui.dev == DEV_SRC && tp[sys.sel].src == SRC_TAPE) || ui.dev == DEV_GRAIN))   /* the tape, the head */
         h = (h ^ (tape_ver[sys.sel] * 31u + (uint32_t)(tape_head(sys.sel) * DW / 1000 + 7) + sys.rec * 977u)) * 16777619u;
     if (ui.kind == FOCUS_SLOT && tp[sys.sel].engine[ui.slot] == ME_FOLLOW)
@@ -988,6 +1068,8 @@ static void draw_viz(void)
             case DEV_SRC:
                 if (tp[sys.sel].src == SRC_SYNTH)
                     viz_synth(v, f);
+                else if (tp[sys.sel].src == SRC_POLY)
+                    viz_poly(v, f);
                 else
                     viz_tape(v, f);
                 break;

@@ -229,7 +229,7 @@ static void draw_foot(void)
     else if (ui.view == VIEW_MIXER)
         str_cpy(a, ui.chan ? "KNOBS: CHANNEL" : "HOLD EDIT: CHANNEL", sizeof a);
     else
-        str_cpy(a, tp[sys.sel].src == SRC_SYNTH ? "KEYS: NOTES" : "KEYS: SLICES", sizeof a);
+        str_cpy(a, tp[sys.sel].src != SRC_TAPE ? "KEYS: NOTES" : "KEYS: SLICES", sizeof a);
     str_cpy(b, "T", sizeof b);                        /* "T2 OCT 3": the track, its keys' octave */
     fmt_int(b + 1, (int32_t)sys.sel + 1);
     str_cpy(b + str_len(b), " OCT ", 8);

@@ -780,12 +780,13 @@ static void px_picto(uint32_t kind, int32_t x, int32_t y, const pdesc_t *d, int3
         px_line(x, cy + k, x + 21, cy - k, c, 1);
         break;
     }
-    case PK_VOICES: {                                    /* three voices stacked: as many solid as play at once */
-        for (i = 0; i < 3; i++)
+    case PK_VOICES: {                                    /* the voices stacked: as many solid as play at once */
+        int32_t gap = d->max > 3 ? 5 : 7, h = d->max > 3 ? 3 : 4;
+        for (i = 0; i < d->max; i++)
             if (i < v)
-                px_box(x + 2, y + 2 + i * 7, 18, 4, c);
+                px_box(x + 2, y + 2 + i * gap, 18, h, c);
             else
-                px_frame(x + 2, y + 2 + i * 7, 18, 4, m, 2);
+                px_frame(x + 2, y + 2 + i * gap, 18, h, m, 2);
         break;
     }
     case PK_KEYS: {                                      /* an octave: one outline, the dividers, the root marked */
@@ -834,8 +835,18 @@ static const uint8_t SYN_PK[NPK] = {
     PK_CUTOFF, PK_RES, PK_ENVAMT, PK_KTRK,           /*        CUT RES ENV KTRK */
     PK_ATTACK, PK_DECAY, PK_SUSTAIN, PK_RELEASE,     /*        ATK DEC SUS REL */
     PK_VOICES, PK_SLEW, PK_DRIVE, PK_KNOB};          /*        VOIC GLID DRV TUNE */
+static const uint8_t POL_PK[NPK] = {
+    PK_SRC, PK_START, PK_KNOB, PK_VOICES,            /* POLY: REEL STRT TUNE VOIC */
+    PK_ATTACK, PK_DECAY, PK_SUSTAIN, PK_RELEASE,     /*       ATK DEC SUS REL */
+    PK_CUTOFF, PK_RES, PK_SLOPE, PK_ENVAMT,          /*       CUT RES TYPE ENV */
+    PK_NONE, PK_NONE, PK_NONE, PK_NONE};
 /* the pictograms of device d's knobs on track t (the source: the chosen source's) */
-static const uint8_t *dev_pk(uint32_t t, uint32_t d) { return d == DEV_SRC && tp[t].src == SRC_SYNTH ? SYN_PK : DEV_PK[d]; }
+static const uint8_t *dev_pk(uint32_t t, uint32_t d)
+{
+    if (d != DEV_SRC || tp[t].src == SRC_TAPE)
+        return DEV_PK[d];
+    return tp[t].src == SRC_SYNTH ? SYN_PK : POL_PK;
+}
 static const uint8_t CH_PK[NCH] = {PK_SHELF_LO, PK_SHELF_HI, PK_FILTER, PK_PAN};
 static const uint8_t ME_PK[NME][NPK] = {
     {PK_KNOB, PK_SHAPE, PK_SKEW, PK_FOLD,            /* LFO: RATE SHPE SKEW FOLD */
