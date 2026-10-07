@@ -355,9 +355,13 @@ After phase 1, two changes to the screen, from your review:
     holding REC, the transport and the metronome, like the references.
   - **The strip** is four pictograms, and each one is the value: a dial's pointer, a fader's fill, a slope's
     length, a keyboard with the root key lit, chevrons for tape speed, stacked takes for DUB, a dot field for
-    density. The label sits under it (4 letters, Elektron-style: `STRT`, `TUNE`, `DRIV`, `SWNG`), the value
+    density. FDBK's dial ring turns to chaos as feedback rises: a slow wobble first, then jitter near the top, the
+    way a loop close to self-oscillation smears. Every point stays within 2 dots of the circle, so however wild it
+    gets it never leaves its box or touches its neighbours. The label sits under it (4 letters, Elektron-style: `STRT`, `TUNE`, `DRIV`, `SWNG`), the value
     under that in the dim ink.
-  - **The plot below** speaks the same language: 1-dot lines, square nodes where a value sits, dotted drop
+  - **The plot below** speaks the same language (TAPE is a reel-to-reel: two reels, two guides, and the run between
+    the guides is the whole tape, with the loop bracketed on it; the first version was a dashed strip that read as
+    a road): 1-dot lines, square nodes where a value sits, dotted drop
     lines and guides, 3 x 5 labels under the stretch they name (the ADSR page is the clearest example of the
     pattern). Messages show as an inverted box over the plot, so the title never moves.
   - **Kept as it was:** the region signatures (a region redraws only when what it shows changes), the

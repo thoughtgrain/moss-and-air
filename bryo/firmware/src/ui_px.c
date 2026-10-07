@@ -330,13 +330,35 @@ static void px_picto(uint32_t kind, int32_t x, int32_t y, const pdesc_t *d, int3
         px_line(x + 20, cy - h, x + 20, cy + h, c, 1);
         break;
     }
-    case PK_LOOP: {                                      /* feedback: the ring closes as the value grows */
-        int32_t n = r * 63 / 1000, a;
-        px_ring(cx, cy, 9, m, 2);
-        for (a = 0; a <= n; a++) {
-            px_dot(px_px(cx, 9, a), px_py(cy, 9, a), c);
-            px_dot(px_px(cx, 8, a), px_py(cy, 8, a), c);
+    case PK_LOOP: {                                      /* feedback: the dial's ring turns to chaos as it rises */
+        /* Each of the ring's 64 points moves off radius 8 by up to 2.2 dots, so it never leaves the box: a slow
+         * wobble at low feedback (two sines), giving way to jitter near the top, the way a loop near self-
+         * oscillation smears. Fixed seeds: the same value draws the same ring. The pointer reads the value. */
+        int32_t k, px0 = 0, py0 = 0, fx = 0, fy = 0, amp = r * 22 / 1000;   /* amp: tenths of a dot */
+        uint32_t s = 2463534242u;
+        for (k = 0; k <= 64; k++) {
+            int32_t ak = k & 63, smooth = (px_sin(ak * 5 + 7) * 6 + px_sin(ak * 11 + 3) * 4) / 10, jit, d, rad, xx, yy;
+            s ^= s << 13;
+            s ^= s >> 17;
+            s ^= s << 5;
+            jit = (int32_t)(s % 2001u) - 1000;
+            d = k == 64 ? 0 : (smooth * (1000 - r) + jit * r) / 1000;       /* -1000..1000 */
+            rad = 80 + (k == 64 ? 0 : d * amp / 1000);                    /* tenths of a dot */
+            xx = cx + (px_sin(ak) * rad + (px_sin(ak) >= 0 ? 5000 : -5000)) / 10000;
+            yy = cy - (px_cos(ak) * rad + (px_cos(ak) >= 0 ? 5000 : -5000)) / 10000;
+            if (k == 64) {                                                /* close on the first point */
+                xx = fx;
+                yy = fy;
+            }
+            if (k)
+                px_line(px0, py0, xx, yy, c, 1);
+            else
+                fx = xx, fy = yy;
+            px0 = xx;
+            py0 = yy;
         }
+        k = -24 + r * 48 / 1000;
+        px_line(cx, cy, px_px(cx, 5, k), px_py(cy, 5, k), c, 1);
         px_box(cx - 1, cy - 1, 2, 2, c);
         break;
     }

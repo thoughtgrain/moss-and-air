@@ -7,8 +7,8 @@
  * a value sits, dotted drop lines and guides, small 3 x 5 labels under the plot, the way a groovebox draws an
  * envelope. The page's last-turned knob gets its label inverted here too, where the picture has one.
  *
- *   TAPE       the tape with its sprocket holes, the loop window bracketed (START, LEN), the playhead, SPEED as
- *              chevrons inside the window, DUB as the layers under it
+ *   TAPE       a reel-to-reel: the run between the guides is the whole tape, the loop window bracketed on it
+ *              (STRT, LEN), the playhead under it, SPD as chevrons between the reels, DUB as layers over the window
  *   GRAIN      the sample in TAPE's loop window, lit where grains read it (SIZE, scaled by PITCH), and one solid
  *              block per grain (DENS) in a stereo lane under it (SPRD, up = left, down = right)
  *   RESONATOR  the response over 8 octaves: peaks on ROOT's harmonics (a node on each, the root's filled and
@@ -67,40 +67,59 @@ static void vz_poly(const int32_t *xs, const int32_t *ys, int32_t n, uint16_t c,
 }
 
 /* -------------------------------------------------------------- TAPE --- */
+/* a reel: its flange (dotted), the tape wound on it (solid), the hub and three spokes */
+static void vz_reel(int32_t cx, int32_t cy)
+{
+    int32_t k;
+    px_ring(cx, cy, 11, px_dim, 2);
+    px_ring(cx, cy, 8, px_ink, 1);
+    px_ring(cx, cy, 7, px_ink, 1);
+    px_box(cx - 1, cy - 1, 3, 3, px_ink);
+    for (k = 0; k < 3; k++)
+        px_line(px_px(cx, 2, 8 + k * 21), px_py(cy, 2, 8 + k * 21), px_px(cx, 5, 8 + k * 21), px_py(cy, 5, 8 + k * 21), px_ink, 1);
+}
+
 static void viz_tape(const int16_t *v, uint32_t f)
 {
-    int32_t x0 = DX0 + 1 + v[0] * (DW - 2) / 100, x1 = x0 + v[1] * (DW - 2) / 100, i, k, lit = (v[3] + 33) / 34;
-    if (x1 > DX1 - 1)
-        x1 = DX1 - 1;
-    px_frame(DX0, 7, DW + 1, 19, px_ink, 1);                           /* the tape */
-    for (i = DX0 + 2; i < DX1 - 1; i += 3) {                          /* its sprocket holes */
-        px_dot(i, 9, px_dim);
-        px_dot(i, 23, px_dim);
-    }
-    px_line(DX0 + 2, 16, DX1 - 2, 16, px_dim, 2);                      /* empty: a flat line (phase 2: the take) */
+    /* A reel-to-reel: the tape leaves the left reel, runs over two guides along the bottom (the whole tape, start
+     * to end, left to right) and winds onto the right reel. The loop window is bracketed on that run (START, LEN),
+     * the playhead sits under where playing starts (the end when reversed), SPEED is the chevrons between the
+     * reels, and DUB the layers stacked over the window. */
+    int32_t ga = 24, gb = 95, run = 31, x0 = ga + v[0] * (gb - ga) / 100, x1 = x0 + v[1] * (gb - ga) / 100, k;
+    int32_t lit = (v[3] + 33) / 34;
+    if (x1 > gb)
+        x1 = gb;
+    vz_reel(13, 12);
+    vz_reel(106, 12);
+    px_line(5, 18, ga - 1, run - 1, px_ink, 1);                        /* off the left reel, onto the right */
+    px_line(gb + 1, run - 1, 114, 18, px_ink, 1);
+    vz_node(ga, run, 0);                                               /* the guides */
+    vz_node(gb, run, 0);
+    px_line(ga + 2, run - 1, gb - 2, run - 1, px_ink, 1);              /* the run: a band two dots deep */
+    px_line(ga + 2, run + 1, gb - 2, run + 1, px_ink, 1);
+    px_line(ga + 2, run, gb - 2, run, px_dim, 2);                      /* empty (phase 2: the take shows here) */
     for (k = 0; k < 2; k++) {                                          /* the brackets, 2 dots wide when turned */
         int32_t x = k ? x1 : x0, s = k ? -1 : 1, w = f == (uint32_t)k ? 2 : 1;
-        px_box(k ? x - w + 1 : x, 4, w, 25, px_ink);
-        px_line(x, 4, x + 3 * s, 4, px_ink, 1);
-        px_line(x, 28, x + 3 * s, 28, px_ink, 1);
+        px_box(k ? x - w + 1 : x, run - 4, w, 9, px_ink);
+        px_line(x, run - 4, x + 2 * s, run - 4, px_ink, 1);
+        px_line(x, run + 4, x + 2 * s, run + 4, px_ink, 1);
     }
-    {   /* the playhead: a triangle over where playing starts (the end, reversed) */
+    {   /* the playhead: a triangle under the run, pointing up at where playing starts */
         int32_t px = v[2] < 0 ? x1 - 2 : x0 + 2;
         for (k = 0; k < 3; k++)
-            px_box(px - 2 + k, k, 5 - 2 * k, 1, px_ink);
+            px_box(px - k, run + 3 + k, 1 + 2 * k, 1, px_ink);
     }
-    if (x1 - x0 >= 14)
-        px_chevrons((x0 + x1) / 2, 16, v[2], px_ink);
-    for (k = 0; k < 3; k++) {                                          /* DUB: the layers kept, under the window */
-        int32_t lx = x0 + 1 + k * 2, rx = x1 - 1 - k * 2;
+    for (k = 0; k < 3; k++) {                                          /* DUB: the layers kept, over the window */
+        int32_t lx = x0 + 2 + k * 2, rx = x1 - 2 - k * 2;
         if (rx > lx)
-            px_line(lx, 30 + k * 2, rx, 30 + k * 2, k < lit ? px_ink : px_dim, k < lit ? 1 : 2);
+            px_line(lx, run - 6 - k * 2, rx, run - 6 - k * 2, k < lit ? px_ink : px_dim, k < lit ? 1 : 2);
     }
+    px_chevrons(60, 11, v[2], px_ink);                                 /* SPEED, between the reels */
     vz_label(x0, "IN", f == 0u);
     if (x1 - x0 >= 22 || f == 1u)
         vz_label(x1, "OUT", f == 1u);
     if (f == 3u || f == 2u)
-        vz_label((x0 + x1) / 2, f == 3u ? "DUB" : "SPD", 1);
+        vz_label(60, f == 3u ? "DUB" : "SPD", 1);
 }
 
 /* ------------------------------------------------------------- GRAIN --- */
