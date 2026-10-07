@@ -18,6 +18,7 @@ any	POT_MASTER	turn	master output level (digital gain after the mix; USB follows
 any	BTN_OCTDN	combo	held with OCT+ for 5 s: UPDATE MODE countdown from 2 s, letting go cancels	now	-	kept
 power-on	BTN_OCTDN	combo	held with OCT+ at power-on: HARDWARE CALIBRATION (press each button, turn each encoder)	now	-	kept
 page	BTN_HOME	press	focus the track's source device (TAPE)	now	-	PRD 2.2
+page	BTN_HOME	tap	on a POLY track, again while its page is up: the next page (SAMPLE, ENV, FILTER)	planned	3	change
 page	BTN_EDIT	press	focus GRAIN; again: RESONATOR; again: GRAIN	now	-	PRD 2.2
 page	BTN_FX	press	focus COLOR; again: SPACE; again: COLOR	now	-	PRD 2.2
 page	BTN_LFO	press	focus modulator slot 1 (default engine WAVE)	now	-	PRD 2.2
@@ -54,6 +55,7 @@ page	BLACK_POLY	hold	held 0.5 s (countdown ring): clear the focused track's tape
 page	BLACK_ZERO	hold	momentary global granular freeze while held	planned	3	PRD 2.3
 page:tape	WHITE_1-16	press	play from slice n of the loop (finger drumming, stutter)	planned	2	PRD 2.3
 page:grain	WHITE_1-16	press	play from slice n of the loop, through the grains	planned	3	PRD 2.3
+page	BLACK_POLY	release	(the key, not the POLY source engine) letting go before 0.5 s cancels the clear	planned	2	change
 page:resonator	WHITE_1-16	press	chromatic notes for the resonator (tuned feedback chords); OCT-/OCT+ shift	planned	4	PRD 2.3
 page:slot	WHITE_1-16	press	on a SEQ slot: the 16 steps (OCT-/OCT+: steps 17-32)	planned	7	PRD 2.3
 mixer	ENC_K1	turn	track 1 level	now	-	change

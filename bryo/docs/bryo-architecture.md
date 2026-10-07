@@ -15,9 +15,12 @@ build in.
 | Gestures where the hardware differs | Adapt what makes sense; **ask before changing anything else**. The remaps below stand. |
 | MONO and POLY keys | Hold for 0.5 s with a countdown ring, plus one level of undo. |
 
-Still open, to ask when the phase gets there: what **POLY** is as a source (the name also collides with the POLY black key, which clears the tape) (a polyphonic synth, a poly
-sample player, or something else), and what the white keys do on a SYNTH track while TAPE-style views
-are focused.
+**POLY (decided):** a polyphonic sample player: the white keys play a sample chromatically, and each voice has its
+own envelope and filter before the track's chain. Its three HOME pages and their knobs are under "Source engines".
+(The black key named POLY, which clears the tape, is a different thing; the screen always says "POLY SOURCE" for
+the engine.)
+
+Still open: what the white keys do on a SYNTH track while GRAIN or another tape-style page is focused.
 
 ## What the hardware really gives me
 
@@ -88,7 +91,20 @@ sound-making front end stays open, and a new engine is one file plus one table r
 - **TAPE:** the ADPCM looper below. White keys are 16 slices.
 - **SYNTH:** a simple subtractive voice built from Felucca's ANALOG engine (`eng_analog.c`: oscillators,
   filter, envelope), trimmed to a few voices. White keys are chromatic, and OCT−/OCT+ shift octaves.
-- **POLY and later engines:** to be defined (see "still open").
+- **POLY:** a polyphonic sample player. A key starts a voice (4 per track) that plays a sample from flash at the
+  key's pitch, through its own ADSR and its own state-variable filter, which the envelope also sweeps by ENV AMT;
+  the voices sum into the track's chain. It reads samples straight from flash, as Felucca's SAMPLE engine did
+  (ADPCM through the XIP window), so it costs no tape RAM: about 100 bytes of state per voice. White keys are
+  chromatic; OCT-/OCT+ shift. HOME steps through three pages (as EDIT and FX toggle theirs):
+
+  | Page | KNOB 1 | KNOB 2 | KNOB 3 | KNOB 4 |
+  | --- | --- | --- | --- | --- |
+  | SAMPLE | REEL (which sample) | START | TUNE | VOICES (1..4) |
+  | ENV | ATK | DEC | SUS | REL |
+  | FILTER | CUTOFF | RES | TYPE (LP, BP, HP) | ENV AMT (-100..100) |
+
+  The modulator slots can still move CUTOFF (or anything else on these pages) for the whole track.
+- **Later engines:** to be defined; each is one file plus a row in the `source_t` table.
 
 Any source's output can still be printed onto the track's tape with REC, so every track keeps a tape
 buffer even when TAPE isn't its source.
@@ -334,7 +350,7 @@ Each phase ends in something you can flash and hear or see, and each is its own 
 | --- | --- | --- |
 | 1. Skeleton (**done**, host-verified) | `bryo.c` boots on the kept hardware layer; the old app code is removed; silence plus a test tone; the header and an empty strip; install, UBOOT and calibration still work | it installs from the web installer and returns to stock |
 | 2. Sources + TAPE + reels | the source_t interface; tapes play factory reels; slices on the white keys; REC and overdub (resampling); the upload tool fills reel slots | you can load, slice, record and overdub a loop |
-| 3. USB audio in + SYNTH | the UAC OUT endpoint, drift handling, INPUT = USB; the SYNTH source | you can record your computer and play the synth onto a tape |
+| 3. USB audio in + SYNTH + POLY | the UAC OUT endpoint, drift handling, INPUT = USB; the SYNTH source; the POLY source (voices with their own envelope and filter, three HOME pages) | you can record your computer, and play the synth and samples onto a tape |
 | 3b. GRAIN | the scheduler, the sounding cap, FREEZE (key 0) | grains run on 4 tracks inside the budget |
 | 4. RESONATOR | strings, chromatic keys, OCT shifts | tuned feedback chords from the keys |
 | 5. COLOR + SPACE | drive, crush, noise; delay and reverb | the full chain on 4 tracks inside the budget |
