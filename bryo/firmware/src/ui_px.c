@@ -479,15 +479,17 @@ static void px_picto(uint32_t kind, int32_t x, int32_t y, const pdesc_t *d, int3
         px_box(cx - 1, cy - 1, 2, 2, c);
         break;
     }
-    case PK_ROOM: {                                      /* size: a box in perspective, bigger with the value */
-        int32_t s = 7 + r * 9 / 1000, o = s / 2, x0 = x + 1, y0 = b - s + 1;
-        px_frame(x0 + o, y0 - o, s, s, m, 2);
-        px_line(x0, y0, x0 + o, y0 - o, c, 1);
-        px_line(x0 + s - 1, y0, x0 + s - 1 + o, y0 - o, c, 1);
-        px_line(x0 + s - 1, y0 + s - 1, x0 + s - 1 + o, y0 + s - 1 - o, c, 1);
-        px_line(x0 + o, y0 - o, x0 + s - 1 + o, y0 - o, c, 1);
-        px_line(x0 + s - 1 + o, y0 - o, x0 + s - 1 + o, y0 + s - 1 - o, c, 1);
-        px_frame(x0, y0, s, s, c, 1);
+    case PK_ROOM: {                                      /* size: sound spreading from a source, arcs out to the */
+        int32_t n = 1 + r * 3 / 1000, k, ax = x + 3, a;  /* room's walls; as many lit as SIZE reaches (1..4) */
+        px_box(ax - 1, cy - 1, 3, 3, c);
+        for (k = 0; k < 4; k++) {
+            int32_t rad = 5 + k * 4;
+            for (a = 1; a < 32; a += k < n ? 1 : 2) {    /* the right half; the unlit ones dotted */
+                int32_t px = px_px(ax, rad, a), py = px_py(cy, rad, a);
+                if (px <= x + 21 && py >= cy - 9 && py <= cy + 9)
+                    px_dot(px, py, k < n ? c : m);
+            }
+        }
         break;
     }
     case PK_SHAPE:                                       /* one cycle of the shape */
