@@ -379,6 +379,13 @@ After phase 1, two changes to the screen, from your review:
   The values live per track in `tp[].ch` (`firmware/src/param.c`) and the curve is `ch_resp()` in
   `firmware/src/ui_px.c`, which is the response the mixer DSP will apply in phase 6. The PRD's master
   compressor, which the old plan had on this page, still needs a home; I left it for phase 6.
+- **SEQ shows its steps' values, and the keyboard got simpler.** The SEQ page drew 16 identical blocks with the word
+  SEQUENCE under them, which said nothing the header didn't. Now each step is a bar as tall as its value, with
+  the steps past LEN left as dim slots, SLEW drawn as the glide between values and SWING nudging the off-beats.
+  For that the slot needs values, so each SEQ slot stores 16 (`tp[].steps`, 0..100) with a default pattern that
+  accents the beats; it moves nothing until the slot is assigned a depth, and setting a step's value (hold the
+  slot, hold a white key, turn a knob) arrives with phase 7. RESONATOR's ROOT pictogram is now one outline with
+  dividers and thin black keys, the root key filled (or a black one hollow), instead of a key-by-key drawing.
 
 The controls are mapped in `docs/controls.tsv` (one row per context, control and gesture, with status and
 phase), validated by `tests/controls_check.py`, which also fails if a physical control goes unmentioned.

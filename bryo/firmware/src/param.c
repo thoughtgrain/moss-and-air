@@ -56,6 +56,10 @@ static const pdesc_t ME_P[NME][4] = {
     {{"ATK", 0, 127, 10, F_NUM}, {"DEC", 0, 127, 50, F_NUM}, {"SUS", 0, 100, 60, F_PCT}, {"REL", 0, 127, 50, F_NUM}},
     {{"LEN", 1, 16, 16, F_NUM}, {"RATE", 0, 5, 2, F_NUM}, {"SLEW", 0, 100, 0, F_PCT}, {"SWNG", 0, 100, 0, F_PCT}},
 };
+/* a SEQ slot's steps before you set them: a pattern with an accent on each beat, so the page shows the idea
+ * (the slot's depth is 0 until it's assigned, so this moves nothing) */
+static const int8_t SEQ_DEF[16] = {100, 25, 60, 25, 80, 25, 60, 40, 100, 25, 60, 25, 80, 50, 35, 20};
+
 /* the slots' default engines: the pads are labelled LFO ENV SEQ ARP (PRD 2.2) */
 static const uint8_t SLOT_DEF_ENGINE[NSLOT] = {ME_WAVE, ME_ADSR, ME_SEQ, ME_RANDOM};
 
@@ -64,6 +68,7 @@ typedef struct {
     uint8_t engine[NSLOT];       /* the engine each slot runs */
     int16_t mod[NSLOT][4];       /* the slot's own knobs */
     int16_t ch[NCH];             /* the channel strip */
+    int8_t steps[NSLOT][16];     /* a SEQ slot's step values, 0..100 (set per step from phase 7: slot + key + knob) */
 } track_params_t;
 static track_params_t tp[NTRK];
 
@@ -78,6 +83,8 @@ static void param_defaults(void)
             tp[t].ch[k] = CH_P[k].def;
         for (s = 0; s < NSLOT; s++) {
             tp[t].engine[s] = SLOT_DEF_ENGINE[s];
+            for (k = 0; k < 16u; k++)
+                tp[t].steps[s][k] = SEQ_DEF[k];
             for (k = 0; k < 4u; k++)
                 tp[t].mod[s][k] = ME_P[SLOT_DEF_ENGINE[s]][k].def;
         }

@@ -17,7 +17,8 @@
  *   COLOR      a sine through the device (dotted: in; solid: out); the inset follows the last-turned knob: the
  *              transfer curve (DRIVE, CRUSH), the noise (NOISE) or the tone filter (TONE)
  *   SPACE      the dry hit, the echoes as stems with nodes (TIME apart, falling by FDBK) and the reverb tail
- *   MOD slots  WAVE's shape, RANDOM's steps, ADSR's envelope with its stages named, SEQ's 16 steps
+ *   MOD slots  WAVE's shape, RANDOM's steps, ADSR's envelope with its stages named, SEQ's 16 steps as bars of
+ *              their values
  *   MIXER      the selected track's channel: EQ and filter as one response, the pan as two speakers
  *
  * The DSP of each device will use the same mappings as these pictures (the comments name them), so what is drawn
@@ -406,24 +407,38 @@ static void viz_adsr(const int16_t *v, uint32_t f)
 
 static void viz_seq(const int16_t *v, uint32_t f)
 {
-    /* the 16 steps in four groups of four (their values arrive with p-locks, phase 7); STEPS lit, SWING nudges the
-     * off-beats late, SLEW joins each step to the next */
-    int32_t k, bw = 5, gap = 1, gg = 3, y = 6, h = 16, sw = v[3] * 2 / 100;
+    /* the 16 steps in four groups of four, each a bar as tall as its value (tp[].steps, 0..100) with a node on
+     * top; the steps past LEN are their dotted slots only. SWING nudges the off-beats late; SLEW draws the glide
+     * from each step's value into the next. The step numbers sit under each group; the last-turned knob is named
+     * at the right of that row. */
+    const int8_t *st = tp[sys.sel].steps[ui.slot];
+    int32_t k, bw = 5, gap = 1, gg = 3, top = DY0 + 1, floor = DY1, h = floor - top, sw = v[3] * 2 / 100;
+    int32_t px = 0, py = 0;
+    px_line(DX0, floor + 1, DX1, floor + 1, px_dim, 2);
     for (k = 0; k < 16; k++) {
         int32_t x = DX0 + 3 + k * (bw + gap) + (k / 4) * gg + ((k & 1) ? sw : 0), on = k < v[0];
-        if (on)
-            px_box(x, y, bw, h, px_ink);
-        else
-            px_frame(x, y, bw, h, px_dim, 2);
-        if (on && v[2] && k + 1 < v[0])                                /* SLEW: a ramp into the next step */
-            px_line(x + bw, y + h - 1 - v[2] * (h - 2) / 100, x + bw + gap + ((k & 3) == 3 ? gg : 0), y, px_ink, 1);
+        int32_t y = floor - st[k] * h / 100;
+        if (on) {
+            px_frame(x, top, bw, h + 1, px_dim, 2);                    /* the step's range, dotted */
+            px_box(x + 1, y, bw - 2, floor - y + 1, px_ink);           /* its value */
+            px_box(x, y, bw, 1, px_ink);                               /* a cap as wide as the step */
+            if (v[2] && k)                                             /* SLEW: the glide from the last value */
+                px_line(px, py, x + v[2] * (bw - 1) / 100, y, px_ink, 1);
+            px = x + bw - 1;
+            py = y;
+        } else {
+            px_line(x, floor, x + bw - 1, floor, px_dim, 1);
+        }
         if ((k & 3) == 0) {
             char n[4];
             fmt_int(n, k + 1);
-            px_text(x, y + h + 3, PXF_3, n, px_ink);
+            px_text(x, DLBL, PXF_3, n, k < v[0] ? px_ink : px_dim);
         }
     }
-    vz_label(60, f == 0u ? "LEN" : f == 1u ? "RATE" : f == 2u ? "SLEW" : f == 3u ? "SWNG" : "SEQUENCE", f < 4u);
+    if (f < 4u) {
+        static const char *const L[4] = {"LEN", "RATE", "SLEW", "SWNG"};
+        px_tag(118 - px_text_w(PXF_3, L[f]) - 1, DLBL - 1, PXF_3, L[f], px_ink, px_bg);
+    }
 }
 
 /* ------------------------------------------------------------- MIXER --- */
@@ -515,6 +530,9 @@ static uint32_t viz_sig(void)
         ui_page(k, &vp);
         h = (h ^ (uint32_t)(*vp + 32768)) * 16777619u;
     }
+    if (ui.kind == FOCUS_SLOT && tp[sys.sel].engine[ui.slot] == ME_SEQ)   /* SEQ draws its step values */
+        for (k = 0; k < 16u; k++)
+            h = (h ^ (uint32_t)(uint8_t)tp[sys.sel].steps[ui.slot][k]) * 16777619u;
     if (ui.kind == FOCUS_DEV && ui.dev == DEV_GRAIN)                   /* GRAIN draws TAPE's loop window too */
         h = (h ^ (uint32_t)(tp[sys.sel].dev[DEV_SRC][0] << 8 | tp[sys.sel].dev[DEV_SRC][1])) * 16777619u;
     return h + (ui.kind == FOCUS_SLOT ? tp[sys.sel].engine[ui.slot] * 65537u : 0u);

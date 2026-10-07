@@ -566,24 +566,25 @@ static void px_picto(uint32_t kind, int32_t x, int32_t y, const pdesc_t *d, int3
         px_box(p - 1, cy + 1, 3, 5, c);
         break;
     }
-    case PK_KEYS: {                                      /* an octave of keys with the root lit */
+    case PK_KEYS: {                                      /* an octave: one outline, the dividers, the root marked */
+        /* 7 white keys of 3 dots in one frame, black keys as solid blocks over the dividers; the root is a solid
+         * foot on its white key, or a black key drawn hollow. Fewer strokes than a key-by-key drawing, so it reads
+         * at this size. */
         static const int8_t WHITE[12] = {0, -1, 1, -1, 2, 3, -1, 4, -1, 5, -1, 6};
-        static const int8_t BLACK_AT[5] = {0, 1, 3, 4, 5};   /* the white key each black one follows */
-        static const int8_t BLACK_N[5] = {1, 3, 6, 8, 10};
+        static const int8_t BLACK_X[12] = {-1, 3, -1, 6, -1, -1, 12, -1, 15, -1, 18, -1};   /* the block's x */
         int32_t n = (int32_t)((uint32_t)v % 12u), k;
-        for (k = 0; k < 7; k++) {
-            px_frame(x + k * 3, y + 2, 4, 18, c, 1);
-            if (WHITE[n] == k)
-                px_box(x + k * 3 + 1, y + 12, 2, 7, c);
-        }
-        for (k = 0; k < 5; k++) {
-            int32_t bx = x + BLACK_AT[k] * 3 + 2;
-            px_box(bx, y + 2, 3, 9, px_bg);
-            if (BLACK_N[k] == n)
-                px_box(bx, y + 2, 3, 9, c);
-            else
-                px_frame(bx, y + 2, 3, 9, c, 1);
-        }
+        px_frame(x, y + 3, 22, 16, c, 1);
+        for (k = 1; k < 7; k++)
+            px_line(x + k * 3, y + 12, x + k * 3, y + 17, c, 1);
+        for (k = 0; k < 12; k++)
+            if (BLACK_X[k] >= 0) {
+                if (k == n)                              /* the root, black: hollow, a dot under it */
+                    px_frame(x + BLACK_X[k] - 1, y + 3, 3, 9, c, 1);
+                else
+                    px_box(x + BLACK_X[k] - 1, y + 3, 2, 8, c);
+            }
+        if (WHITE[n] >= 0)                               /* the root, white: the key filled under the black ones */
+            px_box(x + WHITE[n] * 3 + 1, y + 12, 2, 6, c);
         break;
     }
     }

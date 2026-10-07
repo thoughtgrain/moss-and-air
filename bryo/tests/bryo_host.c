@@ -416,6 +416,11 @@ static void screens_in(const char *pal)
     turn(2, 40);
     turn(3, 50);
     shot(pal, "mod1_tri_fold");
+    press(B_SEQ);
+    turn(0, -4);                                         /* SEQ: LEN 12, SLEW 60, SWING 50 */
+    turn(2, 60);
+    turn(3, 50);
+    shot(pal, "mod3_seq");
     press(B_ARP);
     turn(1, 40);                                         /* RANDOM: SMOOTH 40 */
     shot(pal, "mod4_smooth");
