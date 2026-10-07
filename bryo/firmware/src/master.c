@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: GPL-3.0-only
  * Copyright (C) 2026 Leo Kuroshita (@kurogedelic), Hügelton Instruments */
-/* Bryo: the master output stage, Felucca's (fx.c) unchanged: DC block, MENU > SPEAKER EQ (LOWCUT, BASS+ for the
+/* Bryo: the master output stage: DC block, MENU > SPEAKER EQ (LOWCUT, BASS+ for the
  * small speaker), the peak limiter and the soft clip, and MENU > USB LEVEL FIXED. master_block: the four tracks'
  * stereo sum in, Q15 stereo out for audio.c. */
 /* master: peak limiter in front of the soft clipper. Fast attack (~0.1 ms),

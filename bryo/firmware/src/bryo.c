@@ -1,7 +1,7 @@
 /* SPDX-License-Identifier: GPL-3.0-only */
-/* Bryo: the whole app as one translation unit (the unity build Felucca used: tools/build.py compiles this file).
- * Felucca's hardware layer, update path, USB, storage, display and input are kept as they were; the instrument
- * (the four tracks, their devices, the UI) is Bryo's. Build flags keep their FELUCCA_* names (NOTICE.md says
+/* Bryo: the whole app as one translation unit (a unity build: tools/build.py compiles this file). The hardware
+ * layer, update path, USB, storage, display and input sit under the instrument (the four tracks, their devices,
+ * the UI). Build flags keep their FELUCCA_* names (NOTICE.md says
  * why). Order: config, HAL, generated tables, base and display, the Bryo core, sound, I/O, UI, stores, main. */
 
 #ifndef FELUCCA_FLASH
@@ -60,7 +60,7 @@ static void ui_message(const char *s);   /* ui.c: used by panel.c's calibration 
 static void ui_redraw(void);
 
 /* ----------------------------------------------------------- sound --- */
-#include "dsp.c"                 /* fixed-point helpers (Felucca's) */
+#include "dsp.c"                 /* fixed-point helpers */
 #include "master.c"              /* the output stage: DC block, speaker EQ, limiter, USB level */
 #include "param.c"               /* the parameter table: devices and modulator slots per track */
 #include "chain.c"               /* the four tracks, rendered per control block */
@@ -82,7 +82,7 @@ static void ui_redraw(void);
 #include "storage_hw.c"
 #include "storage.c"
 #endif
-#include "settings.c"            /* the settings record (Felucca's layout, kept) */
+#include "settings.c"            /* the settings record (shared with Felucca installs: settings.c) */
 
 #include "ui.c"
 #include "ui_viz.c"              /* the visualization panel */

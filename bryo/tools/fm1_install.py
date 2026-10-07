@@ -376,7 +376,7 @@ def load_package(path, force):
         raise InstallError("badpkg", f"{path}: not an FM-1 package (identity {product!r})")
     official = hashlib.sha256(raw).hexdigest() == STOCK_V15_SHA256
     if LOADER_MARK not in raw and not official and not force:
-        raise InstallError("badpkg", f"{path}: no Felucca update loader in this package; only Felucca's own "
+        raise InstallError("badpkg", f"{path}: no update loader in this package; only packages with this project's own "
                                      "packages and the unmodified official V15 (FM-1.fwsc) are installed "
                                      "(--force overrides)")
     return product, logical_image(raw)
@@ -456,7 +456,7 @@ def main(argv=None, backend=None, out=sys.stdout, ask=ask_tty):
     ap.add_argument("--info", action="store_true", help="print the identity of the connected FM-1")
     ap.add_argument("--port", metavar="NAME", help="MIDI port to use (part of its name)")
     ap.add_argument("--yes", action="store_true", help="do not ask for confirmation")
-    ap.add_argument("--force", action="store_true", help="install a package without the Felucca loader marker")
+    ap.add_argument("--force", action="store_true", help="install a package without the update loader's marker")
     a = ap.parse_args(argv)
     if bool(a.info) == bool(a.package):
         ap.error("give a PACKAGE.fwsc or --info")

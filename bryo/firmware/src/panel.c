@@ -129,7 +129,7 @@ static void settings_init(void)
 /* OCT- + OCT+ held at power-on (main.c): press each button and turn each encoder as asked; the learned table is
  * saved with the settings. 30 s without input cancels and keeps the old table. */
 #define SETUP_IDLE_MS 30000u
-#define SETUP_HEAD_MY CAP_IN(M, 24)              /* the title in a 24 px band, as Felucca drew it */
+#define SETUP_HEAD_MY CAP_IN(M, 24)              /* the title, centred in a 24 px band */
 static void setup_title(void)
 {
     lcd_fill(0, 0, 240, 240, T_BG);

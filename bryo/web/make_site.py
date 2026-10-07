@@ -11,7 +11,7 @@
 
   web/make_site.py build/bryo-X.Y.fwsc X.Y OUT_DIR
 
-The package must be one made by tools/fm1pkg_make.py (Felucca's own loader, no vendor files).
+The package must be one made by tools/fm1pkg_make.py (the project's own update loader, no vendor files).
 Its identity (FM-1_9xx) is read from the package; the device must report it after
 the install.
 """
@@ -40,9 +40,9 @@ def main(pkg, version, out):
     raw = pkg.read_bytes()
     product = product_of(raw)
     if not re.fullmatch(r"FM-1_9\d\d", product):
-        raise SystemExit(f"{pkg}: identity {product!r} is not a Felucca package (FM-1_9xx)")
+        raise SystemExit(f"{pkg}: identity {product!r} is not one of this project's packages (FM-1_9xx)")
     if b"FELUCCA-LOADER-1" not in raw:              # Felucca loader marker: never publish a package with vendor files
-        raise SystemExit(f"{pkg}: no Felucca loader in it; the site ships only fm1pkg_make.py packages "
+        raise SystemExit(f"{pkg}: no update loader marker in it; the site ships only fm1pkg_make.py packages "
                          "(a package patched from an official one carries vendor files)")
     html = (HERE / "index_pkg.html").read_text(encoding="utf-8")
     lib = strip_module((HERE / "fm1pkg.js").read_text(encoding="utf-8")) + "\n" + \
@@ -54,7 +54,7 @@ def main(pkg, version, out):
         if html.count(mark) != 1:
             raise SystemExit(f"index_pkg.html must contain {mark} once; update make_site.py")
     html = html.replace("/*LIB*/", lib).replace("/*META*/", meta)
-    inst, fw = out / "webapp" / "installer", out / "firmware"      # (Bryo: no web editor; Felucca's was its protocol)
+    inst, fw = out / "webapp" / "installer", out / "firmware"      # (no web editor: the installer only)
     for d in (inst, fw):
         d.mkdir(parents=True, exist_ok=True)
     for old in [*fw.glob("bryo-*.fwsc"), *fw.glob("felucca-*.fwsc")]:   # one package: the current one
@@ -62,7 +62,7 @@ def main(pkg, version, out):
     (inst / "index.html").write_text(html, encoding="utf-8")
     shutil.copy(pkg, fw / name)
     lic = HERE.parent / "LICENSES"                  # the package holds JieLi SDK files (Apache-2.0): their
-    (fw / "LICENSES").mkdir(exist_ok=True)          # licence travels next to it, with Felucca's own
+    (fw / "LICENSES").mkdir(exist_ok=True)          # licence travels next to it, with the project's own
     names = sorted(f.name for f in lic.glob("*.txt"))
     for n in names:
         shutil.copy(lic / n, fw / "LICENSES" / n)

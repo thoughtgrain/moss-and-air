@@ -1,7 +1,7 @@
 /* SPDX-License-Identifier: GPL-3.0-only
  * Copyright (C) 2026 Leo Kuroshita (@kurogedelic), Hügelton Instruments */
-/* Bryo boot and main loop (Felucca's, kept: the watchdog, the boot-loop guard, the timers, the UBOOT countdown,
- * the update entry and calibration; only the app's init and frame are Bryo's). Boot order: WDT first, boot-loop guard, fatal vectors,
+/* Bryo boot and main loop: the watchdog, the boot-loop guard, the timers, the UBOOT countdown, the update entry
+ * and calibration, then the app's init and its frame. Boot order: WDT first, boot-loop guard, fatal vectors,
  * guards; then LCD, input (TIMER5 IRQ, 10 kHz), audio (ALNK0 IRQ). */
 extern uint32_t _data_start[], _data_end[], _data_load[], _bss_start[], _bss_end[];
 extern uint32_t _pool_start[], _pool_end[], _rt_start[], _rt_end[], _rt_load[];

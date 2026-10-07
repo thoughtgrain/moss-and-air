@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: GPL-3.0-only */
 /* Bryo on the host: the app's own sources (the chain, the parameter table, the UI and its input) on stubs of the
- * display and the input scan, the way Felucca's host tests ran its sources.
+ * display and the input scan.
  *
  *   bryo_host OUT_DIR        writes OUT_DIR/ppm/<palette>_<screen>.ppm and prints one line per check
  *

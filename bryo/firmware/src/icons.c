@@ -2,8 +2,7 @@
  * Copyright (C) 2026 Leo Kuroshita (@kurogedelic), Hügelton Instruments */
 /* Icons: 4-bit alpha cells of the Fukiai icon font (MIT), 12 px (parameters, lists) and 16 px
  * (header, dialogs, menu): web/fukiai.ttf -> build/gen/ui_icons.h
- * (tools/gen_aa_icons.py; names from assets/icons.json). Bryo keeps the cells and the label lookup; Felucca's
- * per-parameter, engine and page icons went with its instrument. FELUCCA_ICONS=0 turns the parameter icons off (labels get their full width back). */
+ * (tools/gen_aa_icons.py; names from assets/icons.json). The cells and the label lookup. FELUCCA_ICONS=0 turns the parameter icons off (labels get their full width back). */
 #include "ui_icons.h"
 #ifndef FELUCCA_ICONS
 #define FELUCCA_ICONS 1

@@ -151,9 +151,9 @@ static void draw_head(void)
 }
 
 /* ------------------------------------------------------------- dials --- */
-/* A dial's ring: 270 degrees (7:30 .. 4:30 o'clock), anti-aliased, from the quadrant mask of its size (Felucca's
- * ui_graph.c knob_arc: tools/gen_aa_keycaps.py precomputes coverage and angle for one quadrant; the other three
- * mirror it, no trigonometry at run time). Angles in 1/1024 turn from 12 o'clock, clockwise, -384..384. The arc
+/* A dial's ring: 270 degrees (7:30 .. 4:30 o'clock), anti-aliased, from the quadrant mask of its size
+ * (tools/gen_aa_keycaps.py precomputes coverage and angle for one quadrant; the other three mirror it, no
+ * trigonometry at run time). Angles in 1/1024 turn from 12 o'clock, clockwise, -384..384. The arc
  * lo..hi is drawn in vc, the rest of the ring in tr; bg lies under the ring. */
 #define KA_END 384
 static void dial_arc(int32_t x, int32_t y, int32_t r, const uint8_t *cov, const uint8_t *ang, int32_t lo, int32_t hi,

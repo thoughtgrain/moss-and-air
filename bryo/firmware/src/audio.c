@@ -2,7 +2,7 @@
  * Copyright (C) 2026 Leo Kuroshita (@kurogedelic), Hügelton Instruments */
 /* I2S output (ALNK0 -> external codec) and the
  * audio ISR: per half buffer, blocks of CTL samples: chain_block (chain.c: the four tracks -> master.c)
- * -> 24-bit stereo. Bryo keeps Felucca's ISR frame as it was: the timing, the load meter, the overload guard
+ * -> 24-bit stereo. The frame around the render: the timing, the load meter, the overload guard
  * and the USB audio tap; only the render and the overload response are Bryo's. */
 /* registers: hal/fm1_audio.h */
 #define HALF_WORDS (HALF_FRAMES * 2u)

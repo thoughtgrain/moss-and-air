@@ -27,7 +27,8 @@ fail=0
 run() { echo "== $1"; shift; "$@" || fail=1; }
 
 # the generated headers (tools/build.py generate() runs the same tools; a device build makes them too)
-if [ ! -f "$GEN/felucca_tables.h" ] || [ ! -f "$GEN/ui_icons.h" ]; then
+if [ ! -f "$GEN/felucca_tables.h" ] || [ ! -f "$GEN/ui_icons.h" ] || [ ! -f "$GEN/ui_fonts.h" ] || \
+   [ ! -f "$GEN/ui_keycaps.h" ] || [ ! -f "$GEN/ui_palettes.h" ]; then
     "$PY" tools/gen_aa_font.py "$GEN/ui_fonts.h" --preset inter-tight >/dev/null
     for t in gen_aa_icons.py:ui_icons.h gen_aa_keycaps.py:ui_keycaps.h gen_ui_palettes.py:ui_palettes.h \
              gen_tables.py:felucca_tables.h; do
@@ -56,7 +57,7 @@ spec = importlib.util.spec_from_file_location('b', 'tools/build.py'); b = import
 sys.argv = ['build.py']; spec.loader.exec_module(b)
 e = b.mmio_check(); print('\n'.join(e)); sys.exit(1 if e else 0)"
 
-# ---- the hardware layer (kept from Felucca)
+# ---- the hardware layer
 $CC -o "$OUT/storage_test" tests/storage_test.c
 run "flash storage (A/B, torn writes)" "$OUT/storage_test"
 $CC -o "$OUT/input_test" tests/input_test.c

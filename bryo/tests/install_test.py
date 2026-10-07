@@ -125,7 +125,7 @@ class FakeFM1:
             if addr == I.FINISH_CHECK:
                 threading.Timer(0.05, self.boot, ("ota-FM-1_900", "Felucca Update")).start()
             elif addr == I.FINISH_WRITE:
-                threading.Timer(0.05, self.boot, (self.after_write, "Felucca")).start()
+                threading.Timer(0.05, self.boot, (self.after_write, "Bryo")).start()
             else:
                 self.next()
 
@@ -148,7 +148,7 @@ def package(product="FM-1_900", marker=True, size=0x2000):
     return bytes(raw)
 
 
-TMP = Path(tempfile.mkdtemp(prefix="felucca-install-"))
+TMP = Path(tempfile.mkdtemp(prefix="bryo-install-"))
 
 
 def pkgfile(name, raw):
@@ -188,7 +188,7 @@ def installs():
     dev = FakeFM1(image)
     rc, out, err = cli([p, "--yes"], dev)
     ok(rc == 0 and dev.bad == 0 and dev.upgrades == 2 and dev.served == 11 and "done: the FM-1 runs FM-1_900" in out
-       and "100%" in out, f"install: running -> loader -> Felucca ({dev.served} reads)")
+       and "100%" in out, f"install: running -> loader -> Bryo ({dev.served} reads)")
 
     dev = FakeFM1(image, identity="ota-FM-1_900", name="Felucca Update")
     rc, out, err = cli([p, "--yes"], dev)
@@ -198,7 +198,7 @@ def installs():
     rc, out, err = cli([p], dev, answer=False)
     ok(rc == 1 and dev.upgrades == 0 and "cancelled" in out, "install: answer no -> nothing sent but the handshake")
 
-    dev = FakeFM1(image, identity="FM-1_905", name="Felucca")
+    dev = FakeFM1(image, identity="FM-1_905", name="Bryo")
     rc, out, err = cli(["--info"], dev)
     ok(rc == 0 and "FM-1_905" in out and "running" in out and dev.upgrades == 0, "--info: identity of the connected FM-1")
 
@@ -215,7 +215,7 @@ def errors():
     rc, out, err = cli([p, "--yes"], FakeFM1(image, name="IAC Driver Bus 1"))
     ok(rc == 3 and "not found" in err and "IAC Driver" in err, "no FM-1 port -> exit 3, lists the MIDI inputs")
     dev = FakeFM1(image)
-    rc, out, err = cli([p, "--yes", "--port", "Felucca"], dev)
+    rc, out, err = cli([p, "--yes", "--port", "Bryo"], dev)
     ok(rc == 3 and dev.upgrades == 0, "--port that matches nothing -> exit 3")
     dev = FakeFM1(image, name="My Interface")
     rc, out, err = cli(["--info", "--port", "my int"], dev)
@@ -250,7 +250,7 @@ def errors():
     plain = pkgfile("plain.fwsc", package(marker=False))
     dev = FakeFM1(image)
     rc, out, err = cli([plain, "--yes"], dev)
-    ok(rc == 2 and "no Felucca update loader" in err and dev.sent == [], "package without the loader marker -> exit 2, no MIDI")
+    ok(rc == 2 and "no update loader" in err and dev.sent == [], "package without the loader marker -> exit 2, no MIDI")
     dev = FakeFM1(I.logical_image(package(marker=False)))
     rc, out, err = cli([plain, "--yes", "--force"], dev)
     ok(rc == 0 and dev.bad == 0, "... installs with --force")
@@ -272,23 +272,23 @@ def against_js():
     raw = clean.read_bytes()
     ok(I.logical_image(raw) == r.stdout and I.product_of(raw) == r.stderr.decode(),
        f"logical_image / product_of == fm1pkg.js ({clean.name}, {I.product_of(raw)})")
-    ok(I.LOADER_MARK in raw, f"{clean.name} carries the Felucca loader marker")
+    ok(I.LOADER_MARK in raw, f"{clean.name} carries the update loader marker")
 
 
 def official():
-    """#32: back to the official V15 from Felucca, without --force (only the unmodified file)"""
+    """#32: back to the official V15 from this firmware, without --force (only the unmodified file)"""
     v15 = ROOT / "FM-1_v15.fwsc"
     if not v15.exists():
         print("official V15 restore: skipped (needs FM-1_v15.fwsc in the repo root)")
         return
     raw = v15.read_bytes()
-    dev = FakeFM1(I.logical_image(raw), identity="FM-1_900", name="Felucca", after_write="FM-1_015")
+    dev = FakeFM1(I.logical_image(raw), identity="FM-1_900", name="Bryo", after_write="FM-1_015")
     rc, out, err = cli([str(v15), "--yes"], dev)
     ok(rc == 0 and dev.bad == 0 and "FM-1_015" in out and dev.identity == "FM-1_015",
-       "official V15 (FM-1.fwsc) from Felucca: installed without --force, back as FM-1_015")
+       "official V15 (FM-1.fwsc) from Bryo: installed without --force, back as FM-1_015")
     bad = bytearray(raw)
     bad[-1] ^= 1
-    dev = FakeFM1(I.logical_image(bytes(bad)), identity="FM-1_900", name="Felucca")
+    dev = FakeFM1(I.logical_image(bytes(bad)), identity="FM-1_900", name="Bryo")
     rc, out, err = cli([pkgfile("v15mod.fwsc", bytes(bad)), "--yes"], dev)
     ok(rc == 2 and "official V15" in err and dev.sent == [], "a modified V15 is still refused (no MIDI)")
 

@@ -57,7 +57,7 @@ static uint32_t focus_btn(void)
 }
 
 /* Lit: the focus pad, REC armed, the octave keys away from the default, the muted tracks' OP keys. The rest glow
- * dim (MENU > LEDS, kept from Felucca: OFF, DIM LO, DIM HI, INV). Each picture is built off-line and copied one
+ * dim (the LEDS setting: OFF, DIM LO, DIM HI, INV). Each picture is built off-line and copied one
  * byte per column, the glow first, so an LED going from lit to dim never has a dark frame. */
 static void ui_leds(void)
 {

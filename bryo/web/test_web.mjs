@@ -3,7 +3,7 @@
 //
 // Node checks of the web pages' JS (no browser, no hardware). Run from the repo root:
 //   node web/test_web.mjs
-// (Bryo: Felucca's web editor and its protocol tests are gone with the editor; the installer's checks stay.)
+// (the installer's checks: the package parser and the update protocol)
 // - fm1pkg.js: productOf and logicalImage on build/felucca.fwsc (skipped without a build)
 // - fm1ota.js: a full install and an unplug during the write against a simulated FM-1
 
