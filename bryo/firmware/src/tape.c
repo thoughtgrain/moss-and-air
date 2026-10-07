@@ -286,6 +286,15 @@ static void tape_commit(uint32_t t)
     rt->wstaged = 0;
     if (tape_ctl[t].empty)                             /* cleared meanwhile: drop it */
         return;
+    {   /* the block starts where its new sound does: the decoder state from its first sample and first move (from
+         * the old sound's state, every recorded block began wrong until the encoder caught up: a click a block) */
+        int32_t d = rt->stage[1] - rt->stage[0], id = 0;
+        d = d < 0 ? -d : d;
+        while (id < 88 && IMA_STEP[id] < d)
+            id++;
+        m->pred[b] = rt->stage[0];
+        m->idx[b] = (uint8_t)id;
+    }
     ima_enc(rt->stage, m->pred[b], m->idx[b], m->data + b * (TAPE_BLK / 2u), TAPE_BLK);
     for (i = 0; i < TAPE_BLK; i++) {
         int32_t a = rt->stage[i] < 0 ? -rt->stage[i] : rt->stage[i];

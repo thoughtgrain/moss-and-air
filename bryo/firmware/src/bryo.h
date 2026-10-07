@@ -33,6 +33,14 @@ static sys_t sys;
 
 #define MASTER_FULL 4096         /* the MASTER pot's top, Q12 */
 
+/* each track's controls outside its pages: the main loop writes whole bytes, the ISR reads them once per block */
+typedef struct {
+    volatile uint8_t mute;
+    volatile uint8_t octave;     /* the keys' octave (OCT- / OCT+), 1..6: SYNTH's white key 1 is C of octave + 1 */
+    volatile uint8_t level;      /* 0..127 */
+} track_ctl_t;
+static track_ctl_t track[NTRK];
+
 /* --------------------------------------------------------------- keys --- */
 /* The 27 keys, F3..G5 (hal/fm1_input.h fm1_in.notes bit 0..26), as Bryo reads them: 16 white keys numbered
  * left to right 0..15 (slices, steps, notes) and 11 black keys numbered 0..10, the global macros of PRD 2.3 in

@@ -20,7 +20,8 @@ own envelope and filter before the track's chain. Its three HOME pages and their
 (The black key named POLY, which clears the tape, is a different thing; the screen always says "POLY SOURCE" for
 the engine.)
 
-Still open: what the white keys do on a SYNTH track while GRAIN or another tape-style page is focused.
+Still open: what the white keys do on a SYNTH track while GRAIN or another tape-style page is focused (for
+now they play the synth's notes on every page).
 
 ## What the hardware really gives me
 
@@ -71,18 +72,20 @@ These are my proposals. Each keeps the PRD's intent and only changes the gesture
 ## Source engines: what starts each track
 
 Each track's first device is a **source engine** in the HOME slot. TAPE is one source; SYNTH is another;
-more can be added without touching the rest of the chain. In the code it's an interface like Felucca's
-`engine_t`, but for a whole track:
+more can be added without touching the rest of the chain. In the code (`source.c`) it's a table of render
+functions, one row per engine; the knobs and the names live in `param.c` beside the devices':
 
 ```c
 typedef struct {
-    const char *name;                         /* "TAPE", "SYNTH", … shown in the header */
-    void (*init)(track_t *t);
-    void (*key)(track_t *t, uint32_t key, uint32_t vel, int on);   /* white keys in this source's mode */
-    void (*render)(track_t *t, int32_t *mono, uint32_t n);         /* one control block, mono into GRAIN */
-    const param_desc_t *knobs[4];             /* what KNOB 1-4 do on the HOME page for this source */
+    /* one block of track t into out; keys: the white keys held (0 when the track isn't the focused one, or
+     * the source isn't the track's any more) */
+    void (*render)(uint32_t t, uint32_t keys, int32_t *out, uint32_t n);
 } source_t;
 ```
+
+I first sketched it with `init`, `key` and `knobs` hooks too. In practice every engine wants the keys as a
+bitmask once per block (the ISR reads them, so a note starts within 0.7 ms), its knobs come from `dev_p()` /
+`dev_v()` in `param.c`, and nothing needed an init the zeroed state didn't already give.
 
 How it works: the HOME pad focuses the source; holding HOME and turning SELECT picks the source engine
 (the same hold-and-turn idiom as modulator engines). Why an interface: the PRD's chain stays fixed, the
@@ -523,6 +526,73 @@ What to expect:
 Recording from the computer (USB audio in) is next, then a Bluetooth feasibility check: the radio's stack is
 JieLi's closed binary, and linking it into GPL-3.0 firmware is a licensing question to settle before any code.
 
+## SYNTH, as built (2026-10-07)
+
+SYNTH is the first source engine after TAPE, and it's what made `source_t` real.
+
+**Files:** `synth.c` (the voice), `source.c` (the table), `param.c` (`SYN_P`, `tp[t].src`, `tp[t].syn`,
+`dev_p` / `dev_v` / `dev_name`), `chain.c` (`chain_source`: the crossfade and REC), the pictograms in `ui_px.c`,
+the picture in `ui_viz.c` (`viz_synth`), the source picked in `ui_input.c`.
+
+**The voice.** It's Felucca's ANALOG engine, trimmed. There are two band-limited oscillators of one wave (SIN TRI
+SQR SAW, and PLS, a 25 % pulse), the second DTUN cents up and blended in by MIX, plus white noise (NOIS) and drive
+(DRV, up to 3x into the soft clip). Then comes the resonant trapezoidal low-pass, and one ADSR that sets the level
+and, by ENV (-100..100), moves the cutoff up to 96 steps of the cutoff scale (about 8 octaves). KTRK makes the
+cutoff follow the keys. I kept one envelope because two would need a page I don't have. ENV going negative gives
+the "closing" sweeps a second envelope is usually for.
+
+**Pages** (HOME steps through them, as EDIT and FX do theirs):
+
+| Page | KNOB 1 | KNOB 2 | KNOB 3 | KNOB 4 |
+| --- | --- | --- | --- | --- |
+| OSC | WAVE | DTUN (ct) | MIX | NOIS |
+| FILTER | CUT (shown in Hz) | RES | ENV | KTRK |
+| AMP | ATK | DEC | SUS | REL (shown in ms / s) |
+| VOICE | VOIC (1..3) | GLID | DRV | TUNE (st) |
+
+The times and the cutoff print in real units. A new pair of formats, `F_TIME` and `F_HZ`, read Felucca's
+`TIME_MS_X10` and `CUTOFF_HZ`, so "392Hz" on the strip is the frequency the filter really sits at.
+
+**Voices.** There are three per track (`SYN_NV`). A new key takes a silent voice, else the quietest releasing one,
+else the oldest. A stolen voice keeps its phases and filter state and attacks from where its level is, and every
+block ramps the level from the last block's, so neither a steal nor a fast envelope clicks. With VOIC at 1 it
+plays legato. A second key glides the one voice there (GLID), and letting the top key go glides back to the
+highest key still down.
+
+**Keys.** White key k is the semitone k above C of the track's octave (OCT- / OCT+), plus TUNE. That's sixteen
+semitones, because the black keys are the PRD's macros. The VOICE page prints the range the keys cover ("C3-D#4").
+
+**Picking it.** Hold HOME and turn SELECT, the same idiom as a modulator slot's engine. Each track keeps both
+TAPE's and SYNTH's knobs, so switching back and forth loses nothing.
+
+**Switching never clicks.** `chain_source()` keeps a gain per source per track and ramps the old one out and the
+new one in over about 2 ms. A source that isn't the track's renders nothing. A synth note held across a switch
+waits, and releases the moment the track switches back and the key is seen up. I tried "keep rendering until it's
+silent" first. It meant a TAPE track switched away kept decoding its loop forever while the transport ran, unheard.
+
+**REC on a SYNTH track prints the synth onto its tape.** The tape renders last in `chain_source()`, so it can
+take the sum of the other source as its input: play a line, switch to TAPE, and slice it. (On a TAPE track REC
+still records the other tracks.)
+
+**A fix to the tape it uncovered.** Recording a sine through the synth showed a click at every 256-sample block
+boundary of the take. `tape_commit()` re-encoded a recorded block starting from the decoder state of the sound
+that was there before: a different level and step size, so each block began wrong until the encoder caught up.
+Now a re-encoded block starts from its own first sample, with the step size of its first move. Phase 2's REC had
+the same bug (its test only compared block peaks, so it passed). The synth test now checks the take's pitch to
+under 1 Hz, which the bug made 240 Hz instead of 220.
+
+**Cost.** I haven't measured it on the FM-1 yet. Per voice per sample there are two oscillators, a noise step
+when NOIS is up, and one filter, with coefficients once per block. That's the same work as a Felucca ANALOG
+voice, and Felucca ran eight of those under its 85 % shedding line. Twelve voices (three per track, all four
+tracks on SYNTH) is more than that, so `chain_shed()` will need to take the oldest releasing voices once it's
+measured. RAM: 44 bytes a voice, 576 bytes for all four tracks.
+
+**Tests** (`tests/bryo_host.c`, `test_synth`): picking the source and its pages; silence without a key; A3 from
+white key 10 at OCT 3 (220.0 Hz) and A4 at OCT 4 (440.0 Hz); the release to a free voice; three keys, three voices,
+and the fourth taking one; VOIC 1's glide up and back; the filter darkening a saw; REC printing the note onto
+the tape (220.0 Hz back off it); and the crossfade from SYNTH to TAPE with no step bigger than the note's own.
+The five screens are in the golden set.
+
 ## Build order
 
 Each phase ends in something you can flash and hear or see, and each is its own commit series.
@@ -531,7 +601,7 @@ Each phase ends in something you can flash and hear or see, and each is its own 
 | --- | --- | --- |
 | 1. Skeleton (**done**, host-verified) | `bryo.c` boots on the kept hardware layer; the old app code is removed; silence plus a test tone; the header and an empty strip; install, UBOOT and calibration still work | it installs from the web installer and returns to stock |
 | 2. TAPE + reels (**done**, host-verified; see "Phase 2, as built") | tapes play factory reels; the loop window, speed, reverse, half speed, FADE; slices on the white keys; REC and overdub (resampling the other tracks); clear and undo | you can load, slice, record and overdub a loop |
-| 3. USB audio in + SYNTH + POLY | the source_t interface; the UAC OUT endpoint, drift handling, INPUT = USB; the SYNTH source; the POLY source (voices with their own envelope and filter, three HOME pages) | you can record your computer, and play the synth and samples onto a tape |
+| 3. USB audio in + SYNTH + POLY (SYNTH and source_t **done**, host-verified; see "SYNTH, as built") | the source_t interface; the UAC OUT endpoint, drift handling, INPUT = USB; the SYNTH source; the POLY source (voices with their own envelope and filter, three HOME pages) | you can record your computer, and play the synth and samples onto a tape |
 | 3b. GRAIN | the scheduler, the sounding cap, FREEZE (key 0) | grains run on 4 tracks inside the budget |
 | 4. RESONATOR | strings, chromatic keys, OCT shifts | tuned feedback chords from the keys |
 | 5. COLOR + SPACE | drive, crush, noise; delay and reverb | the full chain on 4 tracks inside the budget |

@@ -67,6 +67,8 @@ static void ui_redraw(void);
 #include "../firmware/src/master.c"
 #include "../firmware/src/param.c"
 #include "../firmware/src/tape.c"
+#include "../firmware/src/synth.c"
+#include "../firmware/src/source.c"
 #include "../firmware/src/chain.c"
 #include "../firmware/src/icons.c"
 #include "../firmware/src/panel.c"
@@ -112,6 +114,7 @@ static void power_on(void)
     memset(tape_ctl, 0, sizeof tape_ctl);
     memset(tape_ram, 0, sizeof tape_ram);
     memset(&tape_undo, 0, sizeof tape_undo);
+    memset(syn, 0, sizeof syn);
     memset(&sys, 0, sizeof sys);
     memset(&fm1_in, 0, sizeof fm1_in);
     panel = PANEL_DEFAULT;
@@ -576,6 +579,31 @@ static void screens_in(const char *pal)
     press(B_REC);
     sys.playing = 0;
     render(400, 0);
+    hold(B_HOME);                                        /* HOME held + SELECT: SYNTH, its four pages */
+    host_enc[panel.enc[EN_SELECT]] = 1;
+    ui_input();
+    let_go(B_HOME);
+    shot(pal, "synth");
+    turn(1, 30);                                         /* DTUN 38 ct, MIX 70 %, NOIS 20 % */
+    turn(2, 20);
+    turn(3, 20);
+    shot(pal, "synth_osc");
+    press(B_HOME);                                       /* FILTER: CUT down, RES up */
+    turn(0, -20);
+    turn(1, 50);
+    shot(pal, "synth_filter");
+    press(B_HOME);                                       /* AMP */
+    turn(0, 30);
+    shot(pal, "synth_amp");
+    press(B_HOME);                                       /* VOICE: GLID, DRV, TUNE */
+    turn(1, 70);
+    turn(2, 60);
+    turn(3, -5);
+    shot(pal, "synth_voice");
+    hold(B_HOME);                                        /* back to TAPE */
+    host_enc[panel.enc[EN_SELECT]] = -1;
+    ui_input();
+    let_go(B_HOME);
     press(B_EDIT);
     shot(pal, "grain");
     turn(1, 40);                                         /* DENS 80 %, PITCH +7, SPREAD 90 % */
@@ -1060,6 +1088,257 @@ static uint32_t make_wav_x(uint8_t *o, uint32_t rate, uint32_t bits, uint32_t fm
     return p + n;
 }
 
+/* ---------------------------------------------------------------- SYNTH --- */
+/* a buffer's pitch: cycles per second, counted with hysteresis (from sample `from` on) */
+static double buf_hz(const int32_t *x, uint32_t from, uint32_t n)
+{
+    uint32_t i, cross = 0, first = 0, last = 0;
+    int low = 0;
+    for (i = from; i < n; i++)
+        if (x[i] < -800)
+            low = 1;
+        else if (x[i] > 800 && low) {
+            if (!cross)
+                first = i;
+            last = i;
+            cross++;
+            low = 0;
+        }
+    return cross > 1 ? (cross - 1) * 44100.0 / (last - first) : 0;
+}
+/* how bright: the mean bend between samples (the second difference: a saw's edge is all bend, a sine has
+ * almost none) against the mean level */
+static double brightness(const int32_t *x, uint32_t from, uint32_t n)
+{
+    double d = 0, a = 0;
+    uint32_t i;
+    for (i = from + 2; i < n; i++) {
+        d += abs(x[i] - 2 * x[i - 1] + x[i - 2]);
+        a += abs(x[i]);
+    }
+    return a > 0 ? d / a : 0;
+}
+static uint32_t syn_sounding(uint32_t t)
+{
+    uint32_t j, n = 0;
+    for (j = 0; j < SYN_NV; j++)
+        n += syn[t].v[j].stage != 0;
+    return n;
+}
+
+static void test_synth(void)
+{
+    enum { NB = 690 };                                   /* 0.5 s */
+    static int32_t s[NB * CTL];
+    int16_t *p;
+    char b[120];
+    double hz, br_open, br_shut;
+    uint32_t i;
+    power_on();
+    hold(B_HOME);                                        /* HOME held + SELECT: the source */
+    host_enc[panel.enc[EN_SELECT]] = 1;
+    ui_input();
+    let_go(B_HOME);
+    p = tp[0].syn;
+    check("HOME held + SELECT: track 1's source is SYNTH, its pages and name follow", tp[0].src == SRC_SYNTH &&
+          !strcmp(dev_name(0, DEV_SRC), "SYNTH") && pdesc_pages(dev_p(0, DEV_SRC)) == 4u && ui.page == 0 &&
+          dev_v(0, DEV_SRC) == p && !strcmp(dev_p(0, DEV_SRC)[0].label, "WAVE"));
+    {
+        int32_t pk = 0;
+        for (i = 0; i < NB; i++) {                       /* (the track's own output: the master may hold a DC tail) */
+            render(1, 0);
+            pk = peak_of(track_rt[0].last, CTL) > pk ? peak_of(track_rt[0].last, CTL) : pk;
+        }
+        check("SYNTH, no key down: silence", pk == 0);
+    }
+
+    p[SY_WAVE] = 0;                                      /* a plain sine, the filter open */
+    p[SY_DTUN] = 0;
+    p[SY_MIX] = 0;
+    p[SY_CUT] = 127;
+    p[SY_ENV] = 0;
+    p[SY_RES] = 0;
+    fm1_in.notes = note_bit_of_white(9);                 /* white key 10: A3 at OCT 3 */
+    render(NB, s);
+    hz = buf_hz(s, NB * CTL / 4, NB * CTL);
+    snprintf(b, sizeof b, "white key 10 at OCT 3 plays A3: %.1f Hz (220), peak %d", hz, (int)peak_of(s, NB * CTL));
+    check(b, fabs(hz - 220.0) < 1.5 && peak_of(s, NB * CTL) > 4000 && syn_sounding(0) == 1);
+    fm1_in.notes = 0;
+    render(NB * 2, s);
+    check("..let go: it releases to silence and the voice is free", syn_sounding(0) == 0 &&
+          peak_of(s + NB * CTL, NB * CTL) < 40);
+
+    track[0].octave = 4;                                 /* OCT+: an octave up */
+    fm1_in.notes = note_bit_of_white(9);
+    render(NB, s);
+    hz = buf_hz(s, NB * CTL / 4, NB * CTL);
+    snprintf(b, sizeof b, "OCT 4: the same key an octave up: %.1f Hz (440)", hz);
+    check(b, fabs(hz - 440.0) < 3.0);
+    fm1_in.notes = 0;
+    render(NB * 2, 0);
+    track[0].octave = 3;
+
+    fm1_in.notes = note_bit_of_white(0) | note_bit_of_white(4) | note_bit_of_white(7);   /* a C major chord */
+    render(8, 0);
+    check("three keys: three voices", syn_sounding(0) == 3);
+    fm1_in.notes |= note_bit_of_white(11);               /* a fourth: the oldest voice is taken */
+    render(8, 0);
+    {
+        uint32_t j, has11 = 0;
+        for (j = 0; j < SYN_NV; j++)
+            has11 |= syn[0].v[j].key == 11 && syn[0].v[j].stage && syn[0].v[j].stage != 3;
+        check("..a fourth key takes a voice (no more than three sound)", syn_sounding(0) == 3 && has11);
+    }
+    fm1_in.notes = 0;
+    render(NB * 2, 0);
+
+    p[SY_VOIC] = 1;                                      /* one voice: legato, gliding */
+    p[SY_GLID] = 60;
+    fm1_in.notes = note_bit_of_white(0);
+    render(20, 0);
+    fm1_in.notes |= note_bit_of_white(12);
+    render(4, 0);
+    {
+        int32_t mid = syn[0].v[0].p16;
+        render(NB, 0);
+        check("VOIC 1: a second key glides the one voice up an octave, no new attack",
+              syn_sounding(0) == 1 && mid > 48 * 16 && mid < 60 * 16 && syn[0].v[0].p16 == 60 * 16 &&
+              syn[0].v[0].stage == 2);
+    }
+    fm1_in.notes = note_bit_of_white(0);                 /* the top key up: back down to the one still held */
+    render(NB, 0);
+    check("..the top key let go: back to the key still held", syn[0].v[0].p16 == 48 * 16 && syn_sounding(0) == 1);
+    fm1_in.notes = 0;
+    render(NB * 2, 0);
+    p[SY_VOIC] = SYN_NV;
+    p[SY_GLID] = 0;
+
+    {   /* every wave at the key's pitch; noise and drive stay under full scale */
+        uint32_t w, ok = 1;
+        char m[64] = "";
+        for (w = 0; w < 5u; w++) {
+            p[SY_WAVE] = (int16_t)w;
+            fm1_in.notes = note_bit_of_white(9);
+            render(NB, s);
+            hz = buf_hz(s, NB * CTL / 4, NB * CTL);
+            ok &= fabs(hz - 220.0) < 1.5;
+            snprintf(m + strlen(m), sizeof m - strlen(m), " %s %.0f", N_OSC[w], hz);
+            fm1_in.notes = 0;
+            render(NB * 2, 0);
+        }
+        snprintf(b, sizeof b, "every wave plays A3:%s", m);
+        check(b, ok);
+        p[SY_WAVE] = 3;
+        p[SY_NOIS] = 100;
+        p[SY_DRV] = 100;
+        p[SY_MIX] = 50;
+        p[SY_DTUN] = 30;
+        fm1_in.notes = note_bit_of_white(0) | note_bit_of_white(4) | note_bit_of_white(7);
+        render(NB, s);
+        check("a full-noise, full-drive, detuned chord sounds, and the track stays under full scale",
+              peak_of(s, NB * CTL) > 8000 && peak_of(s, NB * CTL) <= 32767);
+        p[SY_VOIC] = 1;                                  /* VOIC turned down under three held keys */
+        render(4, 0);
+        check("..VOIC turned down to 1 while three sound: the voices above it release", syn[0].v[1].stage == 3 &&
+              syn[0].v[2].stage == 3 && syn[0].v[0].stage == 2);
+        p[SY_VOIC] = SYN_NV;
+        fm1_in.notes = 0;
+        render(2, 0);
+        fm1_in.notes = note_bit_of_white(12);            /* all three releasing: the quietest is taken */
+        render(1, 0);
+        {
+            uint32_t j, n12 = 0, rel = 0;
+            for (j = 0; j < SYN_NV; j++) {
+                n12 += syn[0].v[j].key == 12 && syn[0].v[j].stage == 2;
+                rel += syn[0].v[j].stage == 3;
+            }
+            check("..a key while all three release: it takes one of them, the other two go on releasing",
+                  n12 == 1 && rel == 2);
+        }
+        fm1_in.notes = 0;
+        render(NB * 2, 0);
+        p[SY_NOIS] = 0;
+        p[SY_DRV] = 0;
+        p[SY_MIX] = 0;
+        p[SY_DTUN] = 0;
+    }
+    p[SY_VOIC] = 1;                                      /* legato without glide: the pitch jumps, no attack */
+    fm1_in.notes = note_bit_of_white(0);
+    render(20, 0);
+    fm1_in.notes |= note_bit_of_white(5);
+    render(1, 0);
+    check("VOIC 1, GLID 0: a second key jumps the pitch at once, the envelope goes on",
+          syn[0].v[0].p16 == 53 * 16 && syn[0].v[0].stage == 2);
+    fm1_in.notes = note_bit_of_white(5);
+    render(1, 0);
+    check("..the lower key let go: the voice stays on the one still held", syn[0].v[0].p16 == 53 * 16 &&
+          syn[0].v[0].key == 5);
+    fm1_in.notes = 0;
+    render(NB * 2, 0);
+    p[SY_VOIC] = SYN_NV;
+
+    p[SY_WAVE] = 3;                                      /* a saw through the filter, open then nearly shut */
+    fm1_in.notes = note_bit_of_white(0);
+    render(NB, s);
+    br_open = brightness(s, NB * CTL / 2, NB * CTL);
+    fm1_in.notes = 0;
+    render(NB * 2, 0);
+    p[SY_CUT] = 40;
+    fm1_in.notes = note_bit_of_white(0);
+    render(NB, s);
+    br_shut = brightness(s, NB * CTL / 2, NB * CTL);
+    snprintf(b, sizeof b, "the filter: a saw is darker with CUT down (brightness %.3f -> %.3f)", br_open, br_shut);
+    check(b, br_shut < br_open * 0.5 && peak_of(s, NB * CTL) > 1000);
+    fm1_in.notes = 0;
+    render(NB * 2, 0);
+    p[SY_CUT] = SYN_P[SY_CUT].def;
+    p[SY_WAVE] = 0;
+    p[SY_CUT] = 127;
+
+    {   /* REC on a SYNTH track prints the synth onto its tape: then TAPE plays it back */
+        tape_view_t v;
+        int32_t pk;
+        tp[0].dev[DEV_SRC][TK_DUB] = 0;
+        press(B_REC);
+        check("REC on a SYNTH track arms its tape", (sys.rec & 1u) && tape_ctl[0].rec_ok);
+        sys.playing = 1;
+        fm1_in.notes = note_bit_of_white(9);
+        render(NB * 6, 0);                               /* 3 s: past the 2 s loop */
+        press(B_REC);
+        render(2, 0);
+        fm1_in.notes = 0;
+        sys.playing = 0;
+        render(NB, 0);
+        tape_view(0, &v);
+        hz = view_hz(&v, &pk);
+        snprintf(b, sizeof b, "..the take is the note: %.1f Hz on the tape (220), peak %d", hz, (int)pk);
+        check(b, fabs(hz - 220.0) < 1 && pk > 3000);
+    }
+    {   /* back to TAPE while both sound: a 2 ms crossfade, no step */
+        int32_t step = 0, before = 0;
+        sys.playing = 1;
+        fm1_in.notes = note_bit_of_white(9);
+        render(NB, s);
+        for (i = NB * CTL / 2; i < NB * CTL; i++)
+            before = abs(s[i] - s[i - 1]) > before ? abs(s[i] - s[i - 1]) : before;
+        tp[0].src = SRC_TAPE;
+        render(8, s);
+        for (i = 1; i < 8 * CTL; i++)
+            step = abs(s[i] - s[i - 1]) > step ? abs(s[i] - s[i - 1]) : step;
+        snprintf(b, sizeof b, "SYNTH -> TAPE while both sound: a crossfade (largest step %d, the note's own %d)",
+                 (int)step, (int)before);
+        check(b, track_rt[0].src_g[SRC_SYNTH] == 0 && track_rt[0].src_g[SRC_TAPE] == 32767 && step < before * 3);
+        fm1_in.notes = 0;
+        render(4, 0);
+        tp[0].src = SRC_SYNTH;
+        render(NB * 2, 0);
+        check("..switched back, the note held across the switch is seen up and released", syn_sounding(0) == 0);
+        sys.playing = 0;
+        tp[0].src = SRC_TAPE;
+        render(NB / 2, 0);
+    }
+}
+
 /* the tape's edges: an empty user reel, a loop shorter than a block, the seam running backwards */
 static void test_tape_edges(void)
 {
@@ -1321,6 +1600,7 @@ int main(int argc, char **argv)
     test_drive_more();
     test_tape_edges();
     test_controls_more();
+    test_synth();
     test_input();
     test_settings();
     palette_set(UI_GREY_INDEX);                          /* (the screens are one ink now, whatever the palette) */

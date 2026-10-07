@@ -67,6 +67,8 @@ static void ui_redraw(void);
 #include "master.c"              /* the output stage: DC block, speaker EQ, limiter, USB level */
 #include "param.c"               /* the parameter table: devices and modulator slots per track */
 #include "tape.c"                /* TAPE: the ADPCM looper, the factory reels */
+#include "synth.c"               /* SYNTH: a small subtractive voice */
+#include "source.c"              /* the source engines a track starts with */
 #include "chain.c"               /* the four tracks, rendered per control block */
 
 /* ------------------------------------------------------------- I/O --- */

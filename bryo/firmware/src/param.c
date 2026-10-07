@@ -10,7 +10,7 @@
 
 enum { DEV_SRC, DEV_GRAIN, DEV_RESO, DEV_COLOR, DEV_SPACE, NDEV };
 #define NSLOT 4u                 /* modulator slots per track */
-enum { F_PCT, F_BIPCT, F_ST, F_NOTE, F_MS, F_NUM, F_DB, F_ENUM };   /* how a value prints */
+enum { F_PCT, F_BIPCT, F_ST, F_NOTE, F_MS, F_NUM, F_DB, F_ENUM, F_CT, F_HZ, F_TIME };   /* how a value prints */
 
 typedef struct {
     const char *label;
@@ -27,6 +27,7 @@ static const char *const N_MODE[2] = {"KEYS", "FLLW"};
 static const char *const N_DIR[4] = {"FWD", "REV", "PING", "RND"};
 static const char *const N_SHAPE[5] = {"SIN", "TRI", "SQR", "SAW", "RND"};
 static const char *const N_SRC[6] = {"SELF", "T1", "T2", "T3", "T4", "USB"};
+static const char *const N_OSC[5] = {"SIN", "TRI", "SQR", "SAW", "PLS"};
 static const char *const N_HOLD[5] = {"OFF", "1/32", "1/16", "1/8", "1/4"};
 #include "bryo_reels.h"              /* the factory reels' names (tools/gen_reels.py) */
 #define USLOT_N 6u                   /* user reels: your sounds in flash (reel.c) */
@@ -75,6 +76,30 @@ static const pdesc_t DEV_P[NDEV][NPK] = {
         {"DMIX", 0, 100, 30, F_PCT}, {"RMIX", 0, 100, 30, F_PCT},
         {"PRE", 0, 200, 20, F_MS}, {"WIDE", 0, 100, 100, F_PCT}},
 };
+
+/* The source engines: what starts a track's chain (docs/bryo-architecture.md, "Source engines"). TAPE's knobs are
+ * DEV_P[DEV_SRC]; each other source has its own table, and each track keeps every source's values, so switching
+ * back and forth loses nothing. */
+enum { SRC_TAPE, SRC_SYNTH, NSRC };
+static const char *const SRC_NAME[NSRC] = {"TAPE", "SYNTH"};
+
+/* SYNTH (synth.c): a small subtractive voice from Felucca's ANALOG engine, up to three per track. Four pages, the
+ * way a synth's panel reads left to right: the oscillators, the filter, the envelope (one ADSR for the level and,
+ * by ENV, the cutoff), then how the keys play it. */
+enum { SY_WAVE, SY_DTUN, SY_MIX, SY_NOIS, SY_CUT, SY_RES, SY_ENV, SY_KTRK, SY_ATK, SY_DEC, SY_SUS, SY_REL, SY_VOIC,
+       SY_GLID, SY_DRV, SY_TUNE };
+#define SYN_NV 3u                /* voices per track */
+static const pdesc_t SYN_P[NPK] = {
+    /* OSC: two oscillators of the same wave, the second DTUN cents up and MIX of the blend; white noise */
+    {"WAVE", 0, 4, 3, F_ENUM, N_OSC}, {"DTUN", 0, 100, 8, F_CT}, {"MIX", 0, 100, 50, F_PCT}, {"NOIS", 0, 100, 0, F_PCT},
+    /* FILTER: a resonant low-pass; ENV opens (or, below 0, closes) it with the envelope; KTRK follows the keys */
+    {"CUT", 0, 127, 72, F_HZ}, {"RES", 0, 100, 25, F_PCT}, {"ENV", -100, 100, 45, F_BIPCT}, {"KTRK", 0, 100, 50, F_PCT},
+    /* AMP: the envelope's times (1 ms .. 10 s) and its sustain level */
+    {"ATK", 0, 127, 0, F_TIME}, {"DEC", 0, 127, 60, F_TIME}, {"SUS", 0, 100, 60, F_PCT}, {"REL", 0, 127, 45, F_TIME},
+    /* VOICE: how many keys sound at once (1: one voice, legato), the glide between notes, drive before the filter,
+     * the tuning in semitones */
+    {"VOIC", 1, SYN_NV, SYN_NV, F_NUM}, {"GLID", 0, 127, 0, F_TIME}, {"DRV", 0, 100, 0, F_PCT},
+    {"TUNE", -24, 24, 0, F_ST}};
 
 /* an unused knob on a page (no label) */
 static int pdesc_empty(const pdesc_t *d) { return !d->label || !d->label[0]; }
@@ -150,8 +175,15 @@ typedef struct {
     int16_t mod[NSLOT][NPK];     /* the slot's own knobs */
     int16_t ch[NCH];             /* the channel strip */
     int8_t steps[NSLOT][16];     /* a SEQ slot's step values, 0..100 (set per step from phase 7: slot + key + knob) */
+    uint8_t src;                 /* the source engine (SRC_*): the main loop writes it, the ISR follows */
+    int16_t syn[NPK];            /* SYNTH's knobs (TAPE's are dev[DEV_SRC]) */
 } track_params_t;
 static track_params_t tp[NTRK];
+
+/* device d of track t as the pages see it: the source's knobs are the chosen source's */
+static const pdesc_t *dev_p(uint32_t t, uint32_t d) { return d == DEV_SRC && tp[t].src == SRC_SYNTH ? SYN_P : DEV_P[d]; }
+static int16_t *dev_v(uint32_t t, uint32_t d) { return d == DEV_SRC && tp[t].src == SRC_SYNTH ? tp[t].syn : tp[t].dev[d]; }
+static const char *dev_name(uint32_t t, uint32_t d) { return d == DEV_SRC ? SRC_NAME[tp[t].src % NSRC] : DEV_NAME[d]; }
 
 /* slot s of track t runs engine e: its knobs start from that engine's defaults */
 static void param_engine(uint32_t t, uint32_t s, uint32_t e)
@@ -171,6 +203,9 @@ static void param_defaults(void)
                 tp[t].dev[d][k] = pdesc_empty(&DEV_P[d][k]) ? 0 : DEV_P[d][k].def;
         for (k = 0; k < NCH; k++)
             tp[t].ch[k] = CH_P[k].def;
+        tp[t].src = SRC_TAPE;
+        for (k = 0; k < NPK; k++)
+            tp[t].syn[k] = SYN_P[k].def;
         tp[t].dev[DEV_SRC][8] = (int16_t)(t < NREEL ? t + 1u : 0u);   /* track n plays reel n to start */
         for (s = 0; s < NSLOT; s++) {
             param_engine(t, s, SLOT_DEF_ENGINE[s]);
@@ -243,6 +278,26 @@ static void param_format(const pdesc_t *d, int32_t v, char *val, const char **un
     case F_ENUM:
         str_cpy(val, d->names[v - d->min], 6);
         break;
+    case F_CT:
+        fmt_int(val, v);
+        *unit = "ct";
+        break;
+    case F_HZ:                                          /* a cutoff (0..127 on CUTOFF_HZ): 820Hz, 2.4k, 12k */
+    case F_TIME: {                                      /* a time (0..127 on TIME_MS_X10): 35ms, 1.2s */
+        uint32_t x = d->fmt == F_HZ ? CUTOFF_HZ[v & 127] : (TIME_MS_X10[v & 127] + 5u) / 10u;
+        if (x < 1000u) {
+            fmt_int(val, (int32_t)x);
+            *unit = d->fmt == F_HZ ? "Hz" : "ms";
+        } else {
+            fmt_int(val, (int32_t)(x / 1000u));
+            if (x < 10000u) {
+                str_cpy(val + str_len(val), ".", 2);
+                fmt_int(val + str_len(val), (int32_t)(x % 1000u / 100u));
+            }
+            *unit = d->fmt == F_HZ ? "k" : "s";
+        }
+        break;
+    }
     default:
         fmt_int(val, v);
         break;

@@ -86,8 +86,8 @@ static const pdesc_t *ui_page(uint32_t k, int16_t **vp)
         *vp = &p->mod[ui.slot][k];
         return &ME_P[p->engine[ui.slot]][k];
     }
-    *vp = &p->dev[ui.dev][k];
-    return &DEV_P[ui.dev][k];
+    *vp = &dev_v(sys.sel, ui.dev)[k];                  /* (the source: the chosen source's knobs) */
+    return &dev_p(sys.sel, ui.dev)[k];
 }
 
 static uint32_t hash_str(uint32_t h, const char *s)
@@ -108,11 +108,11 @@ static void draw_head(void)
     uint32_t sig;
     int slot = ui.kind == FOCUS_SLOT && ui.view == VIEW_PAGE;
     uint32_t pages = ui.view != VIEW_PAGE ? 1u
-                   : pdesc_pages(slot ? ME_P[tp[sys.sel].engine[ui.slot]] : DEV_P[ui.dev]);
+                   : pdesc_pages(slot ? ME_P[tp[sys.sel].engine[ui.slot]] : dev_p(sys.sel, ui.dev));
     if (ui.view == VIEW_MIXER)
         str_cpy(ti, ui.chan ? "CHANNEL" : "MIXER", sizeof ti);
     else
-        str_cpy(ti, slot ? ME_NAME[tp[sys.sel].engine[ui.slot]] : DEV_NAME[ui.dev], sizeof ti);
+        str_cpy(ti, slot ? ME_NAME[tp[sys.sel].engine[ui.slot]] : dev_name(sys.sel, ui.dev), sizeof ti);
     if (slot) {
         box[0] = 'M';
         box[1] = (char)('1' + ui.slot);
@@ -178,7 +178,7 @@ static void draw_strip(void)
             sig = (sig ^ (uint32_t)(meter_w(track_rt[k].peak, 19) | track[k].mute << 8)) * 16777619u;
     }
     sig += (ui.last < 4u ? ui.last + 1u : 0u) * 7919u + sys.sel * 104729u + ui.view * 31u + ui.page * 263u + ui.chan * 5u + ui.kind * 131u +
-           ui.dev * 1031u + (ui.kind == FOCUS_SLOT ? tp[sys.sel].engine[ui.slot] * 65537u : 0u);
+           ui.dev * 1031u + (ui.kind == FOCUS_SLOT ? tp[sys.sel].engine[ui.slot] * 65537u : tp[sys.sel].src * 3571u);
     if (!ui.force && sig == ui.sig_strip)
         return;
     ui.sig_strip = sig;
@@ -194,7 +194,7 @@ static void draw_strip(void)
         }
         uint32_t pk = ui.view == VIEW_MIXER ? CH_PK[k]
                     : ui.kind == FOCUS_SLOT ? ME_PK[tp[sys.sel].engine[ui.slot]][4u * ui.page + k]
-                    : DEV_PK[ui.dev][4u * ui.page + k];
+                    : dev_pk(sys.sel, ui.dev)[4u * ui.page + k];
         int lvl = ui.view == VIEW_MIXER && !ui.chan, mute = lvl && track[k].mute;
         char val[12];
         const char *unit;
@@ -229,7 +229,7 @@ static void draw_foot(void)
     else if (ui.view == VIEW_MIXER)
         str_cpy(a, ui.chan ? "KNOBS: CHANNEL" : "HOLD EDIT: CHANNEL", sizeof a);
     else
-        str_cpy(a, "KEYS: SLICES", sizeof a);
+        str_cpy(a, tp[sys.sel].src == SRC_SYNTH ? "KEYS: NOTES" : "KEYS: SLICES", sizeof a);
     str_cpy(b, "T", sizeof b);                        /* "T2 OCT 3": the track, its keys' octave */
     fmt_int(b + 1, (int32_t)sys.sel + 1);
     str_cpy(b + str_len(b), " OCT ", 8);

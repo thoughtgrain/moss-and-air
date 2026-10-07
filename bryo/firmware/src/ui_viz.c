@@ -7,6 +7,7 @@
  * a value sits, dotted drop lines and guides, small 3 x 5 labels under the plot, the way a groovebox draws an
  * envelope. The page's last-turned knob gets its label inverted here too, where the picture has one.
  *
+ *   SYNTH      per page: the oscillators' cycles, the filter's response, the envelope, the keys and voices
  *   TAPE       a reel-to-reel, reels close over the middle: the run along the bottom is the whole tape with the
  *              sample on it, lit inside the loop window (STRT, LEN, bracketed); the playhead over it; between the
  *              reels SPD as chevrons and DUB as the layers kept
@@ -582,6 +583,140 @@ static void viz_adsr(const int16_t *v, uint32_t f)
         vz_ktag(118, DY0 - 1, &ME_P[ME_ADSR][f], v[f]);
 }
 
+/* ------------------------------------------------------------- SYNTH --- */
+/* The page shown decides the picture (each page is one part of the voice):
+ *   OSC     three cycles of the two oscillators: the mix solid, the second one alone dotted, drifting ahead by DTUN
+ *           (exaggerated, so a few cents show), NOIS as grit around the line
+ *   FILTER  the low-pass's response over the audible range (log, CUTOFF_HZ's), its peak by RES; dotted, where the
+ *           envelope at its top takes it (ENV); KTRK's arrow: where it sits an octave up the keys
+ *   AMP     the envelope, drawn as the ADSR modulator's
+ *   VOICE   the keys' note range (OCT and TUNE), the voices that play at once, the glide between two notes, drive */
+static int32_t vz_osc(uint32_t w, int32_t p)          /* SYNTH's wave at phase p (64 a cycle), x1000 */
+{
+    return w == 4u ? ((p & 63) < 16 ? 1000 : -1000) : px_wave(w, p);
+}
+
+/* the low-pass's level in dB x10 at index i of the cutoff scale (about a semitone a step), cutoff at c, RES 0..100 */
+static int32_t vz_lp_db10(int32_t i, int32_t c, int32_t res)
+{
+    int32_t d = i - c, pk = res * 18;                /* the peak: up to 18 dB */
+    return pk * 16 / (16 + d * d) - (d > 0 ? d * 10 : 0);   /* 12 dB an octave above it (1 dB a step) */
+}
+
+static void viz_synth(const int16_t *v, uint32_t f)
+{
+    int32_t x, k;
+    if (ui.page == 0u) {
+        uint32_t w = (uint32_t)clamp(v[SY_WAVE], 0, 4);
+        int32_t py = 0, m2 = v[SY_MIX], dr = v[SY_DTUN];
+        vz_seed = 77u;
+        px_line(DX0, DMID, DX1, DMID, px_dim, 2);
+        for (x = DX0; x <= DX1; x++) {
+            int32_t p = (x - DX0) * 192 / DW, p2 = p + (x - DX0) * dr * 24 / (DW * 100);   /* 3 cycles; drift */
+            int32_t a = vz_osc(w, p), b2 = vz_osc(w, p2), o = (a * (100 - m2) + b2 * m2) / 100, yy;
+            yy = DMID - o * (DH / 2 - 2) / 1000;
+            if (x > DX0)
+                px_line(x - 1, py, x, yy, px_ink, 1);
+            if (m2 && (x & 1) == 0)
+                px_dot(x, DMID - b2 * (DH / 2 - 2) / 1000, px_dim);
+            if (v[SY_NOIS] && (int32_t)(vz_rand() % 100u) < v[SY_NOIS] / 2)
+                px_dot(x, yy + (int32_t)(vz_rand() % 7u) - 3, px_ink);
+            py = yy;
+        }
+        vz_label(14, N_OSC[w], f == 0u);
+        vz_label(45, "DTUN", f == 1u);
+        vz_label(75, "MIX", f == 2u);
+        vz_label(105, "NOIS", f == 3u);
+    } else if (ui.page == 1u) {
+        int32_t c = v[SY_CUT], ce = clamp(c + v[SY_ENV] * 96 / 100, 0, 127), ck = clamp(c + v[SY_KTRK] * 12 / 100, 0, 127);
+        int32_t py = 0, z = DY0 + 13;                 /* 0 dB at z; 18 dB of peak above it, 24 below */
+        px_line(DX0, z, DX1, z, px_dim, 2);
+        for (x = DX0; x <= DX1; x++) {
+            int32_t i = (x - DX0) * 127 / DW;
+            int32_t yy = clamp(z - vz_lp_db10(i, c, v[SY_RES]) * 9 / 100, DY0, DY1);
+            int32_t ye = clamp(z - vz_lp_db10(i, ce, v[SY_RES]) * 9 / 100, DY0, DY1);
+            if (x > DX0) {
+                px_line(x - 1, py, x, yy, px_ink, 1);
+                if (v[SY_ENV] && (x & 1) == 0)
+                    px_dot(x, ye, px_ink);
+            }
+            py = yy;
+        }
+        {
+            int32_t cx = DX0 + c * DW / 127, ex = DX0 + ce * DW / 127, kx = DX0 + ck * DW / 127;
+            vz_node(cx, clamp(z - vz_lp_db10(c, c, v[SY_RES]) * 9 / 100, DY0 + 1, DY1 - 1), 1);
+            px_line(cx, DY1 - 3, cx, DY1, px_ink, 1);
+            if (v[SY_ENV] && ex != cx) {
+                vz_node(ex, clamp(z - vz_lp_db10(ce, ce, v[SY_RES]) * 9 / 100, DY0 + 1, DY1 - 1), 0);
+                px_line(cx, DY1 - 1, ex, DY1 - 1, px_ink, 2);
+            }
+            if (v[SY_KTRK] && kx > cx + 2)                /* KTRK: an octave up the keys */
+                px_line(cx, DY1 + 1, kx, DY1 + 1, px_dim, 1);
+            vz_label(cx, "CUT", f == 0u);
+            if (v[SY_ENV] && (ex - cx > 14 || cx - ex > 14))
+                vz_label(ex, "ENV", f == 2u);
+        }
+        if (f < NPK && f != 0u)
+            vz_ktag(118, DY0 - 1, &SYN_P[4u + f % 4u], v[4u + f % 4u]);
+    } else if (ui.page == 2u) {
+        int16_t a[NPK] = {0};
+        a[0] = v[SY_ATK];
+        a[1] = v[SY_DEC];
+        a[2] = v[SY_SUS];
+        a[3] = v[SY_REL];
+        a[10] = 100;                                  /* (AMT 100, OFS 0: the envelope as it is) */
+        viz_adsr(a, f < 4u ? f : 0xFFu);
+    } else {
+        static const char NOTE[12][3] = {"C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"};
+        int32_t lo = 12 * ((int32_t)track[sys.sel].octave + 1) + v[SY_TUNE], hi = lo + 15, nv = v[SY_VOIC];
+        char b[16];
+        lo = clamp(lo, 0, 127);
+        hi = clamp(hi, 0, 127);
+        str_cpy(b, NOTE[lo % 12], 3);                 /* the white keys' range: "C3-D#4" */
+        fmt_int(b + str_len(b), lo / 12 - 1);
+        str_cpy(b + str_len(b), "-", 2);
+        str_cpy(b + str_len(b), NOTE[hi % 12], 3);
+        fmt_int(b + str_len(b), hi / 12 - 1);
+        px_text_c(0, 120, DY0 + 1, PXF_5, b, px_ink);
+        for (k = 0; k < (int32_t)SYN_NV; k++)          /* VOIC: the voices, as many solid as play */
+            if (k < nv)
+                px_box(6, 14 + k * 6, 18, 4, px_ink);
+            else
+                px_frame(6, 14 + k * 6, 18, 4, px_dim, 2);
+        {   /* GLID: from one note to the next, sloped by the glide's time (square root, as the envelope's) */
+            int32_t t = (int32_t)TIME_MS_X10[v[SY_GLID] & 127], sq = 1, w;
+            while (sq * sq < t)
+                sq++;
+            w = v[SY_GLID] ? clamp(sq * 22 / 317, 1, 22) : 0;
+            px_line(34, 31, 40, 31, px_ink, 1);
+            px_line(40, 31, 40 + w, 15, px_ink, 1);
+            px_line(40 + w, 15, 62, 15, px_ink, 1);
+            px_line(34, 15, 62, 15, px_dim, 2);
+        }
+        {   /* DRV: the transfer curve */
+            int32_t g = 1000 + v[SY_DRV] * 20, py = 0;
+            px_frame(68, 13, 20, 20, px_dim, 2);
+            for (x = 0; x < 20; x++) {
+                int32_t yy = 23 - px_clip((x - 10) * 100, g) * 9 / 1000;
+                if (x)
+                    px_line(68 + x - 1, py, 68 + x, yy, px_ink, 1);
+                py = yy;
+            }
+        }
+        fmt_int(b, v[SY_TUNE]);                       /* TUNE */
+        if (v[SY_TUNE] > 0) {
+            b[0] = '+';
+            fmt_int(b + 1, v[SY_TUNE]);
+        }
+        str_cpy(b + str_len(b), "st", 3);
+        px_text_c(92, 26, 19, PXF_5, b, px_ink);
+        vz_label(15, "VOIC", f == 0u);
+        vz_label(48, "GLID", f == 1u);
+        vz_label(78, "DRV", f == 2u);
+        vz_label(105, "TUNE", f == 3u);
+    }
+}
+
 /* FOLLOW: the envelope of a sound: what the source track plays, from its tape's peaks, dim; GAIN
  * scales what goes in, RISE and FALL are how fast the envelope (solid) climbs and drops, HOLD samples it on the
  * tempo's divisions (steps), AMT and OFS place it, SPRD the right channel dotted */
@@ -752,14 +887,16 @@ static uint32_t viz_sig(void)
         return h + ui.chan * 977u;
     }
     for (k = 0; k < NPK; k++) {                                        /* both pages: page 2 shows in the picture */
-        const int16_t *v = ui.kind == FOCUS_SLOT ? tp[sys.sel].mod[ui.slot] : tp[sys.sel].dev[ui.dev];
+        const int16_t *v = ui.kind == FOCUS_SLOT ? tp[sys.sel].mod[ui.slot] : dev_v(sys.sel, ui.dev);
         h = (h ^ (uint32_t)(v[k] + 32768)) * 16777619u;
     }
     h += ui.page * 389u;
     if (ui.kind == FOCUS_SLOT && tp[sys.sel].engine[ui.slot] == ME_SEQ)   /* SEQ draws its step values */
         for (k = 0; k < 16u; k++)
             h = (h ^ (uint32_t)(uint8_t)tp[sys.sel].steps[ui.slot][k]) * 16777619u;
-    if (ui.kind == FOCUS_DEV && (ui.dev == DEV_SRC || ui.dev == DEV_GRAIN))   /* the sound on the tape, the head */
+    if (ui.kind == FOCUS_DEV && ui.dev == DEV_SRC)                     /* the source; SYNTH's range: the octave */
+        h = (h ^ (tp[sys.sel].src * 7u + track[sys.sel].octave * 131u)) * 16777619u;
+    if (ui.kind == FOCUS_DEV && ((ui.dev == DEV_SRC && tp[sys.sel].src == SRC_TAPE) || ui.dev == DEV_GRAIN))   /* the tape, the head */
         h = (h ^ (tape_ver[sys.sel] * 31u + (uint32_t)(tape_head(sys.sel) * DW / 1000 + 7) + sys.rec * 977u)) * 16777619u;
     if (ui.kind == FOCUS_SLOT && tp[sys.sel].engine[ui.slot] == ME_FOLLOW)
         for (t = 0; t < NTRK; t++)
@@ -772,7 +909,7 @@ static uint32_t viz_sig(void)
 static void draw_viz(void)
 {
     uint32_t sig = viz_sig(), f = ui.last < 4u ? 4u * ui.page + ui.last : 0xFFu;
-    const int16_t *v = ui.kind == FOCUS_SLOT ? tp[sys.sel].mod[ui.slot] : tp[sys.sel].dev[ui.dev];   /* both pages */
+    const int16_t *v = ui.kind == FOCUS_SLOT ? tp[sys.sel].mod[ui.slot] : dev_v(sys.sel, ui.dev);   /* both pages */
     if (!ui.force && sig == ui.sig_viz)
         return;
     ui.sig_viz = sig;
@@ -792,7 +929,12 @@ static void draw_viz(void)
             }
         } else {
             switch (ui.dev) {
-            case DEV_SRC: viz_tape(v, f); break;
+            case DEV_SRC:
+                if (tp[sys.sel].src == SRC_SYNTH)
+                    viz_synth(v, f);
+                else
+                    viz_tape(v, f);
+                break;
             case DEV_GRAIN: viz_grain(v, f); break;
             case DEV_RESO: viz_reso(v, f); break;
             case DEV_COLOR: viz_color(v, f); break;

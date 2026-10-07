@@ -118,7 +118,7 @@ static void pad_devices(uint32_t a, uint32_t b)
         focus_dev(a, 0);
         return;
     }
-    if (ui.page + 1u < pdesc_pages(DEV_P[d]))
+    if (ui.page + 1u < pdesc_pages(dev_p(sys.sel, d)))
         focus_dev(d, ui.page + 1u);
     else
         focus_dev(d == a ? b : a, 0);
@@ -320,6 +320,12 @@ static void ui_input(void)
             /* the focused slot's pad held + SELECT: its engine (LFO RANDOM ADSR SEQ FOLLOW), from its defaults */
             uint32_t e = (uint32_t)(((int32_t)tp[sys.sel].engine[ui.slot] + d % (int32_t)NME + (int32_t)NME) % (int32_t)NME);
             param_engine(sys.sel, ui.slot, e);
+            ui.page = 0;
+            ui.last = 0xFF;
+        } else if (ui.view == VIEW_PAGE && ui.kind == FOCUS_DEV && ui.dev == DEV_SRC &&
+                   ((fm1_in.buttons >> panel.btn[B_HOME]) & 1u)) {
+            /* HOME held + SELECT: the track's source (TAPE, SYNTH); each keeps its own knobs */
+            tp[sys.sel].src = (uint8_t)(((int32_t)tp[sys.sel].src + d % (int32_t)NSRC + (int32_t)NSRC) % (int32_t)NSRC);
             ui.page = 0;
             ui.last = 0xFF;
         } else {                                        /* SELECT: the global tempo */

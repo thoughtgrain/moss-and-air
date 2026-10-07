@@ -17,7 +17,7 @@ context	control	gesture	action	status	phase	source
 any	POT_MASTER	turn	master output level (digital gain after the mix; USB follows unless USB LEVEL FIXED)	now	-	PRD 2.1
 any	BTN_OCTDN	combo	held with OCT+ for 5 s: UPDATE MODE countdown from 2 s, letting go cancels	now	-	kept
 power-on	BTN_OCTDN	combo	held with OCT+ at power-on: HARDWARE CALIBRATION (press each button, turn each encoder)	now	-	kept
-page	BTN_HOME	press	focus the track's source device (TAPE); again: TAPE 2 (FADE REV HALF GAIN), TAPE 3 (REEL), TAPE	now	-	PRD 2.2
+page	BTN_HOME	press	focus the track's source (TAPE or SYNTH); again: its next page (TAPE 2, TAPE 3; SYNTH's FILTER, AMP, VOICE), round	now	-	PRD 2.2
 page	BTN_HOME	tap	on a POLY track, again while its page is up: the next page (SAMPLE, ENV, FILTER)	planned	3	change
 page	BTN_EDIT	press	focus GRAIN; again: GRAIN 2 (MIX JIT WIN REV); again: RESONATOR; again: GRAIN	now	-	PRD 2.2
 page	BTN_FX	press	focus COLOR; again: COLOR 2 (LVL MIX SRR GATE); again: SPACE; again: SPACE 2 (DMIX RMIX PRE WIDE)	now	-	PRD 2.2
@@ -33,7 +33,7 @@ page	BTN_PLAY	press	start / stop the transport: every track's tape plays its loo
 page	BTN_REC	press	arm / disarm the focused track's tape: while playing it records the other tracks' mix (old x DUB + new x GAIN); armed on a reel, the reel is copied onto the tape first (refused if the tape holds a take)	now	-	PRD 2.2
 page	BTN_SAVE	tap	quick-save the active project (now: a message)	planned	8	PRD 2.2
 page	BTN_SAVE	hold	undo the last tape clear (while nothing has been recorded over it)	now	-	change
-page	BTN_OCTDN	press	the white keys an octave down (the test tone now; RESONATOR notes, SEQ step pages later)	now	-	PRD 2.1
+page	BTN_OCTDN	press	the white keys an octave down (SYNTH's notes; RESONATOR notes, SEQ step pages later)	now	-	PRD 2.1
 page	BTN_OCTUP	press	the white keys an octave up	now	-	PRD 2.1
 page	ENC_K1	turn	the first value on the strip (and it becomes the page's last-turned: the visualization names it)	now	-	PRD 1
 page	ENC_K2	turn	the second value on the strip	now	-	PRD 1
@@ -42,7 +42,7 @@ page	ENC_K4	turn	the fourth value on the strip	now	-	PRD 1
 page	ENC_SELECT	turn	the global tempo, 40..240 BPM	now	-	PRD 2.1
 page	ENC_PRESETS	turn	open the project manager and scroll its slots (now: a message)	planned	8	change
 page	ENC_ALGORITHM	turn	open the routing matrix and move through its cells (now: a message)	planned	6	change
-page	WHITE_1-16	press	slice n of the focused track's loop (16 slices); playing: the head jumps there (crossfaded); stopped: that slice plays once (until RESONATOR and SEQ give the keys their own jobs)	now	-	change
+page	WHITE_1-16	press	TAPE: slice n of the focused track's loop (16 slices); playing: the head jumps there (crossfaded); stopped: that slice plays once. SYNTH: notes, key n the semitone n above C of OCT (until RESONATOR and SEQ give the keys their own jobs)	now	-	change
 page	BLACK_OP1	press	mute / unmute track 1	now	-	PRD 2.3
 page	BLACK_OP2	press	mute / unmute track 2	now	-	PRD 2.3
 page	BLACK_OP3	press	mute / unmute track 3	now	-	PRD 2.3
@@ -71,7 +71,7 @@ glo-held	ENC_K1-4	turn	the four track levels; letting go of GLO returns to the p
 glo-held	BTN_GLO	release	back to the page if something was done or it was held past HOLD; else the mixer stays up	now	-	change
 slot-held	ENC_K1-4	hold-turn	modulation depth from this slot to that knob's parameter on the page; release commits	planned	7	PRD 4.2
 slot-held	ENC_SELECT	hold-turn	the focused slot's pad held: its engine (LFO ADSR SEQ FOLLOW), starting from that engine's defaults; the tempo is left alone	now	-	change
-slot-held	BTN_HOME	hold	(on HOME) choose the track's source engine with SELECT: TAPE, SYNTH, POLY	planned	2	change
+slot-held	BTN_HOME	hold	(on HOME) choose the track's source engine with SELECT: TAPE, SYNTH (POLY in phase 3); each keeps its own knobs, the switch crossfades	now	-	change
 slot-held+step	ENC_K1-4	hold-turn	the depth for that step only (p-lock); release the key and pad to commit	planned	7	PRD 4.3
 project-view	ENC_PRESETS	turn	move through the project slots	planned	8	change
 project-view	BTN_OCTUP	press	load the selected project	planned	8	change

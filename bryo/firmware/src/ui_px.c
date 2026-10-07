@@ -184,7 +184,7 @@ enum {
     PK_SQUARE, PK_DOTS, PK_BOWTIE, PK_LOOP, PK_MIX, PK_DRIVE, PK_STAIRS, PK_NOISE, PK_TONE, PK_CLOCK, PK_ROOM,
     PK_SHAPE, PK_FOLD, PK_SKEW, PK_SMOOTH, PK_STEPS, PK_SLEW, PK_SWING, PK_KEYS, PK_SHELF_LO, PK_SHELF_HI, PK_FILTER,
     PK_PAN, PK_TOGGLE, PK_FADE, PK_WINDOW, PK_GATE, PK_PRE, PK_MODE, PK_DIR, PK_STEPAT, PK_NONE,
-    PK_CURVE, PK_VAR, PK_SRC
+    PK_CURVE, PK_VAR, PK_SRC, PK_OSC, PK_DETUNE, PK_CUTOFF, PK_RES, PK_ENVAMT, PK_KTRK, PK_VOICES
 };
 
 /* the waveform shapes WAVE's SHAPE picks, at phase p (0..63 a cycle), x1000 */
@@ -493,13 +493,16 @@ static void px_picto(uint32_t kind, int32_t x, int32_t y, const pdesc_t *d, int3
         break;
     }
     case PK_SHAPE:                                       /* one cycle of the shape */
+    case PK_OSC:                                         /* SYNTH's wave: SIN TRI SQR SAW, PLS a 25 % pulse */
     case PK_FOLD:
     case PK_SKEW: {
         int32_t px0 = 0, py0 = 0;
         px_line(x, cy, x + 21, cy, m, 2);
         for (i = 0; i <= 21; i++) {
             int32_t p = i * 64 / 22, o, yy;
-            if (kind == PK_SHAPE) {
+            if (kind == PK_OSC && v == 4) {
+                o = (p & 63) < 16 ? 1000 : -1000;
+            } else if (kind == PK_SHAPE || kind == PK_OSC) {
                 o = px_wave((uint32_t)v, p);
             } else if (kind == PK_FOLD) {                /* the sine driven past the rails folds back */
                 o = px_sin(p) * (1000 + r * 3) / 1000;
@@ -695,6 +698,55 @@ static void px_picto(uint32_t kind, int32_t x, int32_t y, const pdesc_t *d, int3
     }
     case PK_NONE:
         break;
+    case PK_DETUNE: {                                    /* two saws, the second (dotted) drifting ahead with DTUN */
+        int32_t sh = r * 5 / 1000, k;
+        for (k = 0; k < 2; k++) {
+            int32_t x0 = x + k * 11;
+            px_line(x0, y + 16, x0 + 10, y + 4, c, 1);
+            px_line(x0 + 10, y + 4, x0 + 10, y + 16, c, 1);
+            if (x0 + 10 + sh <= x + 21) {
+                px_line(x0 + sh, y + 18, x0 + 10 + sh, y + 6, m, 2);
+                px_line(x0 + 10 + sh, y + 6, x0 + 10 + sh, y + 18, m, 2);
+            }
+        }
+        break;
+    }
+    case PK_CUTOFF:                                      /* a low-pass: flat, then falling past the cutoff */
+    case PK_RES: {                                       /* the same filter, its peak as tall as the resonance */
+        int32_t kx = kind == PK_CUTOFF ? 2 + r * 17 / 1000 : 12, pk = kind == PK_RES ? r * 9 / 1000 : 2, py = 0;
+        px_line(x, y + 8, x + 21, y + 8, m, 2);
+        for (i = 0; i <= 21; i++) {
+            int32_t d = i - kx, yy = y + 8 - pk * 9 / (9 + d * d * 3) + (d > 0 ? d * 2 : 0);
+            yy = clamp(yy, y, b);
+            if (i)
+                px_line(x + i - 1, py, x + i, yy, c, 1);
+            py = yy;
+        }
+        break;
+    }
+    case PK_ENVAMT: {                                    /* the envelope's push on the cutoff: up, or down below 0 */
+        int32_t h = v * 9 / 100, xs[4] = {x, x + 5, x + 12, x + 21}, ys[4] = {cy, cy - h, cy - h / 2, cy};
+        px_line(x, cy, x + 21, cy, m, 2);
+        for (i = 1; i < 4; i++)
+            px_line(xs[i - 1], ys[i - 1], xs[i], ys[i], c, 1);
+        break;
+    }
+    case PK_KTRK: {                                      /* key tracking: across the keys, the cutoff climbs */
+        int32_t k = r * 8 / 1000;
+        for (i = 0; i < 22; i += 3)
+            px_line(x + i, b - 1, x + i, b, m, 1);
+        px_line(x, cy, x + 21, cy, m, 2);
+        px_line(x, cy + k, x + 21, cy - k, c, 1);
+        break;
+    }
+    case PK_VOICES: {                                    /* three voices stacked: as many solid as play at once */
+        for (i = 0; i < 3; i++)
+            if (i < v)
+                px_box(x + 2, y + 2 + i * 7, 18, 4, c);
+            else
+                px_frame(x + 2, y + 2 + i * 7, 18, 4, m, 2);
+        break;
+    }
     case PK_KEYS: {                                      /* an octave: one outline, the dividers, the root marked */
         /* 7 white keys of 3 dots in one frame, black keys as solid blocks over the dividers; the root is a solid
          * foot on its white key, or a black key drawn hollow. Fewer strokes than a key-by-key drawing, so it reads
@@ -733,6 +785,13 @@ static const uint8_t DEV_PK[NDEV][NPK] = {
     {PK_CLOCK, PK_LOOP, PK_ROOM, PK_DECAY,           /* SPACE: TIME FDBK SIZE DEC */
      PK_MIX, PK_MIX, PK_PRE, PK_BOWTIE},             /*        DMIX RMIX PRE WIDE */
 };
+static const uint8_t SYN_PK[NPK] = {
+    PK_OSC, PK_DETUNE, PK_MIX, PK_NOISE,             /* SYNTH: WAVE DTUN MIX NOIS */
+    PK_CUTOFF, PK_RES, PK_ENVAMT, PK_KTRK,           /*        CUT RES ENV KTRK */
+    PK_ATTACK, PK_DECAY, PK_SUSTAIN, PK_RELEASE,     /*        ATK DEC SUS REL */
+    PK_VOICES, PK_SLEW, PK_DRIVE, PK_KNOB};          /*        VOIC GLID DRV TUNE */
+/* the pictograms of device d's knobs on track t (the source: the chosen source's) */
+static const uint8_t *dev_pk(uint32_t t, uint32_t d) { return d == DEV_SRC && tp[t].src == SRC_SYNTH ? SYN_PK : DEV_PK[d]; }
 static const uint8_t CH_PK[NCH] = {PK_SHELF_LO, PK_SHELF_HI, PK_FILTER, PK_PAN};
 static const uint8_t ME_PK[NME][NPK] = {
     {PK_KNOB, PK_SHAPE, PK_SKEW, PK_FOLD,            /* LFO: RATE SHPE SKEW FOLD */

@@ -324,11 +324,11 @@ static void con_params(void)                    /* the focused track: five devic
 {
     const track_params_t *p = &tp[sys.sel];
     uint32_t d, k;
-    for (d = 0; d < NDEV; d++) {
-        con_puts(DEV_NAME[d]);
-        for (k = 0; k < 4u * pdesc_pages(DEV_P[d]); k++) {
+    for (d = 0; d < NDEV; d++) {                 /* (the source: the chosen one's) */
+        con_puts(dev_name(sys.sel, d));
+        for (k = 0; k < 4u * pdesc_pages(dev_p(sys.sel, d)); k++) {
             con_putc(' ');
-            con_dec(p->dev[d][k]);
+            con_dec(dev_v(sys.sel, d)[k]);
         }
         con_puts("\r\n");
     }
