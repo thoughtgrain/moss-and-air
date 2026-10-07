@@ -280,6 +280,15 @@ static void test_input(void)
     let_go(B_GLO);
     check("GLO held + KNOB 1: TRACK 1's level, and letting go goes back", track[0].level == 103u && ui.view == VIEW_PAGE);
     tap(B_GLO);
+    hold(B_EDIT);
+    check("EDIT held on the mixer: the channel page, the mixer stays", ui.chan && ui.view == VIEW_MIXER);
+    host_enc[panel.enc[EN_K3]] = -30;
+    ui_input();
+    check("..KNOB 3 sets the selected track's FILT (TRACK 3: 0 -> -30), not a level", tp[2].ch[CH_FILT] == -30 &&
+          track[2].level == 100u);
+    let_go(B_EDIT);
+    check("EDIT let go: the levels again, the mixer still up", !ui.chan && ui.view == VIEW_MIXER);
+    tp[2].ch[CH_FILT] = 0;
     press(B_FX);
     check("a page pad closes the mixer", ui.view == VIEW_PAGE && ui.dev == DEV_COLOR && !ui.glo_latched);
     press(B_HOME);
@@ -416,6 +425,14 @@ static void screens_in(const char *pal)
     track_rt[0].peak = 9000;
     track_rt[2].peak = 1200;
     shot(pal, "mixer");
+    hold(B_EDIT);                                        /* the channel: LOW +6, HIGH -4, a low-pass, PAN right */
+    turn(0, 6);
+    turn(1, -4);
+    turn(2, -55);
+    turn(3, 30);
+    shot(pal, "mixer_channel");
+    let_go(B_EDIT);
+    shot(pal, "mixer_eq");
     tap(B_GLO);
     hold(B_GLO);
     shot(pal, "mixer_held");

@@ -8,6 +8,7 @@
  *   LFO ENV SEQ ARP  focus modulator slot 1..4
  *   GLO held       the mixer while held: white keys 1..4 pick the track, KNOB 1..4 set the levels; let go: back
  *   GLO tapped     the mixer stays up; tap again (or any page pad): back
+ *   EDIT held      on the mixer: KNOB 1..4 set the selected track's channel (LOW HIGH FILT PAN); let go: levels
  *   SCL            unassigned (the PRD's SEL; track picking moved under GLO)
  *   PLAY           start / stop
  *   REC            arm the focused track (recording arrives with TAPE, phase 2)
@@ -50,7 +51,7 @@ static uint32_t focus_btn(void)
 {
     static const uint8_t SLOT_BTN[NSLOT] = {B_LFO, B_ENV, B_SEQ, B_ARP};
     if (ui.view == VIEW_MIXER)
-        return B_GLO;
+        return ui.chan ? B_EDIT : B_GLO;
     if (ui.kind == FOCUS_SLOT)
         return SLOT_BTN[ui.slot];
     return ui.dev == DEV_SRC ? B_HOME : ui.dev <= DEV_RESO ? B_EDIT : B_FX;
@@ -100,6 +101,7 @@ static void ui_leds(void)
 static void focus_dev(uint32_t d)
 {
     ui.view = VIEW_PAGE;
+    ui.chan = 0;
     ui.glo_latched = 0;
     ui.kind = FOCUS_DEV;
     ui.dev = (uint8_t)d;
@@ -109,6 +111,7 @@ static void focus_dev(uint32_t d)
 static void focus_slot(uint32_t s)
 {
     ui.view = VIEW_PAGE;
+    ui.chan = 0;
     ui.glo_latched = 0;
     ui.kind = FOCUS_SLOT;
     ui.slot = (uint8_t)s;
@@ -137,6 +140,7 @@ static void glo_up(void)
     }
     ui.glo_latched = 0;
     ui.view = VIEW_PAGE;
+    ui.chan = 0;
     ui.last = 0xFF;
 }
 
@@ -146,7 +150,14 @@ static void on_button(uint32_t b)
     case B_HOME:
         focus_dev(DEV_SRC);
         break;
-    case B_EDIT:                                        /* GRAIN <-> RESONATOR */
+    case B_EDIT:                                        /* GRAIN <-> RESONATOR; on the mixer: the channel, held */
+        if (ui.view == VIEW_MIXER) {
+            ui.chan = 1;
+            ui.last = 0xFF;
+            if (ui.glo_held)
+                ui.glo_used = 1;
+            break;
+        }
         focus_dev(ui.view == VIEW_PAGE && ui.kind == FOCUS_DEV && ui.dev == DEV_GRAIN ? DEV_RESO : DEV_GRAIN);
         break;
     case B_FX:                                          /* COLOR <-> SPACE */
@@ -193,7 +204,7 @@ static void on_knob(uint32_t c, int32_t d)
     int16_t *vp;
     const pdesc_t *p = ui_page(c, &vp);
     int16_t v = param_nudge(p, *vp, d);
-    if (ui.view == VIEW_MIXER)
+    if (ui.view == VIEW_MIXER && !ui.chan)
         track[c].level = (uint8_t)v;
     else
         *vp = v;
@@ -214,6 +225,10 @@ static void ui_input(void)
             if (b < NB)
                 on_button(b);
         }
+    if (ui.chan && (((released >> panel.btn[B_EDIT]) & 1u) || !((fm1_in.buttons >> panel.btn[B_EDIT]) & 1u))) {
+        ui.chan = 0;                                    /* EDIT let go: the mixer's levels again */
+        ui.last = 0xFF;
+    }
     if (ui.glo_held && (((released >> panel.btn[B_GLO]) & 1u) || !((fm1_in.buttons >> panel.btn[B_GLO]) & 1u)))
         glo_up();
     sys.keys_live = (uint8_t)!ui.glo_held;            /* under GLO the white keys pick, they don't play */

@@ -30,6 +30,7 @@ What works on the panel now (every control, in every context, with what's planne
 | LFO ENV SEQ ARP | modulator slots 1 to 4 |
 | GLO, held | the mixer while held: white keys 1 to 4 pick the track, KNOB 1 to 4 set the levels |
 | GLO, tapped | the mixer stays up; tap again or press a page pad to leave |
+| EDIT, held on the mixer | KNOB 1 to 4 set the selected track's LOW, HIGH, FILT and PAN |
 | KNOB 1 to 4 | the four values on screen |
 | SELECT | the tempo |
 | PLAY, REC | start and stop; arm the track (recording arrives with TAPE) |
@@ -41,7 +42,7 @@ What works on the panel now (every control, in every context, with what's planne
 The screen is drawn like a groovebox OLED: a grid of 2 x 2 px dots, bitmap type, one ink from your palette.
 Each knob is a pictogram that shows its value (a dial's pointer, a fader's fill, a slope's length, a keyboard
 with the root lit, a feedback ring that wobbles into chaos as it rises), with a 4-letter label under it. Under the four of them, each page plots what it does in the
-same dotted language: a reel-to-reel with the loop bracketed on the tape and chevrons for speed, the sample lit where grains read
+same dotted language: a reel-to-reel with the sample on the tape and the loop bracketed on it, the sample lit where grains read
 it with one block per grain, the resonator's peaks with a node on each harmonic, a sine through COLOR (with an
 inset that follows your last knob), SPACE's echoes as stems and its tail, and each modulator's shape (ADSR names
 its stages, SEQ numbers its steps). The last knob you turned has its label inverted in both places.

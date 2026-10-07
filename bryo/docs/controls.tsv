@@ -58,13 +58,13 @@ page:grain	WHITE_1-16	press	play from slice n of the loop, through the grains	pl
 page	BLACK_POLY	release	(the key, not the POLY source engine) letting go before 0.5 s cancels the clear	planned	2	change
 page:resonator	WHITE_1-16	press	chromatic notes for the resonator (tuned feedback chords); OCT-/OCT+ shift	planned	4	PRD 2.3
 page:slot	WHITE_1-16	press	on a SEQ slot: the 16 steps (OCT-/OCT+: steps 17-32)	planned	7	PRD 2.3
-mixer	ENC_K1	turn	track 1 level	now	-	change
+mixer	ENC_K1	turn	track 1 level (the fader's notches; its fill is the live meter)	now	-	change
 mixer	ENC_K2	turn	track 2 level	now	-	change
 mixer	ENC_K3	turn	track 3 level	now	-	change
 mixer	ENC_K4	turn	track 4 level	now	-	change
 mixer	BTN_GLO	tap	close the mixer	now	-	change
 mixer	BTN_HOME	press	close the mixer and focus the source (any page pad does the same for its page)	now	-	change
-mixer	BTN_EDIT	hold	the mixer's second page: pan, track filter, master compressor	planned	6	PRD 2.2
+mixer	BTN_EDIT	hold	the selected track's channel: KNOB 1-4 set LOW HIGH FILT PAN (heard from phase 6); letting go returns to the levels	now	-	PRD 2.2
 glo-held	WHITE_1-4	press	focus track 1..4 (the white keys don't play while GLO is held)	now	-	change
 glo-held	ENC_K1-4	turn	the four track levels; letting go of GLO returns to the page	now	-	change
 glo-held	BTN_GLO	release	back to the page if something was done or it was held past HOLD; else the mixer stays up	now	-	change

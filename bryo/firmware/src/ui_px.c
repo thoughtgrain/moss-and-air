@@ -181,7 +181,8 @@ static void px_chevrons(int32_t cx, int32_t cy, int32_t v, uint16_t c)
 enum {
     PK_KNOB, PK_FADER, PK_ATTACK, PK_DECAY, PK_SUSTAIN, PK_RELEASE, PK_START, PK_LENGTH, PK_SPEED, PK_LAYERS,
     PK_SQUARE, PK_DOTS, PK_BOWTIE, PK_LOOP, PK_MIX, PK_DRIVE, PK_STAIRS, PK_NOISE, PK_TONE, PK_CLOCK, PK_ROOM,
-    PK_SHAPE, PK_FOLD, PK_SKEW, PK_SMOOTH, PK_STEPS, PK_SLEW, PK_SWING, PK_KEYS
+    PK_SHAPE, PK_FOLD, PK_SKEW, PK_SMOOTH, PK_STEPS, PK_SLEW, PK_SWING, PK_KEYS, PK_SHELF_LO, PK_SHELF_HI, PK_FILTER,
+    PK_PAN
 };
 
 /* the waveform shapes WAVE's SHAPE picks, at phase p (0..63 a cycle), x1000 */
@@ -200,6 +201,57 @@ static int32_t px_clip(int32_t x, int32_t g)
 {
     int32_t k = x * g / 1000, a = k < 0 ? -k : k;
     return k * (1000 + g) / (1000 + a) * 1000 / g;
+}
+
+/* The channel strip's response at x of w dots (8 octaves, left to right), in tenths of a dB: LOW and HIGH shelves
+ * (+-12 dB, turning over around 2/8 and 6/8 of the width), FILT's low-pass (left of 0: its corner moves left from
+ * the top end) or high-pass (right of 0: from the bottom end), 12 dB an octave past the corner. A shelf of only
+ * LOW or HIGH is what PK_SHELF_* draw, with the other values left at 0. */
+static int32_t ch_resp(const int16_t *ch, int32_t x, int32_t w)
+{
+    int32_t lo = clamp((w * 30 / 100 - x) * 1000 / (w * 12 / 100 + 1) + 500, 0, 1000);   /* 1000 under the shelf */
+    int32_t hi = clamp((x - w * 70 / 100) * 1000 / (w * 12 / 100 + 1) + 500, 0, 1000);
+    int32_t db = ch[CH_LOW] * lo / 100 + ch[CH_HIGH] * hi / 100, f = ch[CH_FILT], c;
+    if (f < 0) {
+        c = w - (-f) * w * 85 / 10000;                   /* the low-pass corner, from the top down to 15 % */
+        if (x > c)
+            db -= (x - c) * 960 / w;                     /* 12 dB / octave, an octave being w / 8 dots */
+    } else if (f > 0) {
+        c = f * w * 85 / 10000;
+        if (x < c)
+            db -= (c - x) * 960 / w;
+    }
+    return db;
+}
+
+/* a fader that is also a meter: the frame, the live level rising inside it (m of 19 dots), and the level set
+ * with the knob as two notches either side, pointing in (they move; the fill moves on its own) */
+static void px_meter_fader(int32_t x, int32_t y, int32_t ratio, int32_t m, uint16_t c)
+{
+    int32_t i, ly = y + 20 - ratio * 19 / 1000;
+    px_frame(x + 8, y, 6, 21, c, 1);
+    for (i = 1; i < 20; i += 3) {
+        px_dot(x + 4, y + i, px_dim);
+        px_dot(x + 17, y + i, px_dim);
+    }
+    if (m > 0)
+        px_box(x + 10, y + 20 - m, 2, m, c);
+    for (i = 0; i < 3; i++) {                            /* the notches: little arrowheads, 3 dots deep */
+        px_line(x + 5 + i, ly - (2 - i), x + 5 + i, ly + (2 - i), c, 1);
+        px_line(x + 16 - i, ly - (2 - i), x + 16 - i, ly + (2 - i), c, 1);
+    }
+}
+
+/* 0..w on a log scale (-48 dB .. 0 dBFS) of a peak word (the ISR's track meters) */
+static int32_t meter_w(int32_t peak, int32_t w)
+{
+    int32_t lg = 0, v;
+    if (peak < 128)
+        return 0;
+    while ((peak >> lg) > 1)
+        lg++;
+    v = lg * 8 + (((peak << 3) >> lg) & 7);
+    return clamp((v - 56) * w / 64, 0, w);
 }
 
 static void px_picto(uint32_t kind, int32_t x, int32_t y, const pdesc_t *d, int32_t v, uint16_t c)
@@ -489,6 +541,30 @@ static void px_picto(uint32_t kind, int32_t x, int32_t y, const pdesc_t *d, int3
         px_line(x, b + 1, x + 21, b + 1, m, 2);
         break;
     }
+    case PK_SHELF_LO:                                    /* a shelf: that end lifted or cut */
+    case PK_SHELF_HI:
+    case PK_FILTER: {                                    /* the filter: low-pass left of 0, high-pass right */
+        int16_t ch[NCH] = {0, 0, 0, 0};
+        int32_t py = 0;
+        ch[kind == PK_SHELF_LO ? CH_LOW : kind == PK_SHELF_HI ? CH_HIGH : CH_FILT] = (int16_t)v;
+        px_line(x, cy, x + 21, cy, m, 2);
+        for (i = 0; i <= 21; i++) {
+            int32_t yy = clamp(cy - ch_resp(ch, i, 22) * 8 / 120, y, b);
+            if (i)
+                px_line(x + i - 1, py, x + i, yy, c, 1);
+            py = yy;
+        }
+        break;
+    }
+    case PK_PAN: {                                       /* the place between the speakers */
+        int32_t p = x + 11 + v * 9 / 100;
+        px_text(x, y + 1, PXF_3, "L", c);
+        px_text(x + 19, y + 1, PXF_3, "R", c);
+        px_line(x + 1, cy + 3, x + 20, cy + 3, m, 2);
+        px_line(x + 11, cy + 1, x + 11, cy + 5, m, 1);
+        px_box(p - 1, cy + 1, 3, 5, c);
+        break;
+    }
     case PK_KEYS: {                                      /* an octave of keys with the root lit */
         static const int8_t WHITE[12] = {0, -1, 1, -1, 2, 3, -1, 4, -1, 5, -1, 6};
         static const int8_t BLACK_AT[5] = {0, 1, 3, 4, 5};   /* the white key each black one follows */
@@ -520,6 +596,7 @@ static const uint8_t DEV_PK[NDEV][4] = {
     {PK_DRIVE, PK_STAIRS, PK_NOISE, PK_TONE},        /* COLOR: DRIVE CRUSH NOISE TONE */
     {PK_CLOCK, PK_LOOP, PK_ROOM, PK_DECAY},          /* SPACE: TIME FDBK SIZE DECAY */
 };
+static const uint8_t CH_PK[NCH] = {PK_SHELF_LO, PK_SHELF_HI, PK_FILTER, PK_PAN};
 static const uint8_t ME_PK[NME][4] = {
     {PK_KNOB, PK_SHAPE, PK_FOLD, PK_SKEW},           /* WAVE: RATE SHAPE FOLD SKEW */
     {PK_KNOB, PK_SMOOTH, PK_BOWTIE, PK_FADER},       /* RANDOM: RATE SMTH SPRD BIAS */

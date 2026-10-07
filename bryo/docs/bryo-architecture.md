@@ -359,14 +359,23 @@ After phase 1, two changes to the screen, from your review:
     way a loop close to self-oscillation smears. Every point stays within 2 dots of the circle, so however wild it
     gets it never leaves its box or touches its neighbours. The label sits under it (4 letters, Elektron-style: `STRT`, `TUNE`, `DRIV`, `SWNG`), the value
     under that in the dim ink.
-  - **The plot below** speaks the same language (TAPE is a reel-to-reel: two reels, two guides, and the run between
-    the guides is the whole tape, with the loop bracketed on it; the first version was a dashed strip that read as
-    a road): 1-dot lines, square nodes where a value sits, dotted drop
+  - **The plot below** speaks the same language (TAPE is a reel-to-reel with the reels close over the middle, so it
+    reads in proportion; the run along the bottom is the whole tape with the sample drawn on it, lit inside the
+    loop window and dim outside; the first version was a dashed strip that read as a road): 1-dot lines, square nodes where a value sits, dotted drop
     lines and guides, 3 x 5 labels under the stretch they name (the ADSR page is the clearest example of the
     pattern). Messages show as an inverted box over the plot, so the title never moves.
   - **Kept as it was:** the region signatures (a region redraws only when what it shows changes), the
     mappings each plot uses (they're still the DSP's), and the update path. UPDATE MODE moved onto the grid
     too; HARDWARE CALIBRATION keeps Felucca's look since it's a one-time setup screen.
+- **The mixer carries its meters in the faders, and each track has a channel strip.** On the mixer the four
+  pictograms are faders: two notches show the level you set, and the fill inside is the track's live meter, so
+  one glance gives both. That freed the panel below for the selected track's channel: LOW and HIGH shelves
+  (+-12 dB), FILT (one knob, DJ-style: low-pass to the left of 0, high-pass to the right, 0 is open) and PAN.
+  Below the faders they're drawn as one response curve over 8 octaves with a node on each corner, plus two
+  speaker bars for the pan. Hold EDIT on the mixer and KNOB 1-4 set them; let go and you're back on the levels.
+  The values live per track in `tp[].ch` (`firmware/src/param.c`) and the curve is `ch_resp()` in
+  `firmware/src/ui_px.c`, which is the response the mixer DSP will apply in phase 6. The PRD's master
+  compressor, which the old plan had on this page, still needs a home; I left it for phase 6.
 
 The controls are mapped in `docs/controls.tsv` (one row per context, control and gesture, with status and
 phase), validated by `tests/controls_check.py`, which also fails if a physical control goes unmentioned.

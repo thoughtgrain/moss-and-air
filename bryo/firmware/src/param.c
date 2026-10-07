@@ -10,7 +10,7 @@
 
 enum { DEV_SRC, DEV_GRAIN, DEV_RESO, DEV_COLOR, DEV_SPACE, NDEV };
 #define NSLOT 4u                 /* modulator slots per track */
-enum { F_PCT, F_BIPCT, F_ST, F_NOTE, F_MS, F_NUM };   /* how a value prints */
+enum { F_PCT, F_BIPCT, F_ST, F_NOTE, F_MS, F_NUM, F_DB };   /* how a value prints */
 
 typedef struct {
     const char *label;
@@ -38,6 +38,15 @@ static const pdesc_t DEV_P[NDEV][4] = {
         {"SIZE", 0, 100, 50, F_PCT}, {"DEC", 0, 100, 40, F_PCT}},
 };
 
+/* each track's channel strip, after the chain and before the mix (the mixer's second page: EDIT held under GLO).
+ * LOW and HIGH are shelves (+-12 dB); FILT is one knob for two filters, a low-pass turning left of 0 and a
+ * high-pass turning right of it (the DJ-mixer way: 0 is open); PAN is the place in the stereo field. The mixer
+ * DSP (phase 6) applies them; until then they are values you can set and see. */
+enum { CH_LOW, CH_HIGH, CH_FILT, CH_PAN, NCH };
+static const pdesc_t CH_P[NCH] = {
+    {"LOW", -12, 12, 0, F_DB}, {"HIGH", -12, 12, 0, F_DB}, {"FILT", -100, 100, 0, F_BIPCT}, {"PAN", -100, 100, 0, F_BIPCT},
+};
+
 /* the modulator engines (phase 7 runs them; their knobs exist now so a slot's page can be edited) */
 enum { ME_WAVE, ME_RANDOM, ME_ADSR, ME_SEQ, NME };
 static const char *const ME_NAME[NME] = {"WAVE", "RANDOM", "ADSR", "SEQ"};
@@ -54,6 +63,7 @@ typedef struct {
     int16_t dev[NDEV][4];
     uint8_t engine[NSLOT];       /* the engine each slot runs */
     int16_t mod[NSLOT][4];       /* the slot's own knobs */
+    int16_t ch[NCH];             /* the channel strip */
 } track_params_t;
 static track_params_t tp[NTRK];
 
@@ -64,6 +74,8 @@ static void param_defaults(void)
         for (d = 0; d < NDEV; d++)
             for (k = 0; k < 4u; k++)
                 tp[t].dev[d][k] = DEV_P[d][k].def;
+        for (k = 0; k < NCH; k++)
+            tp[t].ch[k] = CH_P[k].def;
         for (s = 0; s < NSLOT; s++) {
             tp[t].engine[s] = SLOT_DEF_ENGINE[s];
             for (k = 0; k < 4u; k++)
@@ -118,6 +130,15 @@ static void param_format(const pdesc_t *d, int32_t v, char *val, const char **un
     case F_MS:
         fmt_int(val, v);
         *unit = "ms";
+        break;
+    case F_DB:
+        if (v > 0) {
+            val[0] = '+';
+            fmt_int(val + 1, v);
+        } else {
+            fmt_int(val, v);
+        }
+        *unit = "dB";
         break;
     default:
         fmt_int(val, v);

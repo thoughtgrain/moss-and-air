@@ -7,8 +7,9 @@
  * a value sits, dotted drop lines and guides, small 3 x 5 labels under the plot, the way a groovebox draws an
  * envelope. The page's last-turned knob gets its label inverted here too, where the picture has one.
  *
- *   TAPE       a reel-to-reel: the run between the guides is the whole tape, the loop window bracketed on it
- *              (STRT, LEN), the playhead under it, SPD as chevrons between the reels, DUB as layers over the window
+ *   TAPE       a reel-to-reel, reels close over the middle: the run along the bottom is the whole tape with the
+ *              sample on it, lit inside the loop window (STRT, LEN, bracketed); the playhead over it; between the
+ *              reels SPD as chevrons and DUB as the layers kept
  *   GRAIN      the sample in TAPE's loop window, lit where grains read it (SIZE, scaled by PITCH), and one solid
  *              block per grain (DENS) in a stereo lane under it (SPRD, up = left, down = right)
  *   RESONATOR  the response over 8 octaves: peaks on ROOT's harmonics (a node on each, the root's filled and
@@ -17,7 +18,7 @@
  *              transfer curve (DRIVE, CRUSH), the noise (NOISE) or the tone filter (TONE)
  *   SPACE      the dry hit, the echoes as stems with nodes (TIME apart, falling by FDBK) and the reverb tail
  *   MOD slots  WAVE's shape, RANDOM's steps, ADSR's envelope with its stages named, SEQ's 16 steps
- *   MIXER      the four tracks' meters, mutes, and which one is focused
+ *   MIXER      the selected track's channel: EQ and filter as one response, the pan as two speakers
  *
  * The DSP of each device will use the same mappings as these pictures (the comments name them), so what is drawn
  * is what is heard. Integer only: no float on the device. */
@@ -67,63 +68,7 @@ static void vz_poly(const int32_t *xs, const int32_t *ys, int32_t n, uint16_t c,
 }
 
 /* -------------------------------------------------------------- TAPE --- */
-/* a reel: its flange (dotted), the tape wound on it (solid), the hub and three spokes */
-static void vz_reel(int32_t cx, int32_t cy)
-{
-    int32_t k;
-    px_ring(cx, cy, 11, px_dim, 2);
-    px_ring(cx, cy, 8, px_ink, 1);
-    px_ring(cx, cy, 7, px_ink, 1);
-    px_box(cx - 1, cy - 1, 3, 3, px_ink);
-    for (k = 0; k < 3; k++)
-        px_line(px_px(cx, 2, 8 + k * 21), px_py(cy, 2, 8 + k * 21), px_px(cx, 5, 8 + k * 21), px_py(cy, 5, 8 + k * 21), px_ink, 1);
-}
-
-static void viz_tape(const int16_t *v, uint32_t f)
-{
-    /* A reel-to-reel: the tape leaves the left reel, runs over two guides along the bottom (the whole tape, start
-     * to end, left to right) and winds onto the right reel. The loop window is bracketed on that run (START, LEN),
-     * the playhead sits under where playing starts (the end when reversed), SPEED is the chevrons between the
-     * reels, and DUB the layers stacked over the window. */
-    int32_t ga = 24, gb = 95, run = 31, x0 = ga + v[0] * (gb - ga) / 100, x1 = x0 + v[1] * (gb - ga) / 100, k;
-    int32_t lit = (v[3] + 33) / 34;
-    if (x1 > gb)
-        x1 = gb;
-    vz_reel(13, 12);
-    vz_reel(106, 12);
-    px_line(5, 18, ga - 1, run - 1, px_ink, 1);                        /* off the left reel, onto the right */
-    px_line(gb + 1, run - 1, 114, 18, px_ink, 1);
-    vz_node(ga, run, 0);                                               /* the guides */
-    vz_node(gb, run, 0);
-    px_line(ga + 2, run - 1, gb - 2, run - 1, px_ink, 1);              /* the run: a band two dots deep */
-    px_line(ga + 2, run + 1, gb - 2, run + 1, px_ink, 1);
-    px_line(ga + 2, run, gb - 2, run, px_dim, 2);                      /* empty (phase 2: the take shows here) */
-    for (k = 0; k < 2; k++) {                                          /* the brackets, 2 dots wide when turned */
-        int32_t x = k ? x1 : x0, s = k ? -1 : 1, w = f == (uint32_t)k ? 2 : 1;
-        px_box(k ? x - w + 1 : x, run - 4, w, 9, px_ink);
-        px_line(x, run - 4, x + 2 * s, run - 4, px_ink, 1);
-        px_line(x, run + 4, x + 2 * s, run + 4, px_ink, 1);
-    }
-    {   /* the playhead: a triangle under the run, pointing up at where playing starts */
-        int32_t px = v[2] < 0 ? x1 - 2 : x0 + 2;
-        for (k = 0; k < 3; k++)
-            px_box(px - k, run + 3 + k, 1 + 2 * k, 1, px_ink);
-    }
-    for (k = 0; k < 3; k++) {                                          /* DUB: the layers kept, over the window */
-        int32_t lx = x0 + 2 + k * 2, rx = x1 - 2 - k * 2;
-        if (rx > lx)
-            px_line(lx, run - 6 - k * 2, rx, run - 6 - k * 2, k < lit ? px_ink : px_dim, k < lit ? 1 : 2);
-    }
-    px_chevrons(60, 11, v[2], px_ink);                                 /* SPEED, between the reels */
-    vz_label(x0, "IN", f == 0u);
-    if (x1 - x0 >= 22 || f == 1u)
-        vz_label(x1, "OUT", f == 1u);
-    if (f == 3u || f == 2u)
-        vz_label(60, f == 3u ? "DUB" : "SPD", 1);
-}
-
-/* ------------------------------------------------------------- GRAIN --- */
-/* The sample under the grains: its envelope at position pos (0..1000 of the tape), 0..1000. Until TAPE records
+/* The sample on the tape (TAPE draws it on the run, GRAIN under its grains): its envelope at position pos (0..1000 of the tape), 0..1000. Until TAPE records
  * (phase 2) it is a demo: a loop of eight decaying hits with some grit, and the panel says DEMO; phase 2 reads the
  * track's tape here instead, and the drawing stays as it is. */
 #define TAPE_MS 3300                 /* a tape's length (docs/bryo-architecture.md: 36 KiB of ADPCM at 22.05 kHz) */
@@ -134,6 +79,63 @@ static int32_t tape_env(uint32_t t, int32_t pos)
     return clamp(e + (int32_t)(h >> 26) * 4 - 120, 30, 1000);
 }
 
+/* a reel: its flange (dotted), the tape wound on it (solid), the hub and three spokes */
+static void vz_reel(int32_t cx, int32_t cy)
+{
+    int32_t k;
+    px_ring(cx, cy, 10, px_dim, 2);
+    px_ring(cx, cy, 7, px_ink, 1);
+    px_ring(cx, cy, 6, px_ink, 1);
+    px_box(cx - 1, cy - 1, 3, 3, px_ink);
+    for (k = 0; k < 3; k++)
+        px_line(px_px(cx, 2, 8 + k * 21), px_py(cy, 2, 8 + k * 21), px_px(cx, 4, 8 + k * 21), px_py(cy, 4, 8 + k * 21), px_ink, 1);
+}
+
+static void viz_tape(const int16_t *v, uint32_t f)
+{
+    /* A reel-to-reel, the reels close in over the middle the way a deck's are: the tape leaves the left reel, drops
+     * to a guide, runs the full width along the bottom and climbs back to the right reel. That run is the whole
+     * tape, start to end, and the sample is drawn on it: lit inside the loop window (STRT, LEN, bracketed), dim
+     * outside. The playhead sits over where playing starts (the end when reversed); between the reels, SPD as
+     * chevrons and DUB as the layers kept. */
+    int32_t r0 = 6, r1 = 114, rw = r1 - r0, top = 20, bot = 35, mid = 27, k, x;
+    int32_t x0 = r0 + v[0] * rw / 100, x1 = x0 + v[1] * rw / 100, lit = (v[3] + 33) / 34;
+    if (x1 > r1)
+        x1 = r1;
+    vz_reel(36, 9);
+    vz_reel(84, 9);
+    px_line(29, 12, r0 - 1, top, px_ink, 1);                          /* down from the left reel to its guide */
+    px_line(91, 12, r1 + 1, top, px_ink, 1);                          /* and up from the right guide */
+    vz_node(r0 - 2, top, 0);
+    vz_node(r1 + 2, top, 0);
+    px_line(r0, top, r1, top, px_ink, 1);                             /* the run's edges */
+    px_line(r0, bot, r1, bot, px_ink, 1);
+    for (x = r0 + 1; x < r1; x++) {                                    /* the sample (phase 2: the take) */
+        int32_t a = tape_env(sys.sel, (x - r0) * 1000 / rw) * 6 / 1000;
+        px_box(x, mid - a, 1, 2 * a + 1, x >= x0 && x <= x1 ? px_ink : px_dim);
+    }
+    for (k = 0; k < 2; k++) {                                          /* the brackets, 2 dots wide when turned */
+        int32_t bx = k ? x1 : x0, s = k ? -1 : 1, w = f == (uint32_t)k ? 2 : 1;
+        px_box(k ? bx - w + 1 : bx, top - 2, w, bot - top + 5, px_ink);
+        px_line(bx, top - 2, bx + 2 * s, top - 2, px_ink, 1);
+        px_line(bx, bot + 2, bx + 2 * s, bot + 2, px_ink, 1);
+    }
+    {   /* the playhead: a triangle over the run, pointing down at where playing starts */
+        int32_t px = v[2] < 0 ? x1 - 3 : x0 + 3;
+        for (k = 0; k < 3; k++)
+            px_box(px - 2 + k, top - 5 + k, 5 - 2 * k, 1, px_ink);   /* (rows 15..17: under the reels' flanges) */
+    }
+    px_chevrons(60, 5, v[2], px_ink);                                  /* SPD, between the reels */
+    for (k = 0; k < 3; k++)                                            /* DUB: the layers kept, under it */
+        px_line(52 + k * 2, 16 - k * 2, 68 - k * 2, 16 - k * 2, k < lit ? px_ink : px_dim, k < lit ? 1 : 2);
+    vz_label(x0, "IN", f == 0u);
+    if (x1 - x0 >= 22 || f == 1u)
+        vz_label(x1, "OUT", f == 1u);
+    if (f == 3u || f == 2u)
+        vz_label(60, f == 3u ? "DUB" : "SPD", 1);
+}
+
+/* ------------------------------------------------------------- GRAIN --- */
 static void viz_grain(const int16_t *v, uint32_t f)
 {
     /* The view spans TAPE's loop window (START, LEN). DENS 0..100: 1..25 grains, placed along the loop. Each grain
@@ -430,48 +432,44 @@ static void viz_seq(const int16_t *v, uint32_t f)
 }
 
 /* ------------------------------------------------------------- MIXER --- */
-static int32_t meter_w(int32_t peak, int32_t w)        /* 0..w on a log scale (-48 dB .. 0 dBFS) */
+/* the selected track's channel strip (the mixer, both pages: the levels above, this below): its EQ and filter as
+ * one response over 8 octaves (ch_resp, ui_px.c: what the mixer DSP will apply), a node on each shelf's corner and
+ * on the filter's, and the pan as two speakers whose bars show each side's gain */
+static void viz_channel(uint32_t f)
 {
-    int32_t lg = 0, v;
-    if (peak < 128)
-        return 0;
-    while ((peak >> lg) > 1)
-        lg++;
-    v = lg * 8 + (((peak << 3) >> lg) & 7);
-    return clamp((v - 56) * w / 64, 0, w);
-}
-
-/* a speaker, crossed when muted, with sound waves when not */
-static const char *const PX_SPK[7] = {"..#....", ".##....", "###....", "###....", "###....", ".##....", "..#...."};
-
-static void viz_mixer(void)
-{
-    uint32_t t;
-    for (t = 0; t < NTRK; t++) {
-        int32_t x = 30 * (int32_t)t, m = meter_w(track_rt[t].peak, 10), k;
-        char n[3] = {'T', (char)('1' + t), 0};
-        for (k = 0; k < 10; k++) {                                     /* the meter: 10 segments from the floor */
-            int32_t yy = DY1 - 2 - k * 3;
-            if (k < m)
-                px_box(x + 5, yy, 6, 2, track[t].mute ? px_dim : px_ink);
-            else
-                px_line(x + 5, yy, x + 10, yy, px_dim, 2);
-        }
-        px_art(x + 15, DY1 - 9, PX_SPK, 7, track[t].mute ? px_dim : px_ink);
-        if (track[t].mute) {
-            px_line(x + 19, DY1 - 8, x + 23, DY1 - 4, px_ink, 1);
-            px_line(x + 19, DY1 - 4, x + 23, DY1 - 8, px_ink, 1);
-        } else {
-            px_line(x + 19, DY1 - 7, x + 19, DY1 - 5, px_ink, 1);
-            px_line(x + 21, DY1 - 9, x + 21, DY1 - 3, px_ink, 1);
-        }
-        if (t == sys.sel)                                              /* the focused track: inverted, not colour */
-            px_tag(x + 4, DLBL - 1, PXF_3, n, px_ink, px_bg);
-        else
-            px_text(x + 5, DLBL, PXF_3, n, px_ink);
-        if (track[t].mute)
-            px_text(x + 15, DLBL, PXF_3, "MUTE", px_ink);
+    const int16_t *ch = tp[sys.sel].ch;
+    int32_t w = 88, x, py = 0, mid = 15, k, pl, pr;
+    int on = ui.chan;                                  /* the labels invert only where the knobs set them */
+    px_line(DX0, mid, DX0 + w, mid, px_dim, 2);       /* 0 dB */
+    px_line(DX0, mid - 10, DX0 + w, mid - 10, px_dim, 4);   /* +12 */
+    px_line(DX0, mid + 10, DX0 + w, mid + 10, px_dim, 4);   /* -12 */
+    for (x = 0; x <= w; x++) {
+        int32_t y = clamp(mid - ch_resp(ch, x, w + 1) * 10 / 120, DY0, DY1);
+        if (x)
+            px_line(DX0 + x - 1, py, DX0 + x, y, px_ink, 1);
+        py = y;
     }
+    for (k = 0; k < 2; k++) {                          /* the shelves' corners */
+        int32_t cx = DX0 + w * (k ? 70 : 30) / 100;
+        vz_node(cx, clamp(mid - ch_resp(ch, cx - DX0, w + 1) * 10 / 120, DY0, DY1), 0);
+    }
+    if (ch[CH_FILT]) {                                 /* the filter's corner, solid */
+        int32_t c = ch[CH_FILT] < 0 ? w - (-ch[CH_FILT]) * w * 85 / 10000 : ch[CH_FILT] * w * 85 / 10000;
+        vz_node(DX0 + c, clamp(mid - ch_resp(ch, c, w + 1) * 10 / 120, DY0, DY1), 1);
+    }
+    /* the pan: L and R, each side's gain as a bar (equal power: cos and sin of the place) */
+    pl = px_cos((ch[CH_PAN] + 100) * 8 / 100) * 22 / 1000;
+    pr = px_sin((ch[CH_PAN] + 100) * 8 / 100) * 22 / 1000;
+    px_text(98, DY0, PXF_3, "L", px_ink);
+    px_text(113, DY0, PXF_3, "R", px_ink);
+    px_box(98, DY1 - pl, 3, pl, px_ink);
+    px_box(113, DY1 - pr, 3, pr, px_ink);
+    px_line(97, DY1 + 1, 117, DY1 + 1, px_dim, 2);
+    px_box(106 + ch[CH_PAN] * 6 / 100, DY1 - 3, 3, 3, px_ink);   /* where it sits */
+    vz_label(DX0 + w * 30 / 100 - 4, "LOW", on && f == 0u);
+    vz_label(DX0 + w * 70 / 100 + 4, "HIGH", on && f == 1u);
+    vz_label(DX0 + w / 2, "FILT", on && f == 2u);
+    vz_label(107, "PAN", on && f == 3u);
 }
 
 /* a message: an inverted box over the panel, its words wrapped at 18 characters */
@@ -509,9 +507,9 @@ static uint32_t viz_sig(void)
     if (ui.msg_t)
         return hash_str(h ^ 0x5A5Au, ui.msg);
     if (ui.view == VIEW_MIXER) {
-        for (t = 0; t < NTRK; t++)
-            h = (h ^ ((uint32_t)meter_w(track_rt[t].peak, 10) | (uint32_t)track[t].mute << 8)) * 16777619u;
-        return h;
+        for (t = 0; t < NCH; t++)
+            h = (h ^ (uint32_t)(tp[sys.sel].ch[t] + 32768)) * 16777619u;
+        return h + ui.chan * 977u;
     }
     for (k = 0; k < 4u; k++) {
         int16_t *vp;
@@ -536,7 +534,7 @@ static void draw_viz(void)
     if (ui.msg_t) {
         viz_message();
     } else if (ui.view == VIEW_MIXER) {
-        viz_mixer();
+        viz_channel(f);
     } else {
         for (k = 0; k < 4u; k++) {
             ui_page(k, &vp);

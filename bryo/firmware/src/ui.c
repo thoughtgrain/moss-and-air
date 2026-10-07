@@ -4,7 +4,7 @@
  *
  *   y   0..25   header  [T1] COLOR, [M1] WAVE in bold, the inverted tempo bar with REC and the transport  (0..12)
  *   y  26..123  strip   KNOB 1..4 as pictograms that show their values, the labels and the values (PRD 5)  (13..61)
- *   y 124..215  viz     what the page does, drawn from its values (ui_viz.c); the mixer's meters; messages  (62..107)
+ *   y 124..215  viz     what the page does, drawn from its values (ui_viz.c); the mixer: the track's channel  (62..107)
  *   y 216..239  footer  what the keys do now, the track and its octave                                      (108..119)
  *
  * The tracks themselves live in the mixer (GLO): hold GLO and press white key 1..4 to pick one. The pages don't
@@ -36,6 +36,7 @@ static struct {
     uint8_t glo_held;                /* GLO held: the mixer is up, white keys 1..4 pick the track */
     uint8_t glo_used;                /* .. and something was done while it was held (so letting go closes it) */
     uint8_t glo_latched;             /* the mixer stays up (GLO tapped) */
+    uint8_t chan;                    /* EDIT held on the mixer: the knobs set the selected track's channel strip */
     uint32_t glo_t0;                 /* when GLO went down */
     uint8_t rec;                     /* REC armed, bit per track (TAPE recording arrives in phase 2) */
     uint8_t force;                   /* redraw everything next frame */
@@ -73,6 +74,10 @@ static const pdesc_t *ui_page(uint32_t k, int16_t **vp)
     static const pdesc_t LEVEL[NTRK] = {{"T1", 0, 127, 100, F_NUM}, {"T2", 0, 127, 100, F_NUM},
                                         {"T3", 0, 127, 100, F_NUM}, {"T4", 0, 127, 100, F_NUM}};
     static int16_t lv[NTRK];
+    if (ui.view == VIEW_MIXER && ui.chan) {
+        *vp = &p->ch[k];
+        return &CH_P[k];
+    }
     if (ui.view == VIEW_MIXER) {
         lv[k] = track[k].level;
         *vp = &lv[k];
@@ -104,7 +109,7 @@ static void draw_head(void)
     uint32_t sig;
     int slot = ui.kind == FOCUS_SLOT && ui.view == VIEW_PAGE;
     if (ui.view == VIEW_MIXER)
-        str_cpy(ti, "MIXER", sizeof ti);
+        str_cpy(ti, ui.chan ? "CHANNEL" : "MIXER", sizeof ti);
     else
         str_cpy(ti, slot ? ME_NAME[tp[sys.sel].engine[ui.slot]] : DEV_NAME[ui.dev], sizeof ti);
     if (slot) {
@@ -155,7 +160,8 @@ static void draw_head(void)
 
 /* ------------------------------------------------------------- strip --- */
 /* four cells of 30 dots: the knob's pictogram (it shows the value), its label, the value. The page's last-turned
- * knob has its label inverted. */
+ * knob has its label inverted. On the mixer each cell is a track: a fader whose notches are the level set and whose
+ * fill is the live meter (so the strip redraws as the meters move); EDIT held: the selected track's channel. */
 static void draw_strip(void)
 {
     uint32_t k, sig = 2166136261u + ux.theme * 3u;
@@ -163,10 +169,10 @@ static void draw_strip(void)
         int16_t *vp;
         const pdesc_t *d = ui_page(k, &vp);
         sig = hash_str(sig, d->label) + (uint32_t)(*vp + 32768) * 2654435761u;
-        if (ui.view == VIEW_MIXER)
-            sig += track[k].mute * 977u;
+        if (ui.view == VIEW_MIXER && !ui.chan)          /* the faders carry the meters */
+            sig = (sig ^ (uint32_t)(meter_w(track_rt[k].peak, 19) | track[k].mute << 8)) * 16777619u;
     }
-    sig += (ui.last < 4u && ui.view == VIEW_PAGE ? ui.last + 1u : 0u) * 7919u + ui.view * 31u + ui.kind * 131u +
+    sig += (ui.last < 4u ? ui.last + 1u : 0u) * 7919u + ui.view * 31u + ui.chan * 5u + ui.kind * 131u +
            ui.dev * 1031u + (ui.kind == FOCUS_SLOT ? tp[sys.sel].engine[ui.slot] * 65537u : 0u);
     if (!ui.force && sig == ui.sig_strip)
         return;
@@ -177,13 +183,16 @@ static void draw_strip(void)
         int16_t *vp;
         const pdesc_t *d = ui_page(k, &vp);
         int32_t x = 30 * (int32_t)k, v = *vp;
-        uint32_t pk = ui.view == VIEW_MIXER ? PK_FADER
+        uint32_t pk = ui.view == VIEW_MIXER ? CH_PK[k]
                     : ui.kind == FOCUS_SLOT ? ME_PK[tp[sys.sel].engine[ui.slot]][k] : DEV_PK[ui.dev][k];
-        int mute = ui.view == VIEW_MIXER && track[k].mute;
+        int lvl = ui.view == VIEW_MIXER && !ui.chan, mute = lvl && track[k].mute;
         char val[12];
         const char *unit;
-        px_picto(pk, x + 4, 2, d, v, mute ? px_dim : px_ink);
-        if (ui.view == VIEW_PAGE && ui.last == k)
+        if (lvl)                                       /* the level set, and the live meter inside it */
+            px_meter_fader(x + 4, 2, param_ratio(d, v), meter_w(track_rt[k].peak, 19), mute ? px_dim : px_ink);
+        else
+            px_picto(pk, x + 4, 2, d, v, px_ink);
+        if (ui.last == k)
             px_tag(x + (30 - px_text_w(PXF_5, d->label)) / 2 - 1, 26, PXF_5, d->label, px_ink, px_bg);
         else
             px_text_c(x, 30, 27, PXF_5, d->label, px_ink);
@@ -206,7 +215,7 @@ static void draw_foot(void)
     if (ui.glo_held)
         str_cpy(a, "KEYS 1-4: TRACK", sizeof a);
     else if (ui.view == VIEW_MIXER)
-        str_cpy(a, "KNOBS: LEVELS", sizeof a);
+        str_cpy(a, ui.chan ? "KNOBS: CHANNEL" : "HOLD EDIT: CHANNEL", sizeof a);
     else
         str_cpy(a, "KEYS: TEST TONE", sizeof a);
     str_cpy(b, "T", sizeof b);                        /* "T2 OCT 3": the track, its keys' octave */
