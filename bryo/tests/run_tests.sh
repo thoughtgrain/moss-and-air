@@ -8,7 +8,8 @@
 #   firmware type check  bryo.c with clang -fsyntax-only -m32 in every build-flag combination (a stand-in for the
 #                        JieLi compiler's front end: types, declarations, missing symbols); build.py's register rules
 #   hardware layer       storage (A/B, torn writes), the input scan (debounce, encoders, LEDs), the TRS MIDI parser,
-#                        USB audio (descriptors with and without CDC, ring, packets), every USB descriptor layout
+#                        USB audio (descriptors with and without CDC, ring, packets), every USB descriptor layout,
+#                        the drive's USB side (tests/usb_msc_test.c: Mass Storage descriptors, bulk-only, SCSI)
 #   display              text against the reference renderer, palettes (contrast, GREY gray, MONO neutral)
 #   Bryo                 tests/bryo_host.c: the chain (silence, pitch, mute, release, shedding, the ceiling), the
 #                        input mapping, every screen; tests/ui_golden.py: the screens pixel-identical
@@ -44,7 +45,7 @@ if command -v clang >/dev/null 2>&1; then
         [ "$n" = 0 ] || { cat "$OUT/typecheck.log"; return 1; }
     }
     run "firmware type check: bryo.c, default flags" tc
-    run "firmware type check: no CDC console" tc -DFELUCCA_CDC=0
+    run "firmware type check: the console instead of the drive (BRYO_MSC=0, a debug build)" tc -DBRYO_MSC=0
     run "firmware type check: no USB audio" tc -DFELUCCA_UAC=0
     run "firmware type check: no TRS MIDI" tc -DFELUCCA_UART=0
     run "firmware type check: RAM only (no flash, no OTA)" tc -DFELUCCA_OTA=0 -DFELUCCA_FLASH=0
@@ -69,6 +70,10 @@ $CC -DT_CDC=1 -DHALF_FRAMES=$HALF -o "$OUT/uac_test" tests/uac_test.c
 run "USB audio: descriptors (with CDC), ring and packets" "$OUT/uac_test"
 $CC -DT_CDC=0 -DHALF_FRAMES=$HALF -o "$OUT/uac_test_nocdc" tests/uac_test.c
 run "USB audio: descriptors (without CDC), ring and packets" "$OUT/uac_test_nocdc"
+for u in 0 1; do
+    $CC -DT_UAC=$u -o "$OUT/usb_msc_test" tests/usb_msc_test.c
+    run "the drive's USB side (UAC $u): descriptors, bulk-only transport, SCSI" "$OUT/usb_msc_test"
+done
 for v in 1.1.0.1 1.1.1.1 1.1.2.1 1.1.3.1 1.1.0.0 1.1.2.0 1.0.0.1 1.0.1.1 1.0.0.0 0.1.0.1 0.0.0.1; do
     IFS=. read -r t_cdc t_uac t_lay t_on <<EOF
 $v

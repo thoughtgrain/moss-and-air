@@ -237,6 +237,7 @@ static void fm1_main(void)
         felucca_dbg.stage = 1;
         ui_input();
         settings_poll();                              /* queued settings save: only while stopped */
+        vdisk_poll();                                 /* the drive: a fresh volume, a dropped WAV to its place */
         felucca_dbg.stage = 2;
         ui_leds();
         ui_draw();

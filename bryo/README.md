@@ -58,6 +58,15 @@ its stages, SEQ numbers its steps). The last knob you turned has its label inver
 Not there yet, and on purpose: Felucca's MENU (palette, speaker EQ, LEDs, USB serial, ABOUT and credits). Your
 settings from Felucca are kept and still apply; the menu to change them comes back in a later phase.
 
+## Files over USB
+
+Plugged in, the FM-1 also shows up as a small drive named BRYO. Copy `TAPE1.WAV` .. `TAPE4.WAV` off to keep what
+each track plays; copy a WAV on to load it: named `TAPE2.WAV` it replaces track 2's tape, any other name goes to
+one of six user reels in flash (named after the file). Any WAV works (the FM-1 keeps the first 3.3 s, mono).
+New files show up after you eject and plug back in; deleting a file on the computer doesn't delete the sound.
+The details, and why it works this way, are in [docs/bryo-architecture.md](docs/bryo-architecture.md) under
+"Files over USB".
+
 ## Building and testing
 
 The device build needs JieLi's toolchain and SDK, as Felucca's did: see [BUILDING.md](BUILDING.md), then

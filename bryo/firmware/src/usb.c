@@ -17,13 +17,21 @@
  * endpoint (EP4), so a computer can record the FM-1 over the cable. audio.c
  * fills a ring (uac_render_start, uac_tap); uac_service sends one packet per
  * USB frame from the TIMER5 ISR, nested in the render too (main.c). The
- * update loader leaves both off: MIDI only. */
+ * update loader leaves both off: MIDI only.
+ * BRYO_MSC=1 (Bryo's app) adds a USB Mass Storage function on EP3 instead of the console: the drive (msc.c, the
+ * transport; vdisk.c, the disk). The console and the drive share EP3, so a build has one or the other. */
 #include "../hal/fm1_usb.h"   /* registers; relative, so the loader and the host tests find it too */
 #ifndef FELUCCA_CDC
 #define FELUCCA_CDC 0
 #endif
 #ifndef FELUCCA_UAC
 #define FELUCCA_UAC 0
+#endif
+#ifndef BRYO_MSC
+#define BRYO_MSC 0
+#endif
+#if BRYO_MSC && FELUCCA_CDC
+#error "BRYO_MSC and FELUCCA_CDC both use EP3: build one or the other"
 #endif
 enum { S_FADDR = 0, S_POWER = 1, S_INTRTX1 = 2, S_INTRTX2 = 3, S_INTRRX1 = 4, S_INTRRX2 = 5, S_INTRUSB = 6,
        S_INTRTX1E = 7, S_INTRTX2E = 8, S_INTRRX1E = 9, S_INTRRX2E = 10, S_INTRUSBE = 11, S_FRAME1 = 12,
@@ -34,10 +42,23 @@ enum { S_FADDR = 0, S_POWER = 1, S_INTRTX1 = 2, S_INTRTX2 = 3, S_INTRRX1 = 4, S_
 static uint8_t ep0buf[64 + 4] __attribute__((aligned(4)));
 static uint8_t ep1tx[64] __attribute__((aligned(4)));
 static uint8_t ep1rx[64 + 4] __attribute__((aligned(4)));
-#if FELUCCA_CDC
-static uint8_t ep2tx[8] __attribute__((aligned(4)));
+#if FELUCCA_CDC || BRYO_MSC
 static uint8_t ep3tx[64] __attribute__((aligned(4)));
 static uint8_t ep3rx[64 + 4] __attribute__((aligned(4)));
+#endif
+#if BRYO_MSC
+/* the disk behind the drive (vdisk.c in the app) */
+static uint32_t msc_blocks(void);
+static int msc_ready(void);
+static void msc_read(uint32_t lba, uint8_t *b);
+static void msc_write(uint32_t lba, const uint8_t *b);
+static void msc_eject(void);
+static void msc_attached(void);              /* a bus reset: the disk is made afresh (in the main loop) */
+#include "msc.c"
+static uint8_t msc_rx_pend;
+#endif
+#if FELUCCA_CDC
+static uint8_t ep2tx[8] __attribute__((aligned(4)));
 /* serial rings: in = host -> console (ISR writes), out = console -> host (ISR reads) */
 #define CI_N 256u
 #define CO_N 2048u
@@ -237,6 +258,25 @@ static void midi_out_event(uint32_t pkt)            /* from the audio ISR */
     18, 1, (bcdusb) & 0xFF, (bcdusb) >> 8, (cls), (sub), (proto), 64, 0x09, 0x12, FELUCCA_USB_PID & 0xFF, \
     FELUCCA_USB_PID >> 8, BCD_LO(cdc), 0x03, 1, 2, 0, 1
 
+#if BRYO_MSC
+/* the drive: audio + MIDI, then Mass Storage (SCSI, bulk-only) on EP3; device class 0, each interface says what it
+ * is (no IAD: a one-interface function needs none); bcdDevice x.x9 so a host never reuses another layout's */
+#define D_MSC(i)                                                                                     \
+    9, 4, (i), 0, 2, 0x08, 0x06, 0x50, 0,                  /* mass storage, SCSI, bulk-only */          \
+    7, 5, 0x03, 2, 64, 0, 0,                               /* EP3 OUT bulk */                           \
+    7, 5, 0x83, 2, 64, 0, 0,                               /* EP3 IN bulk */
+#define MSC_LEN 23
+#define CFG_LEN_MSC (9 + AUD_LEN + MSC_LEN)
+static const uint8_t DEV_DESC_MSC[18] = {18, 1, 0x00, 0x02, 0, 0, 0, 64, 0x09, 0x12, FELUCCA_USB_PID & 0xFF,
+                                         FELUCCA_USB_PID >> 8, 0x10 * FELUCCA_UAC + 0x09, 0x03, 1, 2, 0, 1};
+static const uint8_t CFG_DESC_MSC[] = {D_CFG(CFG_LEN_MSC, AUD_NIF + 1), D_AUDIO(0) D_MSC(AUD_NIF)};
+typedef char cfg_msc_len_ok[sizeof CFG_DESC_MSC == CFG_LEN_MSC ? 1 : -1];
+static uint8_t usb_msc_on = 1;                             /* the drive is presented (read by the TIMER5 ISR) */
+#define MSC_ON usb_msc_on
+#else
+#define MSC_ON 0
+#endif
+
 /* without the console (FELUCCA_CDC=0, or usb_cdc_on = 0): class 0, no IAD, as a plain USB-MIDI / audio device */
 #define CFG_LEN_PLAIN (9 + AUD_LEN)
 static const uint8_t DEV_DESC_PLAIN[18] = {D_DEV(0x0110, 0, 0, 0, 0)};
@@ -300,10 +340,24 @@ static int get_desc(uint32_t wvalue, const uint8_t **d, uint16_t *l)
 {
     switch (wvalue >> 8) {
     case 1:
+#if BRYO_MSC
+        if (MSC_ON) {
+            *d = DEV_DESC_MSC;
+            *l = 18;
+            return 1;
+        }
+#endif
         *d = USB_CDC_ON ? DEV_DESC : DEV_DESC_PLAIN;
         *l = 18;
         return 1;
     case 2:
+#if BRYO_MSC
+        if (MSC_ON) {
+            *d = CFG_DESC_MSC;
+            *l = (uint16_t)sizeof CFG_DESC_MSC;
+            return 1;
+        }
+#endif
         *d = USB_CDC_ON ? CFG_DESC : CFG_DESC_PLAIN;
         *l = (uint16_t)(USB_CDC_ON ? sizeof CFG_DESC : sizeof CFG_DESC_PLAIN);
         return 1;
@@ -422,6 +476,23 @@ static void ep1_config(void)
     fm1_usb_ep_enable((1u << 2) | (1u << 3));
     cdc.rx_pend = 1;                                    /* look once: a packet may already wait */
 no_cdc:;
+#endif
+#if BRYO_MSC
+    if (MSC_ON) {                                       /* the drive: EP3 bulk both ways */
+        fm1_usb_ep_txbuf(3, ep3tx);
+        fm1_usb_ep_rxbuf(3, ep3rx);
+        sie_wr(S_INDEX, 3);
+        sie_wr(S_TXMAXP, 0xFF);
+        sie_wr(S_TXCSR1, 0x48);
+        sie_wr(S_TXCSR2, 0);
+        sie_wr(S_RXMAXP, 0xFF);
+        sie_wr(S_RXCSR1, 0x90);
+        sie_wr(S_RXCSR2, 0);
+        sie_wr(S_INTRRX1E, 0x0A);
+        fm1_usb_ep_enable(1u << 3);
+        msc_reset();
+        msc_rx_pend = 1;
+    }
 #endif
 #if FELUCCA_UAC
     fm1_usb_ep4_txbuf(ep4tx);
@@ -585,7 +656,7 @@ static void ep0_service(void)
         e0_send(zero2, 1, wlength);
         return;
     case 0x0201: {                                      /* CLEAR_FEATURE(ENDPOINT_HALT): data toggle reset */
-        uint32_t ep = s[4] & 0x0Fu, last = USB_CDC_ON ? 3u : 1u;
+        uint32_t ep = s[4] & 0x0Fu, last = USB_CDC_ON || MSC_ON ? 3u : 1u;
 #if FELUCCA_UAC
         if (wvalue == 0 && s[4] == 0x84u)
             goto ack;                                   /* isochronous: no halt, no toggle */
@@ -628,6 +699,18 @@ static void ep0_service(void)
         goto ack;
 #endif
 #if FELUCCA_UAC
+#if BRYO_MSC
+    case 0xA1FE:                                        /* GET MAX LUN: one drive */
+        if (!MSC_ON)
+            goto stall;
+        e0_send(zero2, 1, wlength);
+        return;
+    case 0x21FF:                                        /* BULK-ONLY MASS STORAGE RESET */
+        if (!MSC_ON)
+            goto stall;
+        msc_reset();
+        goto ack;
+#endif
     case 0x2201:                                        /* SET_CUR, endpoint: sampling frequency */
         if (s[4] != 0x84u || s[3] != 1u)
             goto stall;
@@ -918,6 +1001,46 @@ static void ep3_tx(void)                                /* <= 63 bytes per packe
 }
 #endif
 
+#if BRYO_MSC
+static void ep3_msc_rx(void)                            /* a packet to the drive (it always takes one) */
+{
+    uint32_t csr, n;
+    sie_wr(S_INDEX, 3);
+    csr = sie_rd(S_RXCSR1) | (sie_rd(S_RXCSR2) << 8);
+    if (!(csr & 1u)) {
+        msc_rx_pend = 0;
+        return;
+    }
+    n = sie_rd(S_RXCOUNT1) | (sie_rd(S_RXCOUNT2) << 8);
+    if (n > 64u)
+        n = 64u;
+    msc_rx_pend = 0;
+    fm1_usb_rx_sync();
+    msc_rx(ep3rx, n);
+    csr = (csr & ~0x164u) | 0x10u;
+    sie_wr(S_RXCSR1, csr & 0xFFu);
+    sie_wr(S_RXCSR2, csr >> 8);
+}
+
+static void ep3_msc_tx(void)                            /* the drive's next packet, when EP3 IN is free */
+{
+    uint32_t csr, n;
+    if (msc.phase != MS_IN && msc.phase != MS_CSW)
+        return;
+    sie_wr(S_INDEX, 3);
+    csr = sie_rd(S_TXCSR1);
+    if (csr & 0x01u)
+        return;
+    if (csr & 0x80u)
+        sie_wr(S_TXCSR1, csr & ~0x80u);
+    n = msc_tx(ep3tx);
+    if (!n)
+        return;
+    fm1_usb_ep_send(3, ep3tx, n);
+    sie_wr(S_TXCSR1, sie_rd(S_TXCSR1) | 0x01u);
+}
+#endif
+
 #if FELUCCA_UAC
 /* ---- the audio input: audio.c produces (render start, then each block), TIMER5 consumes ---- */
 static __attribute__((noinline)) void uac_render_start(void)   /* audio ISR, before a half buffer renders */
@@ -1115,6 +1238,12 @@ static void usb_poll(void)                              /* TIMER5 ISR, 2 kHz */
         cdc.e0_rx = 0;
         cdc.rx_pend = 0;
 #endif
+#if BRYO_MSC
+        msc_reset();
+        msc.ejected = 0;                                /* plugged in again (or re-enumerated): the medium is back */
+        msc_rx_pend = 0;
+        msc_attached();
+#endif
 #if FELUCCA_UAC
         uac.e0_rx = 0;
         uac_stream(0);
@@ -1140,6 +1269,15 @@ static void usb_poll(void)                              /* TIMER5 ISR, 2 kHz */
             ep3_rx();
         if (cdc.dtr)
             ep3_tx();
+    }
+#endif
+#if BRYO_MSC
+    if (usb.config && MSC_ON) {
+        if (ir & 0x08u)
+            msc_rx_pend = 1;
+        if (msc_rx_pend)
+            ep3_msc_rx();
+        ep3_msc_tx();
     }
 #endif
 #if FELUCCA_UAC

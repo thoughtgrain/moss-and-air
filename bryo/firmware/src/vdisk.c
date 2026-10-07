@@ -62,6 +62,10 @@ static struct {
     vfile_t f[1u + NTRK + NREEL + USLOT_N];
     uint32_t nf;
     tape_rd_t rd;                           /* the block being read out as a WAV */
+    volatile uint8_t ready;                 /* the volume is made (msc.c answers "becoming ready" until then) */
+    volatile uint8_t remount;               /* usb.c: a bus reset; the main loop makes the volume afresh */
+    volatile uint8_t busy;                  /* the main loop is committing a capture: no new commands */
+    volatile uint8_t msg;                   /* a capture started (the main loop says so on screen) */
 } vd __attribute__((section(".pool")));
 
 static tape_ram_t vd_inbox __attribute__((section(".pool")));   /* a dropped WAV, encoded */
@@ -178,6 +182,7 @@ static void vdisk_mount(void)
         vd.cache_lba[i] = 0xFFFFFFFFu;
     vd.nf = 0;
     vd.rd.ok = 0;
+    vd.ready = 1;
     vd_add("README", 0, VF_README, 0, sizeof VD_README - 1u);
     for (i = 0; i < NTRK; i++) {
         tape_view(i, &v);
@@ -474,7 +479,7 @@ static void cap_start(uint32_t lba)
     cap.dest = -1;
     cap.next = lba;
     cap.clus0 = 2u + (lba - VD_DATA) / VD_SPC;
-    ui_message("RECEIVING A WAV OVER USB");
+    vd.msg = 1;                              /* (usb_poll's context: the main loop draws the message) */
 }
 
 /* the root directory as written: is the capture named? (LFN entries before an 8.3 entry give its long name) */
@@ -563,11 +568,20 @@ static void vdisk_write(uint32_t lba, const uint8_t *b)
     memcpy(vd.cache[i], b, VD_SEC);
 }
 
-/* main loop: a finished capture, once named (or after VD_NAME_MS without a name), to where it goes */
+static void vdisk_commit(void);
+
+/* main loop: a fresh volume after a bus reset; a finished capture, once named (or after VD_NAME_MS without a name),
+ * to where it goes */
 static void vdisk_poll(void)
 {
-    char m[40];
-    int32_t s;
+    if (vd.remount) {                        /* plugged in: the volume as Bryo holds it now */
+        vd.remount = 0;
+        vdisk_mount();
+    }
+    if (vd.msg) {
+        vd.msg = 0;
+        ui_message("RECEIVING A WAV OVER USB");
+    }
     if (!cap.on || !cap.done)
         return;
     if (cap.failed || !cap.nblk) {
@@ -577,7 +591,17 @@ static void vdisk_poll(void)
     }
     if (!cap.named && (uint32_t)(fm1_ms - cap.t_done) < VD_NAME_MS)
         return;
+    vd.busy = 1;                             /* (the inbox is read below: no new command until it's done) */
     cap.on = 0;
+    vdisk_commit();
+    vd.busy = 0;
+}
+
+/* the finished capture in the inbox, to its place (main loop, vd.busy) */
+static void vdisk_commit(void)
+{
+    char m[40];
+    int32_t s;
     if (cap.dest >= 0 && cap.dest < (int8_t)NTRK) {             /* a track's tape */
         uint32_t t = (uint32_t)cap.dest, i;
         tape_ctl[t].rec_ok = 0;
@@ -617,3 +641,17 @@ static void vdisk_poll(void)
     str_cpy(m + str_len(m), uslot_name[s], 6);
     ui_message(m);
 }
+
+#if BRYO_MSC
+/* the drive's disk, for msc.c (usb_poll's context) */
+static uint32_t msc_blocks(void) { return VD_TOTAL; }
+static int msc_ready(void) { return vd.ready && !vd.busy; }
+static void msc_read(uint32_t lba, uint8_t *b) { vdisk_read(lba, b); }
+static void msc_write(uint32_t lba, const uint8_t *b) { vdisk_write(lba, b); }
+static void msc_eject(void) {}
+static void msc_attached(void)
+{
+    vd.ready = 0;
+    vd.remount = 1;
+}
+#endif

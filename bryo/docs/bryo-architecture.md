@@ -472,6 +472,57 @@ Not in this phase, on purpose: **user reel slots in flash and the upload tool** 
 projects use, so they move to phase 8 with projects), and **the `source_t` interface** (TAPE is the only source
 until SYNTH and POLY arrive in phase 3, which is when the interface earns its keep).
 
+## Files over USB: the FM-1 as a drive (2026-10-07)
+
+You asked for projects and sounds to be easy to move when the FM-1 is plugged in, both ways, instead of an upload
+tool. So the FM-1 shows up as a small USB drive named BRYO, next to its audio and MIDI ports. Copy files off to
+keep them; copy a WAV on to load it. Built and tested on the host; not tried on a computer yet.
+
+What's on it (`firmware/src/vdisk.c` makes the volume on the fly; nothing is stored twice):
+
+| File | What it is |
+| --- | --- |
+| `TAPE1.WAV` .. `TAPE4.WAV` | what each track plays now (its tape or its reel) |
+| `REEL1.WAV` .. `REEL4.WAV` | the factory reels (read-only) |
+| `USER1.WAV` .. `USER6.WAV` | your reels, the slots that hold a sound |
+| `README.TXT` | how the drive works, in short |
+
+How it's built, and why:
+
+- **No real file system, a made-up one.** The flash has 296 KiB for data and blocks interrupts while it writes, so a
+  real FAT on it would be tiny and would stall the audio on every write. Instead the volume (FAT12, 63.5 MiB, 16 KiB
+  clusters) is generated when it's read: the WAVs are decoded from the tapes' ADPCM as the computer reads them, at
+  22,050 Hz mono 16-bit. Each file gets a 2 MiB region, so a bigger file written over it still lands in one run.
+- **Writing is best effort, and I say so on the drive.** A drive never hears "here is a file called X": it sees
+  sectors. A sector that starts with a WAV header starts a capture; the sectors after it (and wherever the FAT
+  chains the file next) are converted as they arrive (any rate, 8 to 32-bit PCM or float, any channels, to the
+  tape format) into a RAM inbox. The directory entry that points at it names it: `TAPEn.WAV` replaces track n's
+  tape; `USERn.WAV` replaces your reel n; any other name goes to the first free user reel, named after the file;
+  a file never named in the root (dropped into a folder) goes to a free reel after 3 s. The FAT and directory the
+  computer writes are kept in RAM and read back as written, so its view holds until you eject.
+- **Your reels live in flash** (`firmware/src/reel.c`): six slots of 40 KiB in Felucca's user-sample area, in the
+  tape's format, played straight from flash. A slot's header is written last as the commit record, so a save torn
+  by a power cut leaves the slot empty, never half old and half new. TAPE 3's REEL lists them by name.
+- **USB:** a Mass Storage interface (SCSI, bulk-only) on EP3, where the serial console was. The console needs EP3
+  too, so it's now a debug build (`BRYO_MSC=0`). The transport is `firmware/src/msc.c` (no registers, tested with a
+  RAM disk in `tests/usb_msc_test.c`); `usb.c` adds the descriptors and the EP3 glue. The device presents audio +
+  MIDI + the drive with device class 0 and its own bcdDevice (3.x9), so a computer doesn't reuse what it learned
+  about another layout. The update loader doesn't build any of it and stays byte for byte as it was.
+
+What to expect:
+
+- **Speed:** one 64-byte packet each way per poll (2 kHz): about 128 KB/s, so a 3.3 s WAV copies in a few seconds.
+- **New files appear after you eject and plug back in.** The drive doesn't tell the computer its contents changed.
+- **Deleting a file in Finder or Explorer doesn't delete the sound.** Clear it on the FM-1 (POLY held).
+- **A WAV longer than 3.3 s is cut to 3.3 s; stereo is mixed to mono.** That's the tape's size and format.
+- **Saving a user reel stutters the sound for about a second** (the flash turns interrupts off while it writes),
+  and the screen says SAVING.
+- **What can still go wrong:** a WAV scattered across an old, full volume whose FAT is written after its data can
+  arrive garbled. Copying onto a freshly plugged-in drive avoids it.
+
+Recording from the computer (USB audio in) is next, then a Bluetooth feasibility check: the radio's stack is
+JieLi's closed binary, and linking it into GPL-3.0 firmware is a licensing question to settle before any code.
+
 ## Build order
 
 Each phase ends in something you can flash and hear or see, and each is its own commit series.

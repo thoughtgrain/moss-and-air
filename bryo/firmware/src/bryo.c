@@ -13,8 +13,11 @@
 #ifndef FELUCCA_OTA_DRYRUN
 #define FELUCCA_OTA_DRYRUN 0     /* 1 = stage, ask "success", then undo: no record, no reset */
 #endif
+#ifndef BRYO_MSC
+#define BRYO_MSC 1               /* the drive: USB Mass Storage on EP3 (msc.c, vdisk.c) */
+#endif
 #ifndef FELUCCA_CDC
-#define FELUCCA_CDC 1            /* USB CDC-ACM serial console */
+#define FELUCCA_CDC (!BRYO_MSC)  /* USB CDC-ACM serial console: EP3 too, so a debug build (BRYO_MSC=0) */
 #endif
 #ifndef FELUCCA_UAC
 #define FELUCCA_UAC 1            /* USB audio input: the master output, 16-bit stereo 44.1 kHz (usb.c) */
