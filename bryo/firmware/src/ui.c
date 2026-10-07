@@ -37,9 +37,10 @@ static struct {
     uint8_t glo_held;                /* GLO held: the mixer is up, white keys 1..4 pick the track */
     uint8_t glo_used;                /* .. and something was done while it was held (so letting go closes it) */
     uint8_t glo_latched;             /* the mixer stays up (GLO tapped) */
+    uint8_t poly_held, save_held;    /* the POLY key (clear the tape) and SAVE (undo) held, waiting for HOLD */
+    uint32_t poly_t0, save_t0;
     uint8_t chan;                    /* EDIT held on the mixer: the knobs set the selected track's channel strip */
     uint32_t glo_t0;                 /* when GLO went down */
-    uint8_t rec;                     /* REC armed, bit per track (TAPE recording arrives in phase 2) */
     uint8_t force;                   /* redraw everything next frame */
     uint8_t msg_t;
     char msg[40];
@@ -117,7 +118,7 @@ static void draw_head(void)
         box[1] = (char)('1' + ui.slot);
     }
     fmt_int(bpm, sys.bpm);
-    sig = hash_str(hash_str(hash_str(2166136261u, ti), bpm), box) + pages * 977u + ui.page * 61u + sys.playing * 7u + ((ui.rec >> sys.sel) & 1u) * 131u +
+    sig = hash_str(hash_str(hash_str(2166136261u, ti), bpm), box) + pages * 977u + ui.page * 61u + sys.playing * 7u + ((sys.rec >> sys.sel) & 1u) * 131u +
           ux.theme * 3u;
     if (!ui.force && sig == ui.sig_head)
         return;
@@ -153,7 +154,7 @@ static void draw_head(void)
         } else {
             px_box(x, 4, 4, 5, px_bg);
         }
-        if ((ui.rec >> sys.sel) & 1u) {                    /* REC armed: a round dot */
+        if ((sys.rec >> sys.sel) & 1u) {                    /* REC armed: a round dot */
             x -= 7;
             px_box(x + 1, 4, 3, 5, px_bg);
             px_box(x, 5, 5, 3, px_bg);
@@ -228,7 +229,7 @@ static void draw_foot(void)
     else if (ui.view == VIEW_MIXER)
         str_cpy(a, ui.chan ? "KNOBS: CHANNEL" : "HOLD EDIT: CHANNEL", sizeof a);
     else
-        str_cpy(a, "KEYS: TEST TONE", sizeof a);
+        str_cpy(a, "KEYS: SLICES", sizeof a);
     str_cpy(b, "T", sizeof b);                        /* "T2 OCT 3": the track, its keys' octave */
     fmt_int(b + 1, (int32_t)sys.sel + 1);
     str_cpy(b + str_len(b), " OCT ", 8);

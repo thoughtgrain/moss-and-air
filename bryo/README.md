@@ -12,11 +12,14 @@ Felucca's own README is kept in [docs/FELUCCA-README.md](docs/FELUCCA-README.md)
 
 ## Where it stands
 
-**Phase 1 of 10: the skeleton.** Bryo boots on the FM-1, and installing it, going back to official V15, UPDATE
-MODE and HARDWARE CALIBRATION all work as they did. The screen shows the PRD's 4-value strip for every device
-and modulator slot of every track, the knobs move the values, and the white keys play a test tone through the
-whole audio path. None of the devices make sound yet; that's phases 2 to 7. The plan, with what the hardware
-allows and the order of the work, is in [docs/bryo-architecture.md](docs/bryo-architecture.md).
+**Phase 2 of 10: TAPE.** Each of the four tracks has a tape: a 3.3 s loop in RAM (IMA ADPCM at 22.05 kHz) that
+plays when you press PLAY. To start, track n plays factory reel n (BEAT, KEYS, AIR, PLUK, made from material in
+this repository). The loop window, speed, reverse and half speed work; the white keys play 16 slices of the loop;
+REC records the other tracks onto the focused track's tape, with DUB for sound on sound; holding the POLY key clears
+a tape and holding SAVE undoes it. The devices after the tape (GRAIN, RESONATOR, COLOR, SPACE) and the modulators
+don't make sound yet; that's phases 3 to 7. Phases 1 and 2 are verified on the host only: nothing has been built
+for or run on an FM-1 yet. The plan, with what the hardware allows and the order of the work, is in
+[docs/bryo-architecture.md](docs/bryo-architecture.md).
 
 What works on the panel now (every control, in every context, with what's planned for it, is in
 [docs/controls.tsv](docs/controls.tsv): tab separated, one row per control and gesture, checked by
@@ -24,7 +27,7 @@ What works on the panel now (every control, in every context, with what's planne
 
 | Control | What it does |
 | --- | --- |
-| HOME | the track's source (TAPE); again for TAPE 2 |
+| HOME | the track's source (TAPE); again for TAPE 2 and TAPE 3 (REEL: the tape or a factory reel) |
 | EDIT | GRAIN; again: GRAIN 2, RESONATOR |
 | FX | COLOR; again: COLOR 2, SPACE, SPACE 2 |
 | LFO ENV SEQ ARP | modulator slots 1 to 4; again for the slot's next page; held + SELECT: the slot's engine (LFO, ADSR, SEQ, FOLLOW) |
@@ -33,10 +36,14 @@ What works on the panel now (every control, in every context, with what's planne
 | EDIT, held on the mixer | KNOB 1 to 4 set the selected track's LOW, HIGH, FILT and PAN |
 | KNOB 1 to 4 | the four values on screen |
 | SELECT | the tempo |
-| PLAY, REC | start and stop; arm the track (recording arrives with TAPE) |
+| PLAY | start and stop: every tape plays its loop from the start |
+| REC | arm the focused track: while playing it records the other tracks onto its tape (a reel is copied on first) |
+| SAVE, held | undo the last tape clear |
 | OCT− / OCT+ | the white keys' octave |
-| White keys | a test tone on the focused track |
+| White keys | the 16 slices of the focused track's loop (stopped: the slice plays once) |
 | Black keys OP1 to OP4 | track mutes |
+| Black keys OP5, OP6 | the focused tape's reverse and half speed |
+| Black key POLY, held 0.5 s | clear the focused track's tape |
 | SCL | nothing yet (proposed: hold for the system menu) |
 
 The screen is drawn like a groovebox OLED: a grid of 2 x 2 px dots, bitmap type, white on black (your palette

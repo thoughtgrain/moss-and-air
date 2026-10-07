@@ -70,7 +70,7 @@ static void ui_leds(void)
         ready = 1;
     }
     led_put(nl, panel.btn[focus_btn()], 1);
-    led_put(nl, panel.btn[B_REC], (ui.rec >> sys.sel) & 1u);
+    led_put(nl, panel.btn[B_REC], (sys.rec >> sys.sel) & 1u);
     led_put(nl, panel.btn[B_OCTDN], track[sys.sel].octave < 3u);
     led_put(nl, panel.btn[B_OCTUP], track[sys.sel].octave > 3u);
     for (k = 0; k < 27u; k++) {
@@ -191,11 +191,19 @@ static void on_button(uint32_t b)
     case B_PLAY:
         sys.playing = (uint8_t)!sys.playing;
         break;
-    case B_REC:
-        ui.rec ^= (uint8_t)(1u << sys.sel);
+    case B_REC:                                         /* arm: the tape made ready (a reel copied in) */
+        if ((sys.rec >> sys.sel) & 1u) {
+            sys.rec &= (uint8_t)~(1u << sys.sel);
+            tape_unprepare(sys.sel);
+        } else if (tape_prepare(sys.sel)) {
+            sys.rec |= (uint8_t)(1u << sys.sel);
+        } else {
+            ui_message("TAPE HAS A TAKE: CLEAR IT (HOLD POLY)");
+        }
         break;
-    case B_SAVE:
-        ui_message("SAVE: PROJECTS ARRIVE IN PHASE 8");
+    case B_SAVE:                                        /* tap: save (phase 8); held: undo the last clear */
+        ui.save_held = 1;
+        ui.save_t0 = fm1_ms;
         break;
     case B_OCTDN:
         if (track[sys.sel].octave > 1u)
@@ -212,8 +220,48 @@ static void on_button(uint32_t b)
 
 static void on_black(uint32_t k)
 {
-    if (k <= BK_OP4)
+    int16_t *tk = tp[sys.sel].dev[DEV_SRC];
+    if (k <= BK_OP4) {
         track[k].mute = (uint8_t)!track[k].mute;
+    } else if (k == BK_OP5 || k == BK_OP6) {           /* the focused track's tape: reverse, half speed */
+        tk[k == BK_OP5 ? TK_REV : TK_HALF] = (int16_t)!tk[k == BK_OP5 ? TK_REV : TK_HALF];
+    } else if (k == BK_POLY) {                          /* held HOLD: clear the focused track's tape */
+        ui.poly_held = 1;
+        ui.poly_t0 = fm1_ms;
+        ui_message("KEEP HOLDING POLY TO CLEAR THE TAPE");
+    }
+}
+
+/* the POLY key and SAVE held long enough: the clear and its undo; let go sooner: the clear is off, SAVE is a tap */
+static void hold_keys(void)
+{
+    uint32_t hold = HOLD_MS[settings_hold % 4u], k;     /* (POLY: half a second, PRD 2.3) */
+    if (ui.poly_held) {
+        for (k = 0; k < 27u && KEY_BLACK[k] != BK_POLY; k++)
+            ;
+        if (!((fm1_in.notes >> k) & 1u)) {
+            ui.poly_held = 0;
+            ui.msg_t = 1;                               /* (the message ends next frame) */
+        } else if ((uint32_t)(fm1_ms - ui.poly_t0) >= 500u) {
+            char m[40] = "TRACK ";
+            ui.poly_held = 0;
+            tape_clear(sys.sel);
+            sys.rec &= (uint8_t)~(1u << sys.sel);
+            fmt_int(m + 6, (int32_t)sys.sel + 1);
+            str_cpy(m + str_len(m), " CLEARED. HOLD SAVE: UNDO", 28);
+            ui_message(m);
+        }
+    }
+    if (ui.save_held) {
+        int held = (int)((fm1_in.buttons >> panel.btn[B_SAVE]) & 1u);
+        if (!held) {
+            ui.save_held = 0;
+            ui_message("SAVE: PROJECTS ARRIVE IN PHASE 8");
+        } else if ((uint32_t)(fm1_ms - ui.save_t0) >= hold) {
+            ui.save_held = 0;
+            ui_message(tape_undo_clear() >= 0 ? "CLEAR UNDONE" : "NOTHING TO UNDO");
+        }
+    }
 }
 
 /* KNOB c turned by d detents: the value on screen; it lights up (hot) for half a second */
@@ -250,6 +298,7 @@ static void ui_input(void)
         ui.chan = 0;                                    /* EDIT let go: the mixer's levels again */
         ui.last = 0xFF;
     }
+    hold_keys();
     if (ui.glo_held && (((released >> panel.btn[B_GLO]) & 1u) || !((fm1_in.buttons >> panel.btn[B_GLO]) & 1u)))
         glo_up();
     sys.keys_live = (uint8_t)!ui.glo_held;            /* under GLO the white keys pick, they don't play */

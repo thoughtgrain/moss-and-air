@@ -10,7 +10,7 @@
  *   TAPE       a reel-to-reel, reels close over the middle: the run along the bottom is the whole tape with the
  *              sample on it, lit inside the loop window (STRT, LEN, bracketed); the playhead over it; between the
  *              reels SPD as chevrons and DUB as the layers kept
- *   GRAIN      the sample in TAPE's loop window, lit where grains read it (SIZE, scaled by PITCH), and one solid
+ *   GRAIN      the sound in TAPE's loop window, lit where grains read it (SIZE, scaled by PITCH), and one solid
  *              block per grain (DENS) in a stereo lane under it (SPRD, up = left, down = right)
  *   RESONATOR  the response over 8 octaves: peaks on ROOT's harmonics (a node on each, the root's filled and
  *              named), as sharp as FDBK makes them, rolling off with DAMP, blended with the dotted dry line by MIX
@@ -93,17 +93,6 @@ static void vz_poly(const int32_t *xs, const int32_t *ys, int32_t n, uint16_t c,
 }
 
 /* -------------------------------------------------------------- TAPE --- */
-/* The sample on the tape (TAPE draws it on the run, GRAIN under its grains): its envelope at position pos (0..1000 of the tape), 0..1000. Until TAPE records
- * (phase 2) it is a demo: a loop of eight decaying hits with some grit, and the panel says DEMO; phase 2 reads the
- * track's tape here instead, and the drawing stays as it is. */
-#define TAPE_MS 3300                 /* a tape's length (docs/bryo-architecture.md: 36 KiB of ADPCM at 22.05 kHz) */
-static int32_t tape_env(uint32_t t, int32_t pos)
-{
-    int32_t d = pos % 125, e = d < 50 ? 1000 - d * 18 : 100 - (d - 50);   /* a hit every 1/8, ~50 ms decay */
-    uint32_t h = (uint32_t)pos * 2654435761u + t * 97u;
-    return clamp(e + (int32_t)(h >> 26) * 4 - 120, 30, 1000);
-}
-
 /* a reel: its flange (dotted), the tape wound on it (solid), the hub and three spokes */
 static void vz_reel(int32_t cx, int32_t cy)
 {
@@ -119,9 +108,10 @@ static void vz_reel(int32_t cx, int32_t cy)
 static void viz_tape(const int16_t *v, uint32_t f)
 {
     /* A reel-to-reel, the reels close in over the middle the way a deck's are, and under them the tape's run: the
-     * whole tape, start to end, and the sample is drawn on it: lit inside the loop window (STRT, LEN, bracketed), dim
-     * outside. The playhead sits over where playing starts (the end when reversed); between the reels, SPD as
-     * chevrons and DUB as the layers kept. */
+     * whole of what the track plays (its tape or a reel, named at the top left), its sound drawn on it from the
+     * blocks' peaks: lit inside the loop window (STRT, LEN, bracketed), dim outside. The playhead is where the head
+     * is while it runs (a dotted line through the run), else where playing starts (the end when reversed); between
+     * the reels, SPD as chevrons and DUB as the layers kept; REC armed is tagged at the top right. */
     int32_t r0 = 6, r1 = 114, rw = r1 - r0, top = 20, bot = 35, mid = 27, k, x;
     int32_t x0 = r0 + v[0] * rw / 100, x1 = x0 + v[1] * rw / 100, lit = (v[3] + 33) / 34;
     int32_t sp = v[2] * (v[5] ? -1 : 1) / (v[6] ? 2 : 1), gain = db_x1000(v[7]);   /* REV, HALF; GAIN */
@@ -133,7 +123,7 @@ static void viz_tape(const int16_t *v, uint32_t f)
     px_line(r0, top, r1, top, px_ink, 1);                             /* the run's edges */
     px_line(r0, bot, r1, bot, px_ink, 1);
     for (x = r0 + 1; x < r1; x++) {                                    /* the sample (phase 2: the take) */
-        int32_t a = clamp(tape_env(sys.sel, (x - r0) * 1000 / rw) * 6 / 1000 * gain / 1000, 0, 6);   /* (clips) */
+        int32_t a = clamp(tape_peak_at(sys.sel, (x - r0) * 1000 / rw) * 6 / 1000 * gain / 1000, 0, 6);   /* (clips) */
         px_box(x, mid - a, 1, 2 * a + 1, x >= x0 && x <= x1 ? px_ink : px_dim);
     }
     for (k = 0; k < 2; k++) {                                          /* the brackets, 2 dots wide when turned */
@@ -146,11 +136,18 @@ static void viz_tape(const int16_t *v, uint32_t f)
         px_line(x0 + 1, bot - 1, x0 + fw, top + 1, px_ink, 2);
         px_line(x1 - fw, top + 1, x1 - 1, bot - 1, px_ink, 2);
     }
-    {   /* the playhead: a triangle over the run, pointing down at where playing starts */
-        int32_t px = sp < 0 ? x1 - 3 : x0 + 3;
+    {   /* the playhead: a triangle over the run, where the head is (or where playing starts) */
+        int32_t hd = tape_head(sys.sel), px = hd >= 0 ? r0 + hd * rw / 1000 : sp < 0 ? x1 - 3 : x0 + 3;
         for (k = 0; k < 3; k++)
             px_box(px - 2 + k, top - 5 + k, 5 - 2 * k, 1, px_ink);   /* (rows 15..17: under the reels' flanges) */
+        if (hd >= 0) {                                 /* running: a cut through the sound, and its edges */
+            px_box(px - 1, top + 1, 3, bot - top - 1, px_bg);
+            px_line(px, top + 1, px, bot - 1, px_ink, 2);
+        }
     }
+    px_text(1, 0, PXF_3, tape_name(sys.sel), px_ink);                /* what it plays */
+    if ((sys.rec >> sys.sel) & 1u)
+        px_tag(105, 0, PXF_3, "REC", px_ink, px_bg);
     px_chevrons(60, 5, sp, px_ink);                                    /* SPD (with REV, HALF), between the reels */
     for (k = 0; k < 3; k++)                                            /* DUB: the layers kept, under it */
         px_line(52 + k * 2, 16 - k * 2, 68 - k * 2, 16 - k * 2, k < lit ? px_ink : px_dim, k < lit ? 1 : 2);
@@ -159,7 +156,7 @@ static void viz_tape(const int16_t *v, uint32_t f)
         vz_label(x1, "OUT", f == 1u);
     if (f == 3u || f == 2u)
         vz_label(60, f == 3u ? "DUB" : "SPD", 1);
-    if (f >= 4u && f < 8u)
+    if (f >= 4u && f < 12u)
         vz_ktag(78, DLBL - 1, &DEV_P[DEV_SRC][f], v[f]);
 }
 
@@ -172,7 +169,7 @@ static void viz_grain(const int16_t *v, uint32_t f)
      * (up = left). Solid blocks: the grains as the engine schedules them, without the window shape. */
     const int16_t *tv = tp[sys.sel].dev[DEV_SRC];
     int32_t n = 1 + v[1] * 24 / 100, i, x, g, gw = DW - 6;            /* (L and R at the right) */
-    int32_t start = tv[0] * 10, len = tv[1] * 10, loop_ms = len * TAPE_MS / 1000, oct = 1000, span;
+    int32_t start = tv[0] * 10, len = tv[1] * 10, loop_ms = len * tape_ms(sys.sel) / 1000, oct = 1000, span;
     int32_t gx[25], gy[25], mid = 11, amp = 10, lane = 28, jit = v[5] * 6 / 100, taper;
     char b[16];
     for (i = 0; i < v[2]; i++) oct = oct * 1059 / 1000;               /* 2^(st/12), 1/1000 */
@@ -184,7 +181,7 @@ static void viz_grain(const int16_t *v, uint32_t f)
         gy[g] = ((int32_t)(vz_rand() % 2001u) - 1000) * v[3] / 100;    /* -1000 (L) .. 1000 (R) */
     }
     for (x = DX0; x < DX0 + gw; x++) {                                 /* the sample: dim, lit where a grain reads */
-        int32_t a = tape_env(sys.sel, start + (x - DX0) * len / gw) * amp / 1000, lit = 0;
+        int32_t a = tape_peak_at(sys.sel, start + (x - DX0) * len / gw) * amp / 1000, lit = 0;
         for (g = 0; g < n && !lit; g++)
             lit = x >= gx[g] && x < gx[g] + span;
         px_box(x, mid - a, 1, 2 * a + 1, lit ? px_ink : px_dim);
@@ -221,7 +218,7 @@ static void viz_grain(const int16_t *v, uint32_t f)
     if (f >= 4u && f < 8u)
         vz_ktag(118, DLBL - 1, &DEV_P[DEV_GRAIN][f], v[f]);
     else
-        px_text(118 - px_text_w(PXF_3, "DEMO WAVE"), DLBL, PXF_3, "DEMO WAVE", px_dim);   /* (phase 2: the tape) */
+        px_text(118 - px_text_w(PXF_3, tape_name(sys.sel)), DLBL, PXF_3, tape_name(sys.sel), px_dim);   /* its source */
 }
 
 /* --------------------------------------------------------- RESONATOR --- */
@@ -585,7 +582,7 @@ static void viz_adsr(const int16_t *v, uint32_t f)
         vz_ktag(118, DY0 - 1, &ME_P[ME_ADSR][f], v[f]);
 }
 
-/* FOLLOW: the envelope of a sound. Until the tracks play (phase 2) the source is the demo tape's hits, dim; GAIN
+/* FOLLOW: the envelope of a sound: what the source track plays, from its tape's peaks, dim; GAIN
  * scales what goes in, RISE and FALL are how fast the envelope (solid) climbs and drops, HOLD samples it on the
  * tempo's divisions (steps), AMT and OFS place it, SPRD the right channel dotted */
 static void viz_follow(const int16_t *v, uint32_t f)
@@ -597,7 +594,7 @@ static void viz_follow(const int16_t *v, uint32_t f)
     char b[12];
     px_line(DX0, DY1 + 1, DX1, DY1 + 1, px_dim, 2);
     for (x = DX0; x <= DX1; x++) {
-        int32_t in = clamp(tape_env(t, (x - DX0) * 1000 / DW) * gain / 1000, 0, 1000), out, yy;
+        int32_t in = clamp(tape_peak_at(t, (x - DX0) * 1000 / DW) * gain / 1000, 0, 1000), out, yy;
         if ((x & 1) == 0)
             px_line(x, DY1, x, DY1 - in * (DH - 2) / 1000, px_dim, 1);   /* what it listens to */
         e += (in - e) * (in > e ? kr : kf) / 1000;
@@ -620,7 +617,7 @@ static void viz_follow(const int16_t *v, uint32_t f)
     if (f >= 1u && f < NPK)
         vz_ktag(118, DLBL - 1, &ME_P[ME_FOLLOW][f], v[f]);
     else
-        px_text(118 - px_text_w(PXF_3, "DEMO"), DLBL, PXF_3, "DEMO", px_dim);
+        px_text(118 - px_text_w(PXF_3, tape_name(t)), DLBL, PXF_3, tape_name(t), px_dim);
 }
 
 static void viz_seq(const int16_t *v, uint32_t f)
@@ -762,6 +759,11 @@ static uint32_t viz_sig(void)
     if (ui.kind == FOCUS_SLOT && tp[sys.sel].engine[ui.slot] == ME_SEQ)   /* SEQ draws its step values */
         for (k = 0; k < 16u; k++)
             h = (h ^ (uint32_t)(uint8_t)tp[sys.sel].steps[ui.slot][k]) * 16777619u;
+    if (ui.kind == FOCUS_DEV && (ui.dev == DEV_SRC || ui.dev == DEV_GRAIN))   /* the sound on the tape, the head */
+        h = (h ^ (tape_ver[sys.sel] * 31u + (uint32_t)(tape_head(sys.sel) * DW / 1000 + 7) + sys.rec * 977u)) * 16777619u;
+    if (ui.kind == FOCUS_SLOT && tp[sys.sel].engine[ui.slot] == ME_FOLLOW)
+        for (t = 0; t < NTRK; t++)
+            h = (h ^ tape_ver[t]) * 16777619u;
     if (ui.kind == FOCUS_DEV && ui.dev == DEV_GRAIN)                   /* GRAIN draws TAPE's loop window too */
         h = (h ^ (uint32_t)(tp[sys.sel].dev[DEV_SRC][0] << 8 | tp[sys.sel].dev[DEV_SRC][1])) * 16777619u;
     return h + (ui.kind == FOCUS_SLOT ? tp[sys.sel].engine[ui.slot] * 65537u : 0u);

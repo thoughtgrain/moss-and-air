@@ -28,9 +28,9 @@ run() { echo "== $1"; shift; "$@" || fail=1; }
 
 # the generated headers (tools/build.py generate() runs the same tools; a device build makes them too)
 if [ ! -f "$GEN/felucca_tables.h" ] || [ ! -f "$GEN/ui_icons.h" ] || [ ! -f "$GEN/ui_fonts.h" ] || \
-   [ ! -f "$GEN/ui_keycaps.h" ] || [ ! -f "$GEN/ui_palettes.h" ] || [ ! -f "$GEN/ui_pxfont.h" ]; then
+   [ ! -f "$GEN/ui_keycaps.h" ] || [ ! -f "$GEN/ui_palettes.h" ] || [ ! -f "$GEN/ui_pxfont.h" ] || [ ! -f "$GEN/bryo_reels.h" ]; then
     "$PY" tools/gen_aa_font.py "$GEN/ui_fonts.h" --preset inter-tight >/dev/null
-    for t in gen_aa_icons.py:ui_icons.h gen_aa_keycaps.py:ui_keycaps.h gen_ui_palettes.py:ui_palettes.h gen_px_font.py:ui_pxfont.h \
+    for t in gen_aa_icons.py:ui_icons.h gen_aa_keycaps.py:ui_keycaps.h gen_ui_palettes.py:ui_palettes.h gen_px_font.py:ui_pxfont.h gen_reels.py:bryo_reels.h \
              gen_tables.py:felucca_tables.h; do
         "$PY" "tools/${t%%:*}" "$GEN/${t#*:}" >/dev/null
     done

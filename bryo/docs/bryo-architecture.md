@@ -434,6 +434,44 @@ After phase 1, two changes to the screen, from your review:
 The controls are mapped in `docs/controls.tsv` (one row per context, control and gesture, with status and
 phase), validated by `tests/controls_check.py`, which also fails if a physical control goes unmentioned.
 
+## Phase 2, as built (2026-10-07)
+
+The tape works end to end on the host: `firmware/src/tape.c`, with `tests/bryo_host.c` checking the codec round
+trip (40 dB on a sine), the loop window, reverse, a slice played while stopped, a recorded take, clear and undo, and
+the refusal that protects a take. What it does and why:
+
+- **Each track has a RAM tape and can play a reel instead.** Four factory reels live in flash
+  (`tools/gen_reels.py` makes them, in the tape's own format: BEAT from the generated drums, KEYS and AIR from
+  the CC0 piano and flute, PLUK from the generated plucks; about 95 KB of flash). TAPE 3's REEL picks TAPE or a
+  reel. A reel plays straight from flash, so browsing reels never touches your tape; the first REC copies the reel
+  onto the tape (and REEL turns to TAPE), and is refused if the tape already holds a take, so nothing is lost by
+  accident.
+- **Reading is block-cached.** A reader decodes one 256-sample block and then reads any position in it, so
+  speed, reverse and slices cost one block decode per 256 samples. A second reader carries the old head through
+  a crossfade whenever the head jumps: at the loop's seam (FADE long, at least 2 ms) and on a slice.
+- **Writing commits whole blocks.** REC stages the block under the head, mixes each sample (old x DUB + new x
+  GAIN), and re-encodes the block from its own stored state when the head leaves it. Other blocks keep their
+  states, and a reader re-decodes a block after it's committed, so it hears the old block or the new one.
+- **What REC records, for now: the other three tracks' mix** (one control block late, 0.7 ms). With no audio
+  input that's the meaningful source in this phase; ALGORITHM (phase 6) makes the routing a choice, and the
+  track's own device output joins when the devices exist.
+- **Clearing keeps the data until it's overwritten.** POLY held 0.5 s marks the tape empty (a reel: back to the
+  tape, cleared); SAVE held brings it back, as long as REC hasn't written over it. That costs no RAM for an undo
+  copy.
+- **The keys are slices everywhere for now.** The phase 1 test tone is gone. White key n jumps the head to
+  slice n of the loop while playing, and plays just that slice while stopped. RESONATOR (phase 4) and SEQ (phase 7)
+  will give the keys their own jobs on their pages.
+- **The screen draws the real sound.** The tape view, GRAIN and FOLLOW read each block's peak, which the
+  encoder stores with the block; the tape view names what plays (a reel, TAPE or EMPTY), shows REC armed, and
+  cuts the moving head through the sound while it plays.
+
+RAM: the four tapes are 152 KB of the pool (data, block states and peaks), the readers and writers 6 KB; with the
+screen canvas that's about 218 KB of the 344 KB pool.
+
+Not in this phase, on purpose: **user reel slots in flash and the upload tool** (they need the flash layout that
+projects use, so they move to phase 8 with projects), and **the `source_t` interface** (TAPE is the only source
+until SYNTH and POLY arrive in phase 3, which is when the interface earns its keep).
+
 ## Build order
 
 Each phase ends in something you can flash and hear or see, and each is its own commit series.
@@ -441,15 +479,15 @@ Each phase ends in something you can flash and hear or see, and each is its own 
 | Phase | What | Done when |
 | --- | --- | --- |
 | 1. Skeleton (**done**, host-verified) | `bryo.c` boots on the kept hardware layer; the old app code is removed; silence plus a test tone; the header and an empty strip; install, UBOOT and calibration still work | it installs from the web installer and returns to stock |
-| 2. Sources + TAPE + reels | the source_t interface; tapes play factory reels; slices on the white keys; REC and overdub (resampling); the upload tool fills reel slots | you can load, slice, record and overdub a loop |
-| 3. USB audio in + SYNTH + POLY | the UAC OUT endpoint, drift handling, INPUT = USB; the SYNTH source; the POLY source (voices with their own envelope and filter, three HOME pages) | you can record your computer, and play the synth and samples onto a tape |
+| 2. TAPE + reels (**done**, host-verified; see "Phase 2, as built") | tapes play factory reels; the loop window, speed, reverse, half speed, FADE; slices on the white keys; REC and overdub (resampling the other tracks); clear and undo | you can load, slice, record and overdub a loop |
+| 3. USB audio in + SYNTH + POLY | the source_t interface; the UAC OUT endpoint, drift handling, INPUT = USB; the SYNTH source; the POLY source (voices with their own envelope and filter, three HOME pages) | you can record your computer, and play the synth and samples onto a tape |
 | 3b. GRAIN | the scheduler, the sounding cap, FREEZE (key 0) | grains run on 4 tracks inside the budget |
 | 4. RESONATOR | strings, chromatic keys, OCT shifts | tuned feedback chords from the keys |
 | 5. COLOR + SPACE | drive, crush, noise; delay and reverb | the full chain on 4 tracks inside the budget |
 | 6. Mixer + routing | GLO mixer, filters, compressor; ALGORITHM routes track to tape | track-to-tape overdub between tracks |
 | 7. Modulation | the 4 engines, hold-and-turn depth, assigning engines, p-locks | the PRD's §4 workflow end to end |
-| 8. Projects | save and recall with reels; quick SAVE; undo for MONO and POLY | a power cycle brings a session back |
-| 9. Screen | arcs, slot colours and glyphs, motion dots, the summed white dot, headers | the PRD's §5 |
+| 8. Projects | save and recall with reels; user reel slots in flash and the upload tool; quick SAVE; undo for MONO and POLY | a power cycle brings a session back |
+| 9. Screen (mostly done early: the dot-grid screens) | the modulation arcs on the pictograms, the motion dots, the summed white dot | the PRD's §5 |
 | 10. Tools + docs | the upload tool for reels, the installer text, a Bryo manual | someone else can use it |
 
 Phases 2 and 7 are the riskiest: the tape format, and whether the modulation sum fits at control rate. If

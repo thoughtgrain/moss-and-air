@@ -722,7 +722,8 @@ static void px_picto(uint32_t kind, int32_t x, int32_t y, const pdesc_t *d, int3
 /* the pictogram of each knob of each page (page 2 after page 1) */
 static const uint8_t DEV_PK[NDEV][NPK] = {
     {PK_START, PK_LENGTH, PK_SPEED, PK_LAYERS,       /* TAPE: STRT LEN SPD DUB */
-     PK_FADE, PK_TOGGLE, PK_TOGGLE, PK_FADER},       /*       FADE REV HALF GAIN */
+     PK_FADE, PK_TOGGLE, PK_TOGGLE, PK_FADER,        /*       FADE REV HALF GAIN */
+     PK_SRC, PK_NONE, PK_NONE, PK_NONE},             /*       REEL */
     {PK_SQUARE, PK_DOTS, PK_KNOB, PK_BOWTIE,         /* GRAIN: SIZE DENS TUNE SPRD */
      PK_MIX, PK_NOISE, PK_WINDOW, PK_DOTS},          /*        MIX JIT WIN REV */
     {PK_KEYS, PK_LOOP, PK_DECAY, PK_MIX,             /* RESONATOR: ROOT FDBK DAMP MIX */

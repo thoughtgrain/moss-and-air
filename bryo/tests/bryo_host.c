@@ -66,6 +66,7 @@ static void ui_redraw(void);
 #include "../firmware/src/dsp.c"
 #include "../firmware/src/master.c"
 #include "../firmware/src/param.c"
+#include "../firmware/src/tape.c"
 #include "../firmware/src/chain.c"
 #include "../firmware/src/icons.c"
 #include "../firmware/src/panel.c"
@@ -87,6 +88,10 @@ static void power_on(void)
     memset(&ui, 0, sizeof ui);
     memset(track, 0, sizeof track);
     memset(track_rt, 0, sizeof track_rt);
+    memset(tape_rt, 0, sizeof tape_rt);
+    memset(tape_ctl, 0, sizeof tape_ctl);
+    memset(tape_ram, 0, sizeof tape_ram);
+    memset(&tape_undo, 0, sizeof tape_undo);
     memset(&sys, 0, sizeof sys);
     memset(&fm1_in, 0, sizeof fm1_in);
     panel = PANEL_DEFAULT;
@@ -120,89 +125,163 @@ static uint32_t note_bit_of_white(uint32_t w)
     return 0;
 }
 
-static void test_audio(void)
+static int32_t peak_of(const int32_t *x, uint32_t n)
+{
+    int32_t p = 0;
+    uint32_t i;
+    for (i = 0; i < n; i++)
+        p = abs(x[i]) > p ? abs(x[i]) : p;
+    return p;
+}
+
+static void test_tape(void)
 {
     enum { NB = 1378 };                                  /* 1 s */
     static int32_t s[NB * CTL];
-    uint32_t i, cross = 0;
-    int32_t peak = 0, step = 0;
+    char b[112];
+    uint32_t i;
+    int32_t step = 0, pk;
+    {   /* the codec: a 440 Hz sine through the encoder and back */
+        int16_t in[TAPE_BLK], o[TAPE_BLK];
+        uint8_t data[TAPE_BLK / 2];
+        int64_t es = 0, ee = 0;
+        for (i = 0; i < TAPE_BLK; i++)
+            in[i] = (int16_t)(16000.0 * sin(2 * M_PI * 440.0 * i / TAPE_SR));
+        ima_enc(in, 0, 0, data, TAPE_BLK);
+        ima_dec(data, 0, 0, o, TAPE_BLK);
+        for (i = 32; i < TAPE_BLK; i++) {                /* (after the step size has settled) */
+            es += (int64_t)in[i] * in[i];
+            ee += (int64_t)(in[i] - o[i]) * (in[i] - o[i]);
+        }
+        snprintf(b, sizeof b, "ADPCM round trip of a sine: %.1f dB SNR (> 25 dB)", 10 * log10((double)es / (double)(ee + 1)));
+        check(b, 10 * log10((double)es / (double)(ee + 1)) > 25.0);
+    }
+    {   /* the factory reels decode into sound */
+        uint32_t r, ok = 1;
+        for (r = 0; r < NREEL; r++)
+        {
+            uint32_t k, mx = 0;
+            for (k = 0; k < REELS[r].nblk; k++)
+                mx = REELS[r].peak[k] > mx ? REELS[r].peak[k] : mx;
+            ok &= REELS[r].nblk > 100u && REELS[r].nblk <= TAPE_NBLK && mx > 100u;
+        }
+        check("every factory reel fits a tape and holds sound", ok);
+    }
     power_on();
     render(NB, s);
-    for (i = 0; i < NB * CTL; i++)
-        peak = abs(s[i]) > peak ? abs(s[i]) : peak;
-    check("silence at rest: every sample 0", peak == 0);
+    check("silence at rest (the transport stopped): every sample 0", peak_of(s, NB * CTL) == 0);
 
-    fm1_in.notes = note_bit_of_white(0);                 /* white key 1 = F, octave 3: MIDI 53, 174.61 Hz */
+    sys.playing = 1;                                     /* PLAY: track 1 plays reel BEAT */
     render(NB, s);
-    for (i = CTL * 100u; i < NB * CTL; i++)              /* (after the attack) */
-        cross += s[i - 1] < 0 && s[i] >= 0;
-    peak = 0;
-    for (i = 0; i < NB * CTL; i++)
-        peak = abs(s[i]) > peak ? abs(s[i]) : peak;
-    {
-        double hz = cross * (double)FS / (double)((NB - 100u) * CTL);
-        char b[96];
-        snprintf(b, sizeof b, "a held white key 1 plays F3: %.1f Hz (174.6 expected, +-1 Hz)", hz);
-        check(b, fabs(hz - 174.61) < 1.0);
-        snprintf(b, sizeof b, "its level sits under the limiter: peak %d (> 2000, < 18000)", (int)peak);
-        check(b, peak > 2000 && peak < 18000);
-    }
+    pk = peak_of(s, NB * CTL);
+    snprintf(b, sizeof b, "PLAY: the reels play, under the limiter: peak %d (> 2000, <= 32767)", (int)pk);
+    check(b, pk > 2000 && pk <= 32767);
+    check("..track 1's head moves forward inside its loop", tape_rt[0].running && tape_rt[0].pos > 0 &&
+          (tape_rt[0].pos >> 12) < (int32_t)(REELS[0].nblk * TAPE_BLK));
 
-    fm1_in.notes = 0;                                    /* release: a fade, no step */
+    sys.playing = 0;                                     /* STOP: a fade, then silence */
     render(NB / 4, s);
-    for (i = 1; i < NB / 4 * CTL; i++) {
-        int32_t d = abs(s[i] - s[i - 1]);
-        step = d > step ? d : step;
+    for (i = 1; i < NB / 4 * CTL; i++)
+        step = abs(s[i] - s[i - 1]) > step ? abs(s[i] - s[i - 1]) : step;
+    check("STOP fades out within 250 ms (every track's last block silent)",
+          peak_of(track_rt[0].last, CTL) == 0 && peak_of(track_rt[1].last, CTL) == 0 &&
+          peak_of(track_rt[2].last, CTL) == 0 && peak_of(track_rt[3].last, CTL) == 0);
+
+    {   /* the loop wraps: STRT 50, LEN 10 on track 1, 1 s of play stays inside [50 %, 60 %) */
+        int32_t lo, hi, len = (int32_t)(REELS[0].nblk * TAPE_BLK), inside = 1;
+        tp[0].dev[DEV_SRC][TK_STRT] = 50;
+        tp[0].dev[DEV_SRC][TK_LEN] = 10;
+        lo = len * 50 / 100;
+        hi = lo + len * 10 / 100;
+        sys.playing = 1;
+        for (i = 0; i < NB; i++) {
+            render(1, 0);
+            inside &= (tape_rt[0].pos >> 12) >= lo && (tape_rt[0].pos >> 12) < hi;
+        }
+        check("the loop window holds the head (STRT 50, LEN 10: 1 s of play, never outside)", inside);
+        tp[0].dev[DEV_SRC][TK_REV] = 1;                  /* reverse: the head runs back */
+        {
+            int32_t p0 = tape_rt[0].pos, back;
+            render(10, 0);
+            back = tape_rt[0].pos < p0 || tape_rt[0].xf > 0;
+            check("REV (OP5): the head runs backwards", back);
+        }
+        tp[0].dev[DEV_SRC][TK_REV] = 0;
+        tp[0].dev[DEV_SRC][TK_STRT] = 0;
+        tp[0].dev[DEV_SRC][TK_LEN] = 100;
+        sys.playing = 0;
+        render(NB / 4, 0);
     }
-    peak = 0;
-    for (i = NB / 4 * CTL - CTL; i < NB / 4 * CTL; i++)
-        peak = abs(s[i]) > peak ? abs(s[i]) : peak;
-    check("the release fades: no sample-to-sample step above a sine's own slope (< 800)", step < 800);
-    check("..and ends in silence within 250 ms", peak == 0);
-    check("..and frees its voice", track_rt[0].key[0] == 0xFFu);
 
-    track[0].mute = 1;                                   /* mute: silence while held */
-    fm1_in.notes = note_bit_of_white(0);
-    render(200, s);
-    peak = 0;
-    for (i = 0; i < 200u * CTL; i++)
-        peak = abs(s[i]) > peak ? abs(s[i]) : peak;
-    check("a muted track is silent while its key is held", peak == 0);
-    track[0].mute = 0;
-
-    sys.keys_live = 0;                                   /* SEL held: the keys pick, they don't play */
-    fm1_in.notes = note_bit_of_white(4);
-    render(4, 0);
-    check("keys don't play while SEL is held (keys_live 0)", track_rt[0].key[1] == 0xFFu);
-    sys.keys_live = 1;
-
-    fm1_in.notes = note_bit_of_white(0) | note_bit_of_white(2) | note_bit_of_white(4);
-    render(8, 0);
-    {
-        uint32_t v, n = 0, before = chain_shed_count;
-        chain_shed();
-        for (v = 0; v < TEST_VOICES; v++)
-            n += track_rt[0].key[v] != 0xFFu;
-        check("shedding frees one voice (3 held -> 2 sounding) and counts it", n == 2u && chain_shed_count == before + 1u);
+    {   /* a slice while stopped: white key 5 plays slice 5 of 16, then stops */
+        int32_t len = (int32_t)(REELS[0].nblk * TAPE_BLK), s0 = len * 4 / 16, ran = 0;
+        fm1_in.notes = note_bit_of_white(4);
+        render(1, 0);
+        check("stopped, white key 5 starts slice 5 (the head at its start)", tape_rt[0].running &&
+              abs((tape_rt[0].pos >> 12) - s0) < 64);
+        fm1_in.notes = 0;
+        for (i = 0; i < NB && tape_rt[0].running; i++, ran++)
+            render(1, 0);
+        snprintf(b, sizeof b, "..and stops at its end: %d blocks (a slice is %d)", (int)ran, (int)(len / 16 * 2 / CTL));
+        check(b, abs(ran - len / 16 * 2 / CTL) <= 2);
     }
-    fm1_in.notes = 0;
-    render(NB / 2, 0);
 
-    {   /* the master stage holds the ceiling: 4 tracks x 4 keys at full level */
+    {   /* REC: track 2 records track 1 (its reel copied onto its tape first), DUB 0: a new take */
+        uint32_t k, same = 0, diff = 0;
+        check("REC arms: track 2's reel is copied onto its tape, REEL turns to TAPE",
+              tape_prepare(1) && tape_src(1) == 0u && tape_ctl[1].nblk == REELS[1].nblk);
+        sys.rec = 1u << 1;
+        tp[1].dev[DEV_SRC][TK_DUB] = 0;
+        track[1].mute = 1;                               /* (only track 1 sounds into it) */
+        track[2].mute = track[3].mute = 1;
+        sys.playing = 1;
+        render(NB * 2, 0);                               /* 2 s: a whole pass over the 2 s loop */
+        sys.rec = 0;
+        render(2, 0);                                    /* (the last block commits) */
+        tape_unprepare(1);
+        for (k = 0; k < REELS[1].nblk; k++) {           /* the take against what was there and what went in */
+            same += abs((int)tape_ram[1].peak[k] - (int)REELS[0].peak[k % REELS[0].nblk] * 100 / 127) < 24;
+            diff += tape_ram[1].peak[k] != REELS[1].peak[k];
+        }
+        snprintf(b, sizeof b, "..recording replaces it with track 1's beat (%u of %u blocks changed, %u follow the beat)",
+                 diff, (unsigned)REELS[1].nblk, same);
+        check(b, diff > REELS[1].nblk * 9u / 10u && same > REELS[1].nblk * 3u / 4u);
+        sys.playing = 0;
+        track[1].mute = track[2].mute = track[3].mute = 0;
+        render(NB / 4, 0);
+    }
+
+    {   /* clear (POLY held) and undo (SAVE held) */
+        tape_view_t v;
+        tape_clear(1);
+        tape_view(1, &v);
+        check("a clear empties the tape (it plays nothing)", v.len == 0u && tape_ctl[1].empty);
+        check("..and SAVE held brings it back", tape_undo_clear() == 1 && !tape_ctl[1].empty);
+        check("..once", tape_undo_clear() == -1);
+        tp[1].dev[DEV_SRC][TK_REEL] = 3;                 /* a reel over a tape with a take: REC refuses */
+        check("REC on a reel refuses while the tape holds a take (no take is lost)", !tape_prepare(1) &&
+              tape_ctl[1].nblk == REELS[1].nblk && !tape_ctl[1].empty);
+        tape_clear(1);
+        tp[1].dev[DEV_SRC][TK_REEL] = 3;
+        check("..after a clear it copies the reel in", tape_prepare(1) && tape_ctl[1].nblk == REELS[2].nblk);
+        check("..and the clear can't be undone any more (the reel is over it)", tape_undo_clear() == -1);
+        tape_unprepare(1);
+    }
+
+    {   /* the master stage holds the ceiling: four reels at full level */
         uint32_t t;
-        int32_t over = 0;
         for (t = 0; t < NTRK; t++)
             track[t].level = 127;
         sys.master_q12 = MASTER_FULL;
-        fm1_in.notes = note_bit_of_white(0) | note_bit_of_white(2) | note_bit_of_white(4) | note_bit_of_white(6);
-        for (t = 0; t < NTRK; t++) {
-            sys.sel = (uint8_t)t;
-            render(40, s);
-        }
+        sys.playing = 1;
         render(NB, s);
-        for (i = 0; i < NB * CTL; i++)
-            over = abs(s[i]) > over ? abs(s[i]) : over;
-        check("four keys at full level and MASTER full stay under full scale (soft clip)", over <= 32767);
+        check("four reels at full level and MASTER full stay under full scale (soft clip)", peak_of(s, NB * CTL) <= 32767);
+        sys.playing = 0;
+    }
+    {
+        uint32_t before = chain_shed_count;
+        chain_shed();
+        check("shedding is counted, and never takes the tape", chain_shed_count == before + 1u);
     }
 }
 
@@ -313,6 +392,39 @@ static void test_input(void)
     key_edge(black_note(BK_OP2));
     check("..again: unmuted", track[1].mute == 0u);
 
+    key_edge(black_note(BK_OP5));
+    check("black OP5: the focused track's tape reversed (TAPE 2's REV)", tp[2].dev[DEV_SRC][TK_REV] == 1);
+    key_edge(black_note(BK_OP6));
+    check("black OP6: half speed (TAPE 2's HALF)", tp[2].dev[DEV_SRC][TK_HALF] == 1);
+    tp[2].dev[DEV_SRC][TK_REV] = tp[2].dev[DEV_SRC][TK_HALF] = 0;
+    {   /* POLY held 0.5 s clears the focused tape; let go sooner does nothing; SAVE held undoes */
+        uint32_t pn = black_note(BK_POLY);
+        fm1_ms = 1000;
+        fm1_in.notes |= 1u << pn;
+        key_edge(pn);
+        fm1_ms = 1300;
+        fm1_in.notes &= ~(1u << pn);
+        ui_input();
+        check("the POLY key let go before 0.5 s: nothing is cleared", tape_src(2) == 3u);
+        fm1_ms = 2000;
+        fm1_in.notes |= 1u << pn;
+        key_edge(pn);
+        fm1_ms = 2510;
+        ui_input();
+        fm1_in.notes &= ~(1u << pn);
+        check("..held 0.5 s: TRACK 3's tape cleared (its reel let go)", tape_src(2) == 0u && tape_ctl[2].empty);
+        fm1_ms = 3000;
+        hold(B_SAVE);
+        fm1_ms = 3000 + HOLD_MS[settings_hold % 4u];
+        ui_input();
+        let_go(B_SAVE);
+        check("SAVE held: the clear undone (the reel back)", tape_src(2) == 3u);
+        fm1_ms = 4000;
+        tap(B_SAVE);
+        check("SAVE tapped: no undo, the projects message", tape_src(2) == 3u && ui.msg_t);
+        ui.msg_t = 0;
+    }
+
     tap(B_GLO);
     check("GLO tapped: the mixer stays up", ui.view == VIEW_MIXER && ui.glo_latched);
     host_enc[panel.enc[EN_K4]] = -20;
@@ -345,7 +457,7 @@ static void test_input(void)
     press(B_PLAY);
     check("PLAY: playing", sys.playing == 1u);
     press(B_REC);
-    check("REC: TRACK 3 armed", ui.rec == 1u << 2);
+    check("REC: TRACK 3 armed", sys.rec == 1u << 2);
     press(B_OCTUP);
     check("OCT+: TRACK 3's keys an octave up", track[2].octave == 4u);
 }
@@ -429,6 +541,19 @@ static void screens_in(const char *pal)
     turn(1, 1);
     turn(3, 6);
     shot(pal, "tape2");
+    press(B_HOME);                                       /* TAPE 3: REEL KEYS */
+    turn(0, 1);
+    shot(pal, "tape3");
+    press(B_HOME);
+    sys.playing = 1;                                     /* the head running, then REC armed */
+    render(600, 0);
+    shot(pal, "tape_playing");
+    press(B_REC);
+    render(4, 0);
+    shot(pal, "tape_rec");
+    press(B_REC);
+    sys.playing = 0;
+    render(400, 0);
     press(B_EDIT);
     shot(pal, "grain");
     turn(1, 40);                                         /* DENS 80 %, PITCH +7, SPREAD 90 % */
@@ -577,7 +702,7 @@ static void screens_in(const char *pal)
 int main(int argc, char **argv)
 {
     out_dir = argc > 1 ? argv[1] : "build/bryo_ui";
-    test_audio();
+    test_tape();
     test_input();
     test_settings();
     palette_set(UI_GREY_INDEX);                          /* (the screens are one ink now, whatever the palette) */
