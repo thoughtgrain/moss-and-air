@@ -338,6 +338,16 @@ After phase 1, two changes to the screen, from your review:
   last-turned knob is drawn in the accent and named in the panel's caption with its value, and on COLOR the
   inset follows it (the drive curve, the noise, or the tone filter). The DSP will use the same mappings the
   pictures do, so what's drawn is what you'll hear.
+- **The panels read like an Elektron box: a pictogram, a shape, a tag.** Every panel opens with a caption bar:
+  the page's 16 px icon and name on the left, and on the right a solid accent tag holding the last-turned knob's
+  own icon, label and value (so `SPREAD 90%` sits right above the grains it's spreading). Under it, filled
+  shapes instead of thin lines, because filled reads at arm's length on a 240 px screen and a hairline doesn't.
+  TAPE is a strip of film with sprocket holes, a bracketed loop window, a playhead triangle, speed chevrons (one
+  per 50 %, flipped for reverse, a pause sign at 0) and three stacked DUB layers. RESONATOR is a filled response
+  with a `ROOT` tag on the fundamental and dots under each harmonic. ADSR labels its four stages with tags and
+  makes the focused one solid. SEQ is 16 blocks in groups of four, numbered like a step sequencer's pads. A
+  muted track in the mixer gets the crossed speaker on a solid key. All of it is drawn from palette tokens, so
+  it holds up in all ten palettes; the icon set has no 12 px record glyph, so DUB's tag uses the plus.
 
 The controls are mapped in `docs/controls.tsv` (one row per context, control and gesture, with status and
 phase), validated by `tests/controls_check.py`, which also fails if a physical control goes unmentioned.
