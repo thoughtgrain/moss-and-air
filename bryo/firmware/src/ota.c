@@ -267,7 +267,7 @@ static int ota_stage(void)                       /* steps 1..6; 0 = host said su
     if (!fl_off || !ota_off)
         return -3;
     /* 2. which loader: the official one (known CRCs; it rewrites the whole flash.bin
-     *    including the head) or Felucca's own (app area only, checks the chip key) */
+     *    including the head) or this project's own (app area only, checks the chip key) */
     if (ota_read(ota_off, b, 512))
         return -6;
     len = ota_rd32(b + 8);
