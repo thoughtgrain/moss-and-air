@@ -36,7 +36,7 @@ static struct { uint32_t notes, buttons; } fm1_in;
 static uint32_t host_pressed, host_note_edges;
 static int32_t host_enc[7];
 static uint32_t fm1_ticks(void) { return 0; }
-static uint32_t fm1_input_edges(uint32_t *r) { uint32_t p = host_pressed; (void)r; host_pressed = 0; return p; }
+static uint32_t fm1_input_edges(uint32_t *r) { uint32_t p = host_pressed; if (r) *r = 0; host_pressed = 0; return p; }
 static uint32_t fm1_input_note_edges(void) { uint32_t n = host_note_edges; host_note_edges = 0; return n; }
 static int32_t fm1_enc_take(uint32_t e) { int32_t s = host_enc[e % 7u]; host_enc[e % 7u] = 0; return s; }
 static void fm1_wdt_feed(void) {}
@@ -71,6 +71,7 @@ static void ui_redraw(void);
 #include "../firmware/src/panel.c"
 #include "../firmware/src/settings.c"
 #include "../firmware/src/ui.c"
+#include "../firmware/src/ui_viz.c"
 #include "../firmware/src/ui_input.c"
 
 static int fails;
@@ -206,6 +207,9 @@ static void test_audio(void)
 
 /* ---------------------------------------------------------------- input --- */
 static void press(uint32_t b) { host_pressed |= 1u << panel.btn[b]; ui_input(); }
+static void hold(uint32_t b) { fm1_in.buttons |= 1u << panel.btn[b]; host_pressed |= 1u << panel.btn[b]; ui_input(); }
+static void let_go(uint32_t b) { fm1_in.buttons &= ~(1u << panel.btn[b]); ui_input(); }
+static void tap(uint32_t b) { hold(b); let_go(b); }
 static void key_edge(uint32_t note) { host_note_edges |= 1u << note; ui_input(); }
 static uint32_t black_note(uint32_t k)
 {
@@ -242,26 +246,42 @@ static void test_input(void)
     check("KNOB 3 steps a wide range by ~1 % per detent (SPEED 100 -> 60)", tp[0].dev[DEV_SRC][2] == 60);
     check("..and lights that dial (hot)", ui.hot == 2u && ui.hot_t > 0u);
 
-    fm1_in.buttons = 1u << panel.btn[B_SCL];             /* SEL + white key 3: TRACK 3 */
-    key_edge(2u + 2u);                                   /* note 4 = A3 = white key 2 (third) */
-    check("SEL held: the keys stop playing", sys.keys_live == 0u);
-    check("SEL + white key 3: TRACK 3", sys.sel == 2u);
-    fm1_in.buttons = 0;
-    ui_input();
-    check("SEL let go: the keys play again", sys.keys_live == 1u);
+    check("a turned knob becomes the page's last (the visualization names it)", ui.last == 2u);
+    press(B_EDIT);
+    check("..and a new page starts without one", ui.last == 0xFFu);
+    press(B_HOME);
+
+    hold(B_GLO);                                         /* GLO held + white key 3: TRACK 3 */
+    check("GLO held: the mixer is up, the keys stop playing", ui.view == VIEW_MIXER && sys.keys_live == 0u);
+    key_edge(2u + 2u);                                   /* note 4 = A3 = white key 3 */
+    check("GLO + white key 3: TRACK 3", sys.sel == 2u);
+    let_go(B_GLO);
+    check("GLO let go after picking: back to the page, the keys play again", ui.view == VIEW_PAGE && sys.keys_live == 1u);
     check("each track keeps its own values (TRACK 3's SPEED at the default)", tp[2].dev[DEV_SRC][2] == 100);
+    press(B_SCL);
+    check("SCL does nothing now (the PRD's SEL moved under GLO)", sys.sel == 2u && ui.view == VIEW_PAGE);
 
     key_edge(black_note(BK_OP2));
     check("black OP2: TRACK 2 muted", track[1].mute == 1u);
     key_edge(black_note(BK_OP2));
     check("..again: unmuted", track[1].mute == 0u);
 
-    press(B_GLO);
+    tap(B_GLO);
+    check("GLO tapped: the mixer stays up", ui.view == VIEW_MIXER && ui.glo_latched);
     host_enc[panel.enc[EN_K4]] = -20;
     ui_input();
-    check("GLO: the mixer; KNOB 4 sets TRACK 4's level (100 -> 80)", ui.view == VIEW_MIXER && track[3].level == 80u);
-    press(B_GLO);
-    check("GLO again: back to the page", ui.view == VIEW_PAGE);
+    check("..KNOB 4 sets TRACK 4's level (100 -> 80)", track[3].level == 80u);
+    tap(B_GLO);
+    check("GLO tapped again: back to the page", ui.view == VIEW_PAGE);
+    hold(B_GLO);
+    host_enc[panel.enc[EN_K1]] = 3;
+    ui_input();
+    let_go(B_GLO);
+    check("GLO held + KNOB 1: TRACK 1's level, and letting go goes back", track[0].level == 103u && ui.view == VIEW_PAGE);
+    tap(B_GLO);
+    press(B_FX);
+    check("a page pad closes the mixer", ui.view == VIEW_PAGE && ui.dev == DEV_COLOR && !ui.glo_latched);
+    press(B_HOME);
 
     host_enc[panel.enc[EN_SELECT]] = 5;
     ui_input();
@@ -334,41 +354,71 @@ static void shot(const char *pal, const char *name)
     fclose(f);
 }
 
+static void turn(uint32_t k, int32_t d) { host_enc[panel.enc[EN_K1 + k]] = d; ui_input(); }
+
 static void screens_in(const char *pal)
 {
-    uint32_t s, n = 0, i;
+    uint32_t s;
     power_on();
     lcd_fill(0, 0, 240, 240, T_BG);
     shot(pal, "tape");
+    turn(2, -60);                                        /* SPEED to -140 %: reversed, the chevrons in the accent */
+    shot(pal, "tape_speed");
+    turn(0, 20);                                         /* START 20 %, LENGTH 60 %, DUB 80 % */
+    turn(1, -40);
+    turn(3, 30);
+    shot(pal, "tape_loop");
     press(B_EDIT);
     shot(pal, "grain");
+    turn(1, 40);                                         /* DENS 80 %, PITCH +7, SPREAD 90 % */
+    turn(2, 7);
+    turn(3, 60);
+    shot(pal, "grain_busy");
     press(B_EDIT);
     shot(pal, "resonator");
+    turn(1, 35);                                         /* FDBK 95: sharp peaks */
+    turn(2, -30);                                        /* DAMP 10 */
+    turn(3, 80);                                         /* MIX 80 */
+    shot(pal, "resonator_wet");
     press(B_FX);
     shot(pal, "color");
+    turn(0, 60);                                         /* DRIVE 60: the transfer curve */
+    shot(pal, "color_drive");
+    turn(1, 70);                                         /* CRUSH 70: steps */
+    shot(pal, "color_crush");
+    turn(2, 50);                                         /* NOISE 50 */
+    shot(pal, "color_noise");
+    turn(3, -30);                                        /* TONE 20: the tone filter */
+    shot(pal, "color_tone");
     press(B_FX);
     shot(pal, "space");
+    turn(1, 40);                                         /* FDBK 70 */
+    turn(3, 40);                                         /* DECAY 80 */
+    shot(pal, "space_long");
     for (s = 0; s < NSLOT; s++) {
         static const uint8_t B[NSLOT] = {B_LFO, B_ENV, B_SEQ, B_ARP};
         char nm[8] = {'m', 'o', 'd', (char)('1' + s), 0};
         press(B[s]);
         shot(pal, nm);
     }
+    press(B_LFO);
+    turn(1, 1);                                          /* WAVE: TRIANGLE, FOLD 40, SKEW +50 */
+    turn(2, 40);
+    turn(3, 50);
+    shot(pal, "mod1_tri_fold");
+    press(B_ARP);
+    turn(1, 40);                                         /* RANDOM: SMOOTH 40 */
+    shot(pal, "mod4_smooth");
     press(B_HOME);
-    host_enc[panel.enc[EN_K3]] = -60;                    /* SPEED to -140 %: a bipolar dial, the knob hot */
-    ui_input();
-    shot(pal, "tape_hot");
-    press(B_GLO);
-    shot(pal, "mixer");
-    press(B_GLO);
-    fm1_in.buttons = 1u << panel.btn[B_SCL];
-    ui_input();
-    shot(pal, "sel_held");
-    fm1_in.buttons = 0;
-    ui_input();
-    track[1].mute = 1;                                   /* track 2 muted, track 1 sounding, playing, REC armed */
+    tap(B_GLO);
+    track[1].mute = 1;                                   /* track 2 muted, track 1 sounding */
     track_rt[0].peak = 9000;
     track_rt[2].peak = 1200;
+    shot(pal, "mixer");
+    tap(B_GLO);
+    hold(B_GLO);
+    shot(pal, "mixer_held");
+    let_go(B_GLO);
     press(B_PLAY);
     press(B_REC);
     shot(pal, "playing");
@@ -379,9 +429,6 @@ static void screens_in(const char *pal)
     lcd_fill(0, 0, 240, 240, T_BG);
     draw_head();
     shot(pal, "uboot");
-    for (i = 0; i < 240u * 240u; i++)
-        n += host_screen[i] != host_screen[0];
-    (void)n;
 }
 
 int main(int argc, char **argv)

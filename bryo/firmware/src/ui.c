@@ -3,8 +3,11 @@
  *
  *   y   0..25   header  [TRACK 2 : COLOR], [MOD 1 : WAVE]; the transport and the tempo at the right
  *   y  26..123  strip   the 4-value strip: KNOB 1..4 as dials, their labels and values (PRD 5)
- *   y 124..197  tracks  the four tracks: number, source, level meter, mute; the focused one raised
- *   y 198..239  footer  what the keys do now
+ *   y 124..215  viz     what the page does, drawn from its values (ui_viz.c); the mixer's tracks under GLO
+ *   y 216..239  footer  what the keys do now, the track and its octave
+ *
+ * The tracks themselves live in the mixer (GLO): hold GLO and press white key 1..4 to pick one. The pages don't
+ * repeat them; the header and the footer name the focused track.
  *
  * Main loop only. The audio ISR never touches the UI; the UI reads the ISR's meters (track_rt[].peak) as plain
  * words. Colour is never the only cue: a modulator slot's colour always comes with its number. */
@@ -12,14 +15,13 @@
 #define UI_HEAD_H 26
 #define UI_STRIP_Y 26
 #define UI_STRIP_H 98
-#define UI_TRK_Y 124
-#define UI_TRK_H 74
-#define UI_FOOT_Y 198
-#define UI_FOOT_H 42
+#define UI_VIZ_Y 124
+#define UI_FOOT_Y 216
+#define UI_FOOT_H 24
 #define UI_MSG_FRAMES 70             /* a message holds the header ~1 s (~66 frames/s) */
 
 enum { FOCUS_DEV, FOCUS_SLOT };      /* what the strip shows: a device of the track, or a modulator slot */
-enum { VIEW_PAGE, VIEW_MIXER };      /* VIEW_MIXER: GLO, the four track levels on the knobs */
+enum { VIEW_PAGE, VIEW_MIXER };      /* VIEW_MIXER: GLO, the four track levels on the knobs, the tracks below */
 
 static struct {
     uint8_t kind;                    /* FOCUS_DEV / FOCUS_SLOT */
@@ -27,18 +29,25 @@ static struct {
     uint8_t slot;                    /* 0..3 when FOCUS_SLOT */
     uint8_t view;
     uint8_t hot, hot_t;              /* the knob just turned (its dial and value in the accent), frames left */
+    uint8_t last;                    /* the page's most recently turned knob (0..3; 0xFF none since the page opened):
+                                      * the visualization draws its part in the accent and names it */
     uint8_t uboot;                   /* UPDATE MODE countdown, seconds left (main.c), 0 = none */
-    uint8_t sel_held;                /* SEL (the SCL pad) held: white keys 1..4 pick the track */
+    uint8_t glo_held;                /* GLO held: the mixer is up, white keys 1..4 pick the track */
+    uint8_t glo_used;                /* .. and something was done while it was held (so letting go closes it) */
+    uint8_t glo_latched;             /* the mixer stays up (GLO tapped) */
+    uint32_t glo_t0;                 /* when GLO went down */
     uint8_t rec;                     /* REC armed, bit per track (TAPE recording arrives in phase 2) */
     uint8_t force;                   /* redraw everything next frame */
     uint8_t msg_t;
     char msg[28];
-    uint32_t sig_head, sig_strip, sig_trk, sig_foot;
+    uint32_t sig_head, sig_strip, sig_viz, sig_foot;
 } ui;
 
 /* modulator slot colours (PRD 5: 1 cyan, 2 amber, 3 green, 4 magenta), RGB565, chosen to read on every dark
  * palette; each is always drawn with its slot number next to it */
 static const uint16_t SLOT_COLOR[NSLOT] = {0x3E7Du, 0xFD20u, 0x5F0Bu, 0xE31Fu};
+
+static void draw_viz(void);           /* ui_viz.c */
 
 static void ui_message(const char *s)
 {
@@ -52,6 +61,7 @@ static void ui_init(void)
 {
     ui.kind = FOCUS_DEV;
     ui.dev = DEV_SRC;
+    ui.last = 0xFF;
     ui.force = 1;
 }
 
@@ -59,12 +69,13 @@ static void ui_init(void)
 static const pdesc_t *ui_page(uint32_t k, int16_t **vp)
 {
     track_params_t *p = &tp[sys.sel];
-    static const pdesc_t LEVEL = {"LEVEL", 0, 127, 100, F_NUM};
+    static const pdesc_t LEVEL[NTRK] = {{"T1 LVL", 0, 127, 100, F_NUM}, {"T2 LVL", 0, 127, 100, F_NUM},
+                                        {"T3 LVL", 0, 127, 100, F_NUM}, {"T4 LVL", 0, 127, 100, F_NUM}};
     static int16_t lv[NTRK];
     if (ui.view == VIEW_MIXER) {
         lv[k] = track[k].level;
         *vp = &lv[k];
-        return &LEVEL;
+        return &LEVEL[k];
     }
     if (ui.kind == FOCUS_SLOT) {
         *vp = &p->mod[ui.slot][k];
@@ -220,85 +231,49 @@ static void draw_strip(void)
     cv_blit(0, UI_STRIP_Y);
 }
 
-/* ------------------------------------------------------------ tracks --- */
-/* the meter: 0..1 of the tile's width on a log scale (-48 dB .. 0 dBFS) */
-static int32_t meter_w(int32_t peak, int32_t w)
-{
-    int32_t lg = 0, v;
-    if (peak < 128)
-        return 0;
-    while ((peak >> lg) > 1)
-        lg++;
-    v = lg * 8 + (((peak << 3) >> lg) & 7);          /* 8 log2: 56 (-48 dB) .. 120 (0 dB) */
-    return clamp((v - 56) * w / 64, 0, w);
-}
-
-static void draw_tracks(void)
-{
-    uint32_t t, sig = sys.sel * 31u;
-    int32_t mw[NTRK];
-    for (t = 0; t < NTRK; t++) {
-        mw[t] = meter_w(track_rt[t].peak, 45);
-        sig = (sig ^ ((uint32_t)mw[t] | (uint32_t)track[t].mute << 8 | (uint32_t)track[t].level << 9)) * 16777619u;
-    }
-    if (!ui.force && sig == ui.sig_trk)
-        return;
-    ui.sig_trk = sig;
-    cv_begin(240, UI_TRK_H, T_BG);
-    for (t = 0; t < NTRK; t++) {
-        int32_t x = 3 + 59 * (int32_t)t, sel = t == sys.sel;
-        char n[3] = {'T', (char)('1' + t), 0};
-        uint16_t bg = sel ? T_SURF : T_BG;
-        cv_rrect(x, 6, 57, 62, 5, bg, T_BG);
-        if (sel)
-            cv_rect(x + 8, 6, 41, 2, T_ACCENT);       /* the focused track: a bar on top, not colour alone */
-        cv_text_on(x + 6, 12, &AF_M, n, sel ? T_TEXT : T_MID, bg);
-        cv_text_on(x + 6, 32, &AF_S, DEV_NAME[DEV_SRC], T_MID, bg);
-        if (track[t].mute) {                          /* muted: the word in place of the meter */
-            cv_text_on(x + 6, 47, &AF_S, "MUTE", T_MID, bg);
-        } else {
-            cv_rrect(x + 6, 52, 45, 5, 2, T_RAISE, bg);
-            if (mw[t])
-                cv_rrect(x + 6, 52, mw[t] < 3 ? 3 : mw[t], 5, 2, T_THEME, T_RAISE);
-        }
-    }
-    cv_blit(0, UI_TRK_Y);
-}
-
 /* ------------------------------------------------------------ footer --- */
 static void draw_foot(void)
 {
     char a[40], b[16];
     uint32_t sig;
-    if (ui.sel_held)
-        str_cpy(a, "PICK A TRACK: WHITE KEYS 1-4", sizeof a);
+    if (ui.glo_held)
+        str_cpy(a, "WHITE KEYS 1-4: TRACK", sizeof a);
     else if (ui.view == VIEW_MIXER)
         str_cpy(a, "KNOBS 1-4: TRACK LEVELS", sizeof a);
     else
         str_cpy(a, "WHITE KEYS: TEST TONE", sizeof a);
-    str_cpy(b, "OCT ", sizeof b);
-    fmt_int(b + 4, track[sys.sel].octave);
-    sig = hash_str(hash_str(5381u, a), b);
+    str_cpy(b, "T", sizeof b);                        /* "T2  OCT 3": the track, its keys' octave */
+    fmt_int(b + 1, (int32_t)sys.sel + 1);
+    str_cpy(b + str_len(b), "  OCT ", 8);
+    fmt_int(b + str_len(b), track[sys.sel].octave);
+    sig = hash_str(hash_str(5381u, a), b) + track[sys.sel].mute;
     if (!ui.force && sig == ui.sig_foot)
         return;
     ui.sig_foot = sig;
     cv_begin(240, UI_FOOT_H, T_BG);
     cv_rect(0, 0, 240, 1, T_LINE);
-    cv_text_fit(6, 12, &AF_S, a, T_MID, T_BG, 180);
-    cv_text_r(234, 12, &AF_S, b, T_MID, T_BG);
+    cv_text_fit(6, 6, &AF_S, a, T_MID, T_BG, 160);
+    {
+        int32_t x = cv_text_r(234, 6, &AF_S, b, T_TEXT, T_BG);
+        if (track[sys.sel].mute)
+            cv_text_r(x - 6, 6, &AF_S, "MUTE", T_ACCENT, T_BG);   /* the focused track is muted: say so */
+    }
     cv_blit(0, UI_FOOT_Y);
 }
 
-/* UPDATE MODE countdown (main.c: OCT- + OCT+ held), over everything */
+/* UPDATE MODE countdown (main.c: OCT- + OCT+ held), over everything below the header. Two canvases: the canvas
+ * holds 124 rows (gfx.c CV_MAX), the area is 214 */
 static void draw_uboot(void)
 {
     char n[4];
-    cv_begin(240, 240 - UI_HEAD_H, T_BG);
+    cv_begin(240, 107, T_BG);
     cv_text_in(0, 70, 240, &AF_M, "UPDATE MODE IN", T_TEXT, T_BG);
-    fmt_int(n, ui.uboot);
-    cv_text_in(0, 98, 240, &AF_L, n, T_THEME, T_BG);
-    cv_text_in(0, 146, 240, &AF_S, "LET GO OF OCT- AND OCT+ TO CANCEL", T_MID, T_BG);
     cv_blit(0, UI_HEAD_H);
+    cv_begin(240, 107, T_BG);
+    fmt_int(n, ui.uboot);
+    cv_text_in(0, 0, 240, &AF_L, n, T_THEME, T_BG);
+    cv_text_in(0, 46, 240, &AF_S, "LET GO OF OCT- AND OCT+ TO CANCEL", T_MID, T_BG);
+    cv_blit(0, UI_HEAD_H + 107);
 }
 
 static void ui_draw(void)
@@ -311,7 +286,7 @@ static void ui_draw(void)
     }
     draw_head();
     draw_strip();
-    draw_tracks();
+    draw_viz();
     draw_foot();
     if (ui.msg_t && !--ui.msg_t)
         ui.sig_head = 0;                          /* the message ends: the title comes back */

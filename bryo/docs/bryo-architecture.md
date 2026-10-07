@@ -288,7 +288,7 @@ Done: `bryo.c` builds the kept hardware layer with Bryo's core, and Felucca's in
 | `firmware/src/master.c` | Felucca's output stage, moved from `fx.c` unchanged |
 | `firmware/src/param.c` | five devices and four modulator slots per track, four knobs each, with the PRD's names |
 | `firmware/src/settings.c` | the settings record, kept in Felucca's layout so calibration and USB prefs carry over |
-| `firmware/src/ui.c`, `ui_input.c` | the header, the 4-value strip with dials, the track tiles, the footer; pads, keys, knobs, LEDs |
+| `firmware/src/ui.c`, `ui_input.c` | the header, the 4-value strip with dials, the footer; pads, keys, knobs, LEDs (the track tiles moved into the mixer: see "The screen, revised") |
 | `firmware/src/panel.c` | the panel map plus HARDWARE CALIBRATION (moved here from Felucca's UI) |
 | `tests/bryo_host.c` | the chain, the input mapping, the settings carry-over, every screen in every palette |
 | `tests/bryo_golden.txt` | the screens' pixel fingerprints |
@@ -308,6 +308,23 @@ Porting the material files: they're gone from the tree but not from history. For
 Still open from phase 1: Felucca's MENU is gone (palette, speaker EQ, LEDs, HOLD, USB serial, ABOUT with the
 source QR code). The settings it wrote still apply. **Which gesture opens Bryo's system menu is a question for
 you** (Felucca used HOME held; Bryo's HOME is a device pad).
+
+## The screen, revised (2026-10-07)
+
+After phase 1, two changes to the screen, from your review:
+
+- **Track picking moved under GLO.** Hold GLO: the mixer comes up and white keys 1 to 4 pick the track (KNOB 1
+  to 4 set the levels); let go and you're back on the page. Tap GLO and the mixer stays up. The PRD's SEL (the
+  SCL pad) is free; I propose holding it for the system menu.
+- **The space the track tiles took is a visualization per page** (`firmware/src/ui_viz.c`), drawn from the
+  page's values: TAPE's loop window, GRAIN's cloud, RESONATOR's response, COLOR's sine through the device,
+  SPACE's echoes and tail, each modulator's shape in its slot colour, and the tracks in the mixer. The page's
+  last-turned knob is drawn in the accent and named in the panel's caption with its value, and on COLOR the
+  inset follows it (the drive curve, the noise, or the tone filter). The DSP will use the same mappings the
+  pictures do, so what's drawn is what you'll hear.
+
+The controls are mapped in `docs/controls.tsv` (one row per context, control and gesture, with status and
+phase), validated by `tests/controls_check.py`, which also fails if a physical control goes unmentioned.
 
 ## Build order
 

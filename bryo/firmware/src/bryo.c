@@ -85,6 +85,7 @@ static void ui_redraw(void);
 #include "settings.c"            /* the settings record (Felucca's layout, kept) */
 
 #include "ui.c"
+#include "ui_viz.c"              /* the visualization panel */
 #include "ui_input.c"
 #if FELUCCA_OTA
 #include "ota.c"

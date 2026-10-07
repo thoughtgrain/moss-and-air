@@ -1,0 +1,79 @@
+# SPDX-License-Identifier: GPL-3.0-only
+# Bryo: every control, by context and gesture. One row per (context, control, gesture). Tab separated; lines
+# starting with # are comments; the first other line is the header. tests/controls_check.py validates it.
+#
+# context   where the row applies: any | power-on | page (any device or slot page) | page:tape | page:grain |
+#           page:resonator | page:color | page:space | page:slot | mixer (GLO's view) | glo-held | slot-held |
+#           slot-held+step (a SEQ slot's pad and a white key held) | project-view | routing-view
+# control   BTN_<label> (the 14 buttons) | ENC_<role> (the 7 encoders) | POT_MASTER | WHITE_<n> (1..16, or a
+#           range n-m) | BLACK_<label> (OP1..OP6 PIT GLO MONO POLY ZERO, left to right)
+# gesture   press | tap (down and up within HOLD) | hold | release | turn | hold-turn (turn while the context's
+#           pad is held) | combo (held together with what the context names)
+# status    now (in the firmware, tested in tests/bryo_host.c) | planned (the PRD, in the phase named) |
+#           proposed (mine, waiting for a decision) | unassigned
+# phase     the build phase (docs/bryo-architecture.md) where it lands; - for now
+# source    PRD section, or "change" (agreed in conversation), or "kept" (from Felucca)
+context	control	gesture	action	status	phase	source
+any	POT_MASTER	turn	master output level (digital gain after the mix; USB follows unless USB LEVEL FIXED)	now	-	PRD 2.1
+any	BTN_OCTDN	combo	held with OCT+ for 5 s: UPDATE MODE countdown from 2 s, letting go cancels	now	-	kept
+power-on	BTN_OCTDN	combo	held with OCT+ at power-on: HARDWARE CALIBRATION (press each button, turn each encoder)	now	-	kept
+page	BTN_HOME	press	focus the track's source device (TAPE)	now	-	PRD 2.2
+page	BTN_EDIT	press	focus GRAIN; again: RESONATOR; again: GRAIN	now	-	PRD 2.2
+page	BTN_FX	press	focus COLOR; again: SPACE; again: COLOR	now	-	PRD 2.2
+page	BTN_LFO	press	focus modulator slot 1 (default engine WAVE)	now	-	PRD 2.2
+page	BTN_ENV	press	focus modulator slot 2 (default engine ADSR / FOLLOW)	now	-	PRD 2.2
+page	BTN_SEQ	press	focus modulator slot 3 (default engine SEQ)	now	-	PRD 2.2
+page	BTN_ARP	press	focus modulator slot 4 (default engine RANDOM)	now	-	PRD 2.2
+page	BTN_GLO	tap	open the mixer and keep it up	now	-	change
+page	BTN_GLO	hold	the mixer while held; letting go returns to the page	now	-	change
+page	BTN_SCL	press	nothing (the PRD's SEL; track picking moved under GLO)	unassigned	-	change
+page	BTN_SCL	hold	open the system menu (palette, speaker EQ, LEDs, USB serial, about)	proposed	-	change
+page	BTN_PLAY	press	start / stop the transport	now	-	PRD 2.2
+page	BTN_REC	press	arm / disarm the focused track's tape (the badge and LED now; recording in phase 2)	now	2	PRD 2.2
+page	BTN_SAVE	press	quick-save the active project (now: a message)	planned	8	PRD 2.2
+page	BTN_OCTDN	press	the white keys an octave down (the test tone now; RESONATOR notes, SEQ step pages later)	now	-	PRD 2.1
+page	BTN_OCTUP	press	the white keys an octave up	now	-	PRD 2.1
+page	ENC_K1	turn	the first value on the strip (and it becomes the page's last-turned: the visualization names it)	now	-	PRD 1
+page	ENC_K2	turn	the second value on the strip	now	-	PRD 1
+page	ENC_K3	turn	the third value on the strip	now	-	PRD 1
+page	ENC_K4	turn	the fourth value on the strip	now	-	PRD 1
+page	ENC_SELECT	turn	the global tempo, 40..240 BPM	now	-	PRD 2.1
+page	ENC_PRESETS	turn	open the project manager and scroll its slots (now: a message)	planned	8	change
+page	ENC_ALGORITHM	turn	open the routing matrix and move through its cells (now: a message)	planned	6	change
+page	WHITE_1-16	press	a test tone on the focused track (phase 1 only)	now	-	change
+page	BLACK_OP1	press	mute / unmute track 1	now	-	PRD 2.3
+page	BLACK_OP2	press	mute / unmute track 2	now	-	PRD 2.3
+page	BLACK_OP3	press	mute / unmute track 3	now	-	PRD 2.3
+page	BLACK_OP4	press	mute / unmute track 4	now	-	PRD 2.3
+page	BLACK_OP5	press	the focused track's tape: reverse on / off	planned	2	PRD 2.3
+page	BLACK_OP6	press	the focused track's tape: half speed on / off	planned	2	PRD 2.3
+page	BLACK_PIT	press	global pitch shift down (unmuted tracks)	planned	3	PRD 2.3
+page	BLACK_GLO	press	global pitch shift up (unmuted tracks)	planned	3	PRD 2.3
+page	BLACK_MONO	hold	held 0.5 s (countdown ring): clear the focused track's modulation routing; SAVE held undoes	planned	7	PRD 2.3
+page	BLACK_POLY	hold	held 0.5 s (countdown ring): clear the focused track's tape; SAVE held undoes	planned	2	PRD 2.3
+page	BLACK_ZERO	hold	momentary global granular freeze while held	planned	3	PRD 2.3
+page:tape	WHITE_1-16	press	play from slice n of the loop (finger drumming, stutter)	planned	2	PRD 2.3
+page:grain	WHITE_1-16	press	play from slice n of the loop, through the grains	planned	3	PRD 2.3
+page:resonator	WHITE_1-16	press	chromatic notes for the resonator (tuned feedback chords); OCT-/OCT+ shift	planned	4	PRD 2.3
+page:slot	WHITE_1-16	press	on a SEQ slot: the 16 steps (OCT-/OCT+: steps 17-32)	planned	7	PRD 2.3
+mixer	ENC_K1	turn	track 1 level	now	-	change
+mixer	ENC_K2	turn	track 2 level	now	-	change
+mixer	ENC_K3	turn	track 3 level	now	-	change
+mixer	ENC_K4	turn	track 4 level	now	-	change
+mixer	BTN_GLO	tap	close the mixer	now	-	change
+mixer	BTN_HOME	press	close the mixer and focus the source (any page pad does the same for its page)	now	-	change
+mixer	BTN_EDIT	hold	the mixer's second page: pan, track filter, master compressor	planned	6	PRD 2.2
+glo-held	WHITE_1-4	press	focus track 1..4 (the white keys don't play while GLO is held)	now	-	change
+glo-held	ENC_K1-4	turn	the four track levels; letting go of GLO returns to the page	now	-	change
+glo-held	BTN_GLO	release	back to the page if something was done or it was held past HOLD; else the mixer stays up	now	-	change
+slot-held	ENC_K1-4	hold-turn	modulation depth from this slot to that knob's parameter on the page; release commits	planned	7	PRD 4.2
+slot-held	ENC_SELECT	hold-turn	choose the slot's engine (WAVE, RANDOM, ADSR/FOLLOW, SEQ); release commits	planned	7	change
+slot-held	BTN_HOME	hold	(on HOME) choose the track's source engine with SELECT: TAPE, SYNTH, POLY	planned	2	change
+slot-held+step	ENC_K1-4	hold-turn	the depth for that step only (p-lock); release the key and pad to commit	planned	7	PRD 4.3
+project-view	ENC_PRESETS	turn	move through the project slots	planned	8	change
+project-view	BTN_OCTUP	press	load the selected project	planned	8	change
+project-view	BTN_OCTDN	press	leave the project manager	planned	8	change
+project-view	BTN_SAVE	press	save into the selected slot	planned	8	PRD 2.1
+routing-view	ENC_ALGORITHM	turn	move through the routing cells (track -> track's tape)	planned	6	change
+routing-view	BTN_OCTUP	press	toggle the selected route	planned	6	change
+routing-view	BTN_OCTDN	press	leave the routing matrix	planned	6	change

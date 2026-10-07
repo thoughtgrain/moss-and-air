@@ -6,8 +6,9 @@
  *   EDIT           focus GRAIN, again RESONATOR, again GRAIN ...
  *   FX             focus COLOR, again SPACE ...
  *   LFO ENV SEQ ARP  focus modulator slot 1..4
- *   SEL (SCL pad)  held: white keys 1..4 pick the track
- *   GLO            the global mixer (KNOB 1..4: track levels); again: back
+ *   GLO held       the mixer while held: white keys 1..4 pick the track, KNOB 1..4 set the levels; let go: back
+ *   GLO tapped     the mixer stays up; tap again (or any page pad): back
+ *   SCL            unassigned (the PRD's SEL; track picking moved under GLO)
  *   PLAY           start / stop
  *   REC            arm the focused track (recording arrives with TAPE, phase 2)
  *   OCT- / OCT+    the white keys' octave
@@ -68,8 +69,6 @@ static void ui_leds(void)
         ready = 1;
     }
     led_put(nl, panel.btn[focus_btn()], 1);
-    if (ui.sel_held)
-        led_put(nl, panel.btn[B_SCL], 1);
     led_put(nl, panel.btn[B_REC], (ui.rec >> sys.sel) & 1u);
     led_put(nl, panel.btn[B_OCTDN], track[sys.sel].octave < 3u);
     led_put(nl, panel.btn[B_OCTUP], track[sys.sel].octave > 3u);
@@ -97,18 +96,48 @@ static void ui_leds(void)
 }
 
 /* ----------------------------------------------------------- actions --- */
+/* a page pad: that page (the mixer closes); the visualization starts without a last-turned knob */
 static void focus_dev(uint32_t d)
 {
     ui.view = VIEW_PAGE;
+    ui.glo_latched = 0;
     ui.kind = FOCUS_DEV;
     ui.dev = (uint8_t)d;
+    ui.last = 0xFF;
 }
 
 static void focus_slot(uint32_t s)
 {
     ui.view = VIEW_PAGE;
+    ui.glo_latched = 0;
     ui.kind = FOCUS_SLOT;
     ui.slot = (uint8_t)s;
+    ui.last = 0xFF;
+}
+
+/* GLO down: the mixer comes up and stays while GLO is held */
+static void glo_down(void)
+{
+    ui.glo_held = 1;
+    ui.glo_used = 0;
+    ui.glo_t0 = fm1_ms;
+    ui.view = VIEW_MIXER;
+    ui.last = 0xFF;
+}
+
+/* GLO up: after a hold that did something, or a long hold, back to the page; after a tap, the mixer stays (a tap
+ * on a mixer that was already up closes it) */
+static void glo_up(void)
+{
+    int tap = !ui.glo_used && (uint32_t)(fm1_ms - ui.glo_t0) < HOLD_MS[settings_hold % 4u];
+    ui.glo_held = 0;
+    if (tap && !ui.glo_latched) {
+        ui.glo_latched = 1;
+        return;
+    }
+    ui.glo_latched = 0;
+    ui.view = VIEW_PAGE;
+    ui.last = 0xFF;
 }
 
 static void on_button(uint32_t b)
@@ -128,7 +157,7 @@ static void on_button(uint32_t b)
     case B_SEQ: focus_slot(2); break;
     case B_ARP: focus_slot(3); break;
     case B_GLO:
-        ui.view = ui.view == VIEW_MIXER ? VIEW_PAGE : VIEW_MIXER;
+        glo_down();
         break;
     case B_PLAY:
         sys.playing = (uint8_t)!sys.playing;
@@ -170,26 +199,32 @@ static void on_knob(uint32_t c, int32_t d)
         *vp = v;
     ui.hot = (uint8_t)c;
     ui.hot_t = 33;
+    ui.last = (uint8_t)c;
+    if (ui.glo_held)
+        ui.glo_used = 1;
 }
 
 static void ui_input(void)
 {
-    uint32_t pressed = fm1_input_edges(0), notes = fm1_input_note_edges(), id, k;
+    uint32_t released = 0, pressed = fm1_input_edges(&released), notes = fm1_input_note_edges(), id, k;
     int32_t d;
-    ui.sel_held = (uint8_t)((fm1_in.buttons >> panel.btn[B_SCL]) & 1u);
-    sys.keys_live = (uint8_t)!ui.sel_held;
     for (id = 0; id < NB; id++)
         if ((pressed >> id) & 1u) {
             uint32_t b = panel_btn_of(id);
             if (b < NB)
                 on_button(b);
         }
+    if (ui.glo_held && (((released >> panel.btn[B_GLO]) & 1u) || !((fm1_in.buttons >> panel.btn[B_GLO]) & 1u)))
+        glo_up();
+    sys.keys_live = (uint8_t)!ui.glo_held;            /* under GLO the white keys pick, they don't play */
     for (k = 0; k < 27u; k++)
         if ((notes >> k) & 1u) {
-            if (KEY_BLACK[k] != KEY_NONE)
+            if (KEY_BLACK[k] != KEY_NONE) {
                 on_black(KEY_BLACK[k]);
-            else if (ui.sel_held && KEY_WHITE[k] < NTRK)
-                sys.sel = KEY_WHITE[k];                  /* SEL + white key 1..4: the track */
+            } else if (ui.glo_held && KEY_WHITE[k] < NTRK) {
+                sys.sel = KEY_WHITE[k];                  /* GLO + white key 1..4: the track */
+                ui.glo_used = 1;
+            }
         }
     for (k = 0; k < 4u; k++)
         if ((d = panel_enc(EN_K1 + k)) != 0)
