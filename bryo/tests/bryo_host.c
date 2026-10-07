@@ -25,10 +25,10 @@
 
 /* ------------------------------------------------------------ HAL stubs --- */
 #define FM1_NCOL 11u
-static const int8_t FM1_KEYMAP[6][FM1_NCOL] = {
-    {-1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1}, {-1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1},
-    {-1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1}, {-1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1},
-    {-1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1}, {-1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1}};
+static const int8_t FM1_KEYMAP[6][FM1_NCOL] = {         /* (hal/fm1_input.h's: where each LED is) */
+    {-1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1}, {5, 11, 4, 10, 3, 9, 2, 8, -1, -1, -1},
+    {34, 35, 36, 37, 38, 40, 39, 13, 7, 6, 12}, {23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33},
+    {0, 1, 15, 14, 17, 16, 19, 18, 20, 21, 22}, {-1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1}};
 static uint8_t fm1_led[FM1_NCOL], fm1_led_dim[FM1_NCOL];
 static void fm1_led_dim_level(uint32_t lo) { (void)lo; }
 #define FM1_TICKS_PER_US 1u
@@ -93,6 +93,7 @@ static int rf_prog(uint32_t off, const void *src, uint32_t n)
 #include "../firmware/src/ui.c"
 #include "../firmware/src/ui_viz.c"
 #include "../firmware/src/ui_input.c"
+#define BRYO_MSC 1                                       /* (vdisk.c's hooks for msc.c: tested without USB) */
 #include "../firmware/src/vdisk.c"
 
 static int fails;
@@ -814,7 +815,7 @@ static void hd_write_file(uint8_t *e, const char *short83, const char *lfn, cons
             cl[k++] = c;
     for (i = 0; i < need; i++) {
         uint32_t s;
-        for (s = 0; s < hd_spc; s++, w += 512) {
+        for (s = 0; s < hd_spc && w < n; s++, w += 512) {   /* (the file's sectors, not the cluster's slack) */
             memset(sec, 0, 512);
             if (w < n)
                 memcpy(sec, data + w, n - w < 512 ? n - w : 512);
@@ -893,11 +894,13 @@ static double view_hz(const tape_view_t *v, int32_t *peak)
 {
     tape_rd_t r = {0};
     uint32_t i, cross = 0, n = v->len - 512 > 22050 ? 22050 : v->len - 512;   /* (not the last block's padding) */
-    int32_t prev = 0, pk = 0;
-    for (i = 2000; i < n; i++) {
+    int32_t low = 0, pk = 0;
+    for (i = 2000; i < n; i++) {                         /* (with hysteresis: ADPCM noise near 0 is no crossing) */
         int32_t x = tape_at(v, &r, (int32_t)i);
-        cross += prev < 0 && x >= 0;
-        prev = x;
+        if (x < -1000)
+            low = 1;
+        else if (x > 1000 && low)
+            cross++, low = 0;
         pk = abs(x) > pk ? abs(x) : pk;
     }
     *peak = pk;
@@ -1014,6 +1017,300 @@ static void test_drive(void)
     uslot_names();
 }
 
+/* a WAV with the odd parts: 8 or 16 bits, a chunk of odd length (padded), a fmt chunk of fmtlen bytes (40:
+ * WAVE_FORMAT_EXTENSIBLE, subformat sub) */
+static uint32_t make_wav_x(uint8_t *o, uint32_t rate, uint32_t bits, uint32_t fmtlen, uint32_t sub, uint32_t frames,
+                           double hz)
+{
+    uint32_t bpf = bits / 8, n = frames * bpf, p = 12, i;
+    uint8_t *f;
+    memcpy(o, "RIFF\0\0\0\0WAVE", 12);
+    memcpy(o + p, "junk", 4);                            /* 7 bytes and a pad byte */
+    wr32(o + p + 4, 7);
+    memset(o + p + 8, 0x55, 8);
+    p += 16;
+    memcpy(o + p, "fmt ", 4);
+    wr32(o + p + 4, fmtlen);
+    f = o + p + 8;
+    memset(f, 0, fmtlen);
+    wr16(f, fmtlen >= 40 ? 0xFFFE : 1);
+    wr16(f + 2, 1);
+    wr32(f + 4, rate);
+    wr32(f + 8, rate * bpf);
+    wr16(f + 12, bpf);
+    wr16(f + 14, bits);
+    if (fmtlen >= 40) {
+        wr16(f + 16, 22);
+        wr16(f + 18, bits);
+        wr32(f + 20, 4);
+        wr16(f + 24, sub);
+    }
+    p += 8 + fmtlen;
+    memcpy(o + p, "data", 4);
+    wr32(o + p + 4, n);
+    p += 8;
+    for (i = 0; i < frames; i++) {
+        double v = 0.5 * sin(2 * M_PI * hz * i / rate);
+        if (bits == 8)
+            o[p + i] = (uint8_t)(128 + (int)(v * 127));
+        else
+            wr16(o + p + 2 * i, (uint16_t)(int16_t)(v * 32767));
+    }
+    wr32(o + 4, p + n - 8);
+    return p + n;
+}
+
+/* the tape's edges: an empty user reel, a loop shorter than a block, the seam running backwards */
+static void test_tape_edges(void)
+{
+    tape_view_t v;
+    tape_rd_t r = {0};
+    int32_t ls, ll, lo, hi, inside = 1;
+    uint32_t i, len;
+    power_on();
+    check("GAIN in dB: +6 doubles, -12 quarters, 0 is unity", db_q10(6) == 2048 && db_q10(-12) == 256 &&
+          db_q10(0) == 1024);
+    tp[2].dev[DEV_SRC][TK_REEL] = (int16_t)(NREEL + USLOT_N);   /* user reel 6: empty */
+    tape_view(2, &v);
+    check("a track on an empty user reel plays nothing", v.len == 0 && !v.ram && tape_peak_at(2, 500) == 0);
+    tape_ctl[2].nblk = 0;
+    check("..REC on it records onto a blank tape at full length", tape_prepare(2) && tape_src(2) == 0 &&
+          tape_ctl[2].nblk == TAPE_NBLK && !tape_ctl[2].empty && tape_ram[2].peak[100] == 0);
+    check("..armed twice: still armed, nothing copied again", tape_prepare(2));
+    tape_unprepare(2);
+    tape_view(0, &v);
+    check("a read past the end of the tape is silence", tape_read(&v, &r, (int32_t)(v.len + 5u) << 12) == 0 &&
+          tape_at(&v, &r, -1) == 0);
+    tape_rt[2].wstaged = 1;                              /* a block staged as the tape is cleared: dropped */
+    tape_ctl[2].empty = 1;
+    i = tape_ver[2];
+    tape_commit(2);
+    check("a staged block on a tape cleared meanwhile is dropped", !tape_rt[2].wstaged && tape_ver[2] == i);
+    tape_ctl[2].empty = 0;
+
+    len = REELS[0].nblk * TAPE_BLK;
+    tp[0].dev[DEV_SRC][TK_STRT] = 100;                   /* STRT at the end, LEN 1 %: one block, the last */
+    tp[0].dev[DEV_SRC][TK_LEN] = 1;
+    tape_window(0, 10000, &ls, &ll);                     /* (1 % of 10,000 samples: 100, under a block) */
+    check("LEN under a block is a block; STRT at the end keeps the window on the tape",
+          ll == (int32_t)TAPE_BLK && ls == 10000 - (int32_t)TAPE_BLK);
+    tp[0].dev[DEV_SRC][TK_REV] = 1;                      /* backwards over a short loop: the seam every 12 ms */
+    tp[0].dev[DEV_SRC][TK_STRT] = 30;
+    tp[0].dev[DEV_SRC][TK_LEN] = 2;
+    tape_window(0, len, &lo, &ll);
+    hi = lo + ll;
+    sys.playing = 1;
+    for (i = 0; i < 400u; i++) {
+        render(1, 0);
+        inside &= (tape_rt[0].pos >> 12) >= lo && (tape_rt[0].pos >> 12) < hi;
+    }
+    check("REV over a 2 % loop: the head wraps back to the end, never leaves the window", inside &&
+          tape_rt[0].running);
+    sys.playing = 0;
+    render(400, 0);
+    tp[0].dev[DEV_SRC][TK_REV] = 0;
+    tp[0].dev[DEV_SRC][TK_STRT] = 0;
+    tp[0].dev[DEV_SRC][TK_LEN] = 100;
+    tp[2].dev[DEV_SRC][TK_REEL] = 3;
+}
+
+/* the LEDs, OCT-, the messages, panic */
+static uint32_t led_lit;
+static void led_on(const uint8_t *a, uint32_t id)
+{
+    uint32_t p, r;
+    for (p = 0; p < FM1_NCOL; p++)
+        for (r = 1; r < 5u; r++)
+            if (FM1_KEYMAP[r][p] == (int8_t)id)
+                return (void)(led_lit = (a[p] >> r) & 1u);
+    led_lit = 0;
+}
+static void test_controls_more(void)
+{
+    uint32_t oct;
+    power_on();
+    sys.sel = 0;
+    track[1].mute = 1;
+    ui_leds();
+    led_on(fm1_led, panel.btn[B_HOME]);
+    {
+        uint32_t home = led_lit, mute2, mute1, glow;
+        led_on(fm1_led, 14u + black_note(BK_OP1 + 1));
+        mute2 = led_lit;
+        led_on(fm1_led, 14u + black_note(BK_OP1));
+        mute1 = led_lit;
+        led_on(fm1_led_dim, panel.btn[B_FX]);
+        glow = led_lit;
+        check("LEDs: the focus (HOME on TAPE) lit, track 2's mute key lit, track 1's not, the rest glow (DIM)",
+              home && mute2 && !mute1 && glow);
+    }
+    settings_leds = LEDS_INV;
+    sys.playing = 1;
+    ui_leds();
+    led_on(fm1_led, panel.btn[B_HOME]);
+    {
+        uint32_t home = led_lit, fx, play;
+        led_on(fm1_led, panel.btn[B_FX]);
+        fx = led_lit;
+        led_on(fm1_led, panel.btn[B_PLAY]);
+        play = led_lit;
+        check("..INV: the focus dark, the rest lit, no glow; playing: PLAY's own LED dark (its green on)",
+              !home && fx && !play && !fm1_led_dim[0] &&
+              ((fm1_led[LED_PLAY_GREEN >> 3] >> (LED_PLAY_GREEN & 7u)) & 1u));
+    }
+    settings_leds = LEDS_DIM;
+    sys.playing = 0;
+    track[1].mute = 0;
+    press(B_LFO);
+    ui_leds();
+    led_on(fm1_led, panel.btn[B_LFO]);
+    check("..a modulator slot focused: its pad lit", led_lit);
+    press(B_HOME);
+
+    oct = track[0].octave;
+    press(B_OCTDN);
+    check("OCT-: one octave down", track[0].octave == oct - 1u);
+    track[0].octave = 1;
+    press(B_OCTDN);
+    check("..not below 1", track[0].octave == 1);
+    track[0].octave = (uint8_t)oct;
+
+    tape_ctl[0].nblk = 10;                               /* a take on track 1's tape, a reel chosen over it */
+    tape_ctl[0].empty = 0;
+    tp[0].dev[DEV_SRC][TK_REEL] = 2;
+    ui.msg_t = 0;
+    press(B_REC);
+    check("REC on a reel over a take: refused, and the message says how", !(sys.rec & 1u) && ui.msg_t &&
+          !strcmp(ui.msg, "TAPE HAS A TAKE: CLEAR IT (HOLD POLY)"));
+    tp[0].dev[DEV_SRC][TK_REEL] = 1;
+    tape_ctl[0].nblk = 0;
+
+    host_enc[panel.enc[EN_PRESET]] = 1;
+    ui_input();
+    check("PRESET turned: the message says when projects arrive", !strcmp(ui.msg, "PROJECTS ARRIVE IN PHASE 8"));
+    host_enc[panel.enc[EN_ALGO]] = 1;
+    ui_input();
+    check("ALGORITHM turned: the message says when routing arrives", !strcmp(ui.msg, "ROUTING ARRIVES IN PHASE 6"));
+
+    hold(B_GLO);                                         /* GLOBAL held, EDIT: the channel page (GLOBAL used) */
+    hold(B_EDIT);
+    check("on the mixer, GLOBAL held + EDIT: the channel page, GLOBAL counted as used", ui.view == VIEW_MIXER &&
+          ui.chan && ui.glo_used);
+    let_go(B_EDIT);
+    let_go(B_GLO);
+    check("..both let go: back to the page", ui.view == VIEW_PAGE && !ui.chan);
+
+    track[0].mute = 1;
+    ui.force = 1;
+    ui_draw();
+    check("the footer says MUTE for a muted track", ui.sig_foot != 0);
+    track[0].mute = 0;
+    ui.force = 0;
+    ui_redraw();
+    check("ui_redraw asks for a whole redraw", ui.force);
+    sys.playing = 1;
+    sys.keys_live = 3;
+    chain_panic();
+    check("panic: the transport stops, the keys let go", !sys.playing && !sys.keys_live);
+}
+
+/* the drive's less travelled paths */
+static void test_drive_more(void)
+{
+    static uint8_t buf[400000], wav[400000];
+    tape_view_t v;
+    uint8_t sec[512], *e;
+    uint32_t n, i, ok, s;
+    int32_t pk;
+    double hz;
+    char b[120];
+    power_on();
+    vdisk_mount();
+    hd_mount();
+    n = hd_read_file(hd_find("REEL2   WAV"), buf, sizeof buf);
+    {
+        const reel_t *r = &REELS[1];
+        tape_view_t rv = {r->data, r->pred, r->idx, r->peak, r->nblk * TAPE_BLK, 0};
+        tape_rd_t rd = {0};
+        ok = n == 44 + rv.len * 2;
+        for (i = 0; i < rv.len && ok; i += 89)
+            ok = (int16_t)rd16(buf + 44 + 2 * i) == tape_at(&rv, &rd, (int32_t)i);
+    }
+    check("REEL2.WAV is factory reel 2, sample for sample", ok);
+
+    memset(sec, 'n', sizeof sec);                        /* a file that isn't a WAV: kept in the write cache */
+    hd_write_file(0, "NOTES   TXT", 0, sec, 512, 1);
+    e = hd_find("NOTES   TXT");
+    memset(buf, 0, 512);
+    hd_read_file(e, buf, 512);
+    vdisk_read(VD_TOTAL - 1, sec);
+    for (i = 0, ok = 1; i < 512; i++)
+        ok &= sec[i] == 0;
+    check("a sector the computer wrote reads back (the write cache); one nobody wrote reads as zeros",
+          !memcmp(buf, "nnnn", 4) && buf[511] == 'n' && ok);
+
+    n = make_wav_x(wav, 11025, 8, 16, 0, 11025, 500.0);  /* 8-bit, 11,025 Hz, after a chunk of odd length */
+    hd_write_file(0, "LOFI    WAV", 0, wav, n, 1);
+    vdisk_poll();
+    uslot_view(0, &v);
+    hz = view_hz(&v, &pk);
+    snprintf(b, sizeof b, "an 8-bit 11,025 Hz WAV with an odd-length chunk: up to 22,050 Hz, LOFI, %.0f Hz", hz);
+    check(b, uslot_valid(0) && !strcmp(uslot_name[0], "LOFI") && fabs(hz - 500) < 10 && pk > 12000 &&
+          v.len >= 22050u);
+
+    e = hd_find("NOTES   TXT");                          /* the computer deletes a file: its entry is skipped */
+    e[0] = 0xE5;
+    n = make_wav_x(wav, 22050, 16, 40, 1, 11025, 700.0); /* WAVE_FORMAT_EXTENSIBLE, PCM, named USER5 */
+    hd_write_file(0, "USER5   WAV", 0, wav, n, 1);
+    vdisk_poll();
+    uslot_view(4, &v);
+    hz = view_hz(&v, &pk);
+    snprintf(b, sizeof b, "an EXTENSIBLE WAV named USER5.WAV goes to user reel 5 (U5), past a deleted entry: %.0f Hz", hz);
+    check(b, uslot_valid(4) && !strcmp(uslot_name[4], "U5") && !uslot_valid(1) && fabs(hz - 700) < 14);
+
+    tape_undo.valid = 1;                                 /* a cleared take on track 3 waiting for undo */
+    tape_undo.trk = 2;
+    e = hd_find("TAPE3   WAV");
+    n = make_wav_x(wav, 22050, 16, 16, 0, 5000, 400.0);
+    hd_write_file(e, 0, 0, wav, n, 1);
+    vdisk_poll();
+    check("a WAV over TAPE3.WAV: track 3's tape, its undo dropped, the reel set to the tape",
+          !tape_undo.valid && tape_src(2) == 0 && tape_ctl[2].nblk == (5000 + 255) / 256 &&
+          !strcmp(ui.msg, "TRACK 3'S TAPE REPLACED"));
+
+    for (s = 0; s < USLOT_N; s++)                        /* every user reel taken */
+        if (!uslot_valid(s))
+            uslot_save(s, REELS[0].data, REELS[0].pred, REELS[0].idx, REELS[0].peak, REELS[0].nblk, "FULL");
+    n = make_wav_x(wav, 22050, 16, 16, 0, 3000, 400.0);
+    hd_write_file(0, "MORE    WAV", 0, wav, n, 1);
+    vdisk_poll();
+    check("every user reel full: refused, and the message says how to replace one",
+          !strcmp(ui.msg, "NO FREE REEL: NAME IT USER1-6.WAV") && !strcmp(uslot_name[1], "FULL"));
+    host_prog_limit = 0;
+    hd_write_file(0, "USER2   WAV", 0, wav, n, 1);
+    vdisk_poll();
+    host_prog_limit = 0xFFFFFFFFu;
+    check("..named USER2.WAV but the flash refuses: the message says so, the slot reads empty",
+          !strcmp(ui.msg, "THE FLASH REFUSED THE SAVE") && !uslot_valid(1) && !strcmp(uslot_name[1], "U2"));
+
+    check("msc.c's view of the disk: 130,048 sectors, ready", msc_blocks() == VD_TOTAL && msc_ready());
+    msc_attached();                                      /* a bus reset: plugged in again */
+    check("..a bus reset: not ready until the main loop has made the volume afresh", !msc_ready() && vd.remount);
+    vdisk_poll();
+    msc_read(0, sec);
+    hd_mount();
+    check("..then ready, with the user reels as files (USER5.WAV), the boot sector through msc_read",
+          msc_ready() && !vd.remount && sec[510] == 0x55 && hd_find("USER5   WAV") && !hd_find("LOFI    WAV"));
+    memset(sec, 7, sizeof sec);
+    msc_write(VD_DATA + 5000, sec);
+    memset(sec, 0, sizeof sec);
+    msc_read(VD_DATA + 5000, sec);
+    msc_eject();
+    check("..msc_write then msc_read of a sector: the same bytes", sec[0] == 7 && sec[511] == 7);
+    memset(host_nor, 0xFF, sizeof host_nor);
+    uslot_names();
+}
+
 int main(int argc, char **argv)
 {
     out_dir = argc > 1 ? argv[1] : "build/bryo_ui";
@@ -1021,6 +1318,9 @@ int main(int argc, char **argv)
     test_tape();
     test_uslots();
     test_drive();
+    test_drive_more();
+    test_tape_edges();
+    test_controls_more();
     test_input();
     test_settings();
     palette_set(UI_GREY_INDEX);                          /* (the screens are one ink now, whatever the palette) */

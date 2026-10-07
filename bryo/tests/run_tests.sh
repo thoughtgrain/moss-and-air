@@ -9,12 +9,14 @@
 #                        JieLi compiler's front end: types, declarations, missing symbols); build.py's register rules
 #   hardware layer       storage (A/B, torn writes), the input scan (debounce, encoders, LEDs), the TRS MIDI parser,
 #                        USB audio (descriptors with and without CDC, ring, packets), every USB descriptor layout,
-#                        the drive's USB side (tests/usb_msc_test.c: Mass Storage descriptors, bulk-only, SCSI)
+#                        the drive's USB side (tests/usb_msc_test.c: Mass Storage descriptors, bulk-only, SCSI;
+#                        tests/usb_sie_test.c: usb.c itself against an emulated controller, Linux x86-64)
 #   display              text against the reference renderer, palettes (contrast, GREY gray, MONO neutral)
 #   Bryo                 tests/bryo_host.c: the chain (silence, pitch, mute, release, shedding, the ceiling), the
 #                        input mapping, every screen; tests/ui_golden.py: the screens pixel-identical
 #                        to tests/bryo_golden.txt (a change of the screen must be deliberate: update it then);
-#                        tests/controls_check.py: docs/controls.tsv well formed, every physical control in it
+#                        tests/controls_check.py: docs/controls.tsv well formed, every physical control in it;
+#                        the factory reels deterministic; tests/coverage.py: line coverage (with gcov)
 #   installer            tools/fm1_install.py against a simulated FM-1; the web installer and its backup code
 # With ./build.sh's build/felucca.fwsc: the M-UPGRADE entry and the update loader against the real package.
 set -e
@@ -73,6 +75,8 @@ run "USB audio: descriptors (without CDC), ring and packets" "$OUT/uac_test_nocd
 for u in 0 1; do
     $CC -DT_UAC=$u -o "$OUT/usb_msc_test" tests/usb_msc_test.c
     run "the drive's USB side (UAC $u): descriptors, bulk-only transport, SCSI" "$OUT/usb_msc_test"
+    $CC -no-pie -DT_UAC=$u -o "$OUT/usb_sie_test" tests/usb_sie_test.c
+    run "usb.c against an emulated controller (UAC $u): enumeration, EP0 requests, the drive over EP3" "$OUT/usb_sie_test"
 done
 for v in 1.1.0.1 1.1.1.1 1.1.2.1 1.1.3.1 1.1.0.0 1.1.2.0 1.0.0.1 1.0.1.1 1.0.0.0 0.1.0.1 0.0.0.1; do
     IFS=. read -r t_cdc t_uac t_lay t_on <<EOF
@@ -97,6 +101,13 @@ $CC -I"$GEN" -Itests -o "$OUT/bryo_host" tests/bryo_host.c -lm
 run "Bryo: chain, input mapping, every screen" "$OUT/bryo_host" build/bryo_ui
 run "Bryo screens pixel-identical to tests/bryo_golden.txt" "$PY" tests/ui_golden.py check tests/bryo_golden.txt build/bryo_ui
 run "controls map (docs/controls.tsv): well formed, every physical control mapped" "$PY" tests/controls_check.py
+reels_same() { "$PY" tools/gen_reels.py "$OUT/reels_a.h" >/dev/null && "$PY" tools/gen_reels.py "$OUT/reels_b.h" >/dev/null &&
+               cmp -s "$OUT/reels_a.h" "$OUT/reels_b.h" && cmp -s "$OUT/reels_a.h" "$GEN/bryo_reels.h"; }
+run "factory reels: tools/gen_reels.py makes the same bytes every time (the screens' fingerprints rely on it)" reels_same
+if command -v gcov >/dev/null 2>&1; then
+    echo "== line coverage of Bryo's files (tests/coverage.py; --lines lists the lines never run)"
+    "$PY" tests/coverage.py || fail=1
+fi
 
 # ---- the installer
 run "installer CLI (fm1_install.py) against a simulated FM-1" "$PY" tests/install_test.py

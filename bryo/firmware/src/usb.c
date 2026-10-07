@@ -698,7 +698,6 @@ static void ep0_service(void)
             goto stall;
         goto ack;
 #endif
-#if FELUCCA_UAC
 #if BRYO_MSC
     case 0xA1FE:                                        /* GET MAX LUN: one drive */
         if (!MSC_ON)
@@ -711,6 +710,7 @@ static void ep0_service(void)
         msc_reset();
         goto ack;
 #endif
+#if FELUCCA_UAC
     case 0x2201:                                        /* SET_CUR, endpoint: sampling frequency */
         if (s[4] != 0x84u || s[3] != 1u)
             goto stall;
