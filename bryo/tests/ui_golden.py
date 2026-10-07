@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: GPL-3.0-only
-"""Moss: pixel fingerprints of every UI render, so a refactor can prove it changed nothing on screen.
+"""Bryo: pixel fingerprints of every UI render, so a refactor can prove it changed nothing on screen.
 
   tests/ui_golden.py check  GOLDEN UI_DIR      exit 1 with the list of screens whose pixels changed
   tests/ui_golden.py update GOLDEN UI_DIR      rewrite GOLDEN (only for reviewed, intentional changes)
@@ -38,7 +38,7 @@ def main():
     if mode == "update":
         body = "".join(f"{h}  {n}\n" for n, h in sorted(now.items()))
         Path(golden).write_text("# SPDX-License-Identifier: GPL-3.0-only\n"
-                                "# Moss: SHA-256 of every UI render (tests/ui_golden.py)\n" + body)
+                                "# Bryo: SHA-256 of every UI render (tests/ui_golden.py)\n" + body)
         print(f"ui_golden: {len(now)} renders written to {golden}")
         return
     if not Path(golden).exists():

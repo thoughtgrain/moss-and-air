@@ -611,7 +611,7 @@ static void draw_foot(void)
     }
     cv_blit(0, Y_FOOT);
 }
-/* ---- the cards: each page fills four card_t, cards_draw draws them (Moss) ----
+/* ---- the cards: each page fills four card_t, cards_draw draws them (Bryo) ----
  * One filler per kind of page, picked by draw_columns; the drawing is draw_column's, unchanged. card_set takes from
  * the globals what draw_column took at the same moment: fmt_named (params.c param_format: the value is a name) and
  * card_mot_next (card_mot_of: MOTION drives it), and clears them as draw_column did, so filling the four in order

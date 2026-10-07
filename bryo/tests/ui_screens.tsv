@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: GPL-3.0-only
-# Moss: every screen tests/ui_render.c draws, by the pattern it is built from (tests/ui_screens.py checks the
+# Bryo: every screen tests/ui_render.c draws, by the pattern it is built from (tests/ui_screens.py checks the
 # list is complete and groups the PNGs by it). Columns, tab separated:
 #   screen  the render's name (build/ui_new/<palette>/<screen>.png)
 #   shell   PAGE (header, 4 cards, panel, footer) | LAYER (the PAGE frame drawn by ui_layer.c: the layer's cards, key map and key row) | DIALOG | MENU | NAME | INFO

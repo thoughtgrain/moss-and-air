@@ -1,4 +1,4 @@
-# Moss UI assessment: every screen, and how many share one pattern
+# Bryo UI assessment: every screen, and how many share one pattern
 
 Written 2026-10-07 against the Felucca 1.0.3 import (`b22a24b`). I haven't changed any firmware yet. This is
 the map I want before touching the drawing code, plus the tests that make a refactor safe.

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: GPL-3.0-only
-"""Moss: the screens by pattern.
+"""Bryo: the screens by pattern.
 
   tests/ui_screens.py MANIFEST UI_DIR [PALETTE ...]
 

@@ -1,8 +1,8 @@
-> **This is Moss, a fork of [Felucca](https://github.com/hugelton/Felucca)** by Leo Kuroshita /
+> **This is Bryo, a fork of [Felucca](https://github.com/hugelton/Felucca)** by Leo Kuroshita /
 > Hügelton Instruments, based on Felucca 1.0.3. Huge thanks to them for the firmware this whole
 > project grows from: see [ACKNOWLEDGEMENTS.md](ACKNOWLEDGEMENTS.md) and [NOTICE.md](NOTICE.md).
 > The text below is upstream's README; links in it point to the Felucca project, its installer
-> and its issue tracker. Please don't report Moss bugs there.
+> and its issue tracker. Please don't report Bryo bugs there.
 
 # Felucca
 
