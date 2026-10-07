@@ -317,7 +317,7 @@ After phase 1, two changes to the screen, from your review:
   to 4 set the levels); let go and you're back on the page. Tap GLO and the mixer stays up. The PRD's SEL (the
   SCL pad) is free; I propose holding it for the system menu.
 - **The space the track tiles took is a visualization per page** (`firmware/src/ui_viz.c`), drawn from the
-  page's values: TAPE's loop window, GRAIN's cloud, RESONATOR's response, COLOR's sine through the device,
+  page's values: TAPE's loop window, the sample lit where GRAIN's grains read it (solid blocks in a stereo lane), RESONATOR's response, COLOR's sine through the device,
   SPACE's echoes and tail, each modulator's shape in its slot colour, and the tracks in the mixer. The page's
   last-turned knob is drawn in the accent and named in the panel's caption with its value, and on COLOR the
   inset follows it (the drive curve, the noise, or the tone filter). The DSP will use the same mappings the

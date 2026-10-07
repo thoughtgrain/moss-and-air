@@ -4,8 +4,8 @@
  * changes:
  *
  *   TAPE       the loop window on the tape (START, LENGTH), the playhead, SPEED's direction, DUB's depth
- *   GRAIN      the grain cloud: grains across the loop (DENS), their length (SIZE), their pitch (PITCH, the cycles
- *              inside each grain) and their place in the stereo field (SPREAD, up = left, down = right)
+ *   GRAIN      the sample in TAPE's loop window, lit where grains read it (SIZE, scaled by PITCH), and one solid
+ *              block per grain (DENS) in a stereo lane under it (SPREAD, up = left, down = right)
  *   RESONATOR  the response of the tuned feedback network over 8 octaves: peaks on ROOT's harmonics, as sharp
  *              as FDBK makes them, rolling off with DAMP, blended with the dry line by MIX
  *   COLOR      a sine through the device; the inset shows what the last-turned knob does: the transfer curve
@@ -107,42 +107,58 @@ static void viz_tape(const int16_t *v, uint32_t f)
 }
 
 /* ------------------------------------------------------------- GRAIN --- */
+/* The sample under the grains: its envelope at position pos (0..1000 of the tape), 0..1000. Until TAPE records
+ * (phase 2) it is a demo: a loop of eight decaying hits with some grit, and the caption says DEMO; phase 2 reads
+ * the track's tape here instead, and the drawing stays as it is. */
+#define TAPE_MS 3300                 /* a tape's length (docs/bryo-architecture.md: 36 KiB of ADPCM at 22.05 kHz) */
+static int32_t tape_env(uint32_t t, int32_t pos)
+{
+    int32_t d = pos % 125, e = d < 50 ? 1000 - d * 18 : 100 - (d - 50);   /* a hit every 1/8, ~50 ms decay */
+    uint32_t h = (uint32_t)pos * 2654435761u + t * 97u;
+    return clamp(e + (int32_t)(h >> 26) * 4 - 120, 30, 1000);
+}
+
 static void viz_grain(const int16_t *v, uint32_t f)
 {
-    /* DENS 0..100 -> 1..25 grains drawn; SIZE 5..500 ms -> 4..60 px; PITCH -> cycles inside a grain (2^(st/12));
-     * SPREAD -> the stereo scatter (up = left) */
-    int32_t n = 1 + v[1] * 24 / 100, w = 4 + (v[0] - 5) * 56 / 495, half = VH / 2 - 6, i;
-    uint32_t inc = pitch_inc((uint32_t)(60 + v[2]) * 16u) / (pitch_inc(60u * 16u) / 64u);   /* 64 = unison */
-    vz_caption("GRAIN CLOUD", 1);
-    cv_rect(VX0, VMID, VW, 1, vz_hi(f == 3u, T_LINE));
-    cv_text_on(VX0, VY0 - 2, &AF_S, "L", T_DIM, T_BG);
-    cv_text_on(VX0, VY1 - 12, &AF_S, "R", T_DIM, T_BG);
+    /* The view spans TAPE's loop window (START, LENGTH). DENS 0..100: 1..25 grains, placed along the loop. Each
+     * grain reads SIZE ms of the sample, times 2^(PITCH/12) (pitched up, it reads more), so that is the slice of
+     * the waveform it lights and the width of its block. SPREAD scatters the blocks across the stereo lane under
+     * the waveform (up = left). Solid squares: the grains as the engine schedules them, without the window shape. */
+    const int16_t *tv = tp[sys.sel].dev[DEV_SRC];
+    int32_t n = 1 + v[1] * 24 / 100, i, x, g;
+    int32_t start = tv[0] * 10, len = tv[1] * 10;                      /* the loop in 1/1000 of the tape */
+    int32_t loop_ms = len * TAPE_MS / 1000, oct = 1000, span;
+    int32_t gx[25], gy[25], wmid = VY0 + 20, wh = 18, lane = VY1 - 8;
+    char cap[24];
+    for (i = 0; i < v[2]; i++) oct = oct * 1059 / 1000;                 /* 2^(st/12), 1/1000 */
+    for (i = 0; i > v[2]; i--) oct = oct * 1000 / 1059;
+    span = v[0] * oct / 1000 * VW / (loop_ms > 0 ? loop_ms : 1);        /* the slice each grain reads, px */
+    span = clamp(span, 3, VW / 2);
+    str_cpy(cap, "GRAINS ON DEMO WAVE", sizeof cap);                   /* (phase 2: "GRAINS ON TAPE") */
+    vz_caption(cap, 1);
     vz_seed = 12345u;
-    for (i = 0; i < n; i++) {
-        int32_t gx = VX0 + 12 + (int32_t)(vz_rand() % (uint32_t)(VW - 12 - w));
-        int32_t gy = VMID + ((int32_t)(vz_rand() % 2001u) - 1000) * half * v[3] / 100000;
-        int32_t k, py = gy;
-        /* 2 cycles per grain at unison (inc 64), capped at one cycle per 3 px: no aliasing; no overflow
-         * (at most 64 / 3 * 2^26 < 2^31) */
-        uint32_t cyc = 2u * inc < (uint32_t)w * 64u / 3u ? 2u * inc : (uint32_t)w * 64u / 3u, ph = 0;
-        uint32_t step = cyc * (67108864u / (uint32_t)w);
-        uint16_t cl = vz_hi(f == 0u, T_THEME), cs = vz_hi(f == 2u, T_TEXT);
-        for (k = 0; k <= w; k++) {                                     /* the window (a lens) and the sine in it */
-            int32_t e = (4 * k * (w - k)) * 6 / (w > 0 ? w * w : 1), y;    /* 0..6 px, Hann-like */
-            cv_pset(gx + k, gy - e, cl);
-            cv_pset(gx + k, gy + e, cl);
-            y = gy + (sine_i(ph) * e >> 15);
-            if (k)
-                cv_line(gx + k - 1, py, gx + k, y, cs);
-            py = y;
-            ph += step;
-        }
+    for (g = 0; g < n; g++) {
+        gx[g] = VX0 + (int32_t)(vz_rand() % (uint32_t)(VW - span));
+        gy[g] = ((int32_t)(vz_rand() % 2001u) - 1000) * v[3] / 100;     /* -1000 (L) .. 1000 (R) */
     }
+    /* the waveform: dim, and bright where a grain reads it */
+    for (x = VX0; x < VX1; x++) {
+        int32_t a = tape_env(sys.sel, start + (x - VX0) * len / VW) * wh / 1000, lit = 0;
+        for (g = 0; g < n && !lit; g++)
+            lit = x >= gx[g] && x < gx[g] + span;
+        vz_vline(x, wmid - a, wmid + a, lit ? vz_hi(f == 0u || f == 2u, T_TEXT) : T_DIM);
+    }
+    /* the stereo lane and the grains in it: one solid block per grain under the slice it plays */
+    cv_rect(VX0, lane, VW, 1, vz_hi(f == 3u, T_LINE));
+    cv_text_on(VX1 + 1, lane - 16, &AF_S, "L", T_DIM, T_BG);         /* up = left, down = right */
+    cv_text_on(VX1 + 1, lane + 1, &AF_S, "R", T_DIM, T_BG);
+    for (g = 0; g < n; g++)
+        cv_rect(gx[g], lane - 3 + gy[g] * 7 / 1000, span, 6, vz_hi(f == 0u || f == 2u, T_THEME));
     if (f == 1u) {                                                     /* DENS: the count, in words */
         char b[16];
         fmt_int(b, n);
         str_cpy(b + str_len(b), " GRAINS", 8);
-        cv_text_r(VX1, VY1 - 12, &AF_S, b, T_ACCENT, T_BG);
+        cv_text_r(VX1, VY0 + 44, &AF_S, b, T_ACCENT, T_BG);
     }
 }
 
@@ -409,6 +425,8 @@ static uint32_t viz_sig(void)
         ui_page(k, &vp);
         h = (h ^ (uint32_t)(*vp + 32768)) * 16777619u;
     }
+    if (ui.kind == FOCUS_DEV && ui.dev == DEV_GRAIN)                   /* GRAIN draws TAPE's loop window too */
+        h = (h ^ (uint32_t)(tp[sys.sel].dev[DEV_SRC][0] << 8 | tp[sys.sel].dev[DEV_SRC][1])) * 16777619u;
     return h + (ui.kind == FOCUS_SLOT ? tp[sys.sel].engine[ui.slot] * 65537u : 0u);
 }
 
