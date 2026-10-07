@@ -93,9 +93,8 @@ static void vz_reel(int32_t cx, int32_t cy)
 
 static void viz_tape(const int16_t *v, uint32_t f)
 {
-    /* A reel-to-reel, the reels close in over the middle the way a deck's are: the tape leaves the left reel, drops
-     * to a guide, runs the full width along the bottom and climbs back to the right reel. That run is the whole
-     * tape, start to end, and the sample is drawn on it: lit inside the loop window (STRT, LEN, bracketed), dim
+    /* A reel-to-reel, the reels close in over the middle the way a deck's are, and under them the tape's run: the
+     * whole tape, start to end, and the sample is drawn on it: lit inside the loop window (STRT, LEN, bracketed), dim
      * outside. The playhead sits over where playing starts (the end when reversed); between the reels, SPD as
      * chevrons and DUB as the layers kept. */
     int32_t r0 = 6, r1 = 114, rw = r1 - r0, top = 20, bot = 35, mid = 27, k, x;
@@ -104,10 +103,6 @@ static void viz_tape(const int16_t *v, uint32_t f)
         x1 = r1;
     vz_reel(36, 9);
     vz_reel(84, 9);
-    px_line(29, 12, r0 - 1, top, px_ink, 1);                          /* down from the left reel to its guide */
-    px_line(91, 12, r1 + 1, top, px_ink, 1);                          /* and up from the right guide */
-    vz_node(r0 - 2, top, 0);
-    vz_node(r1 + 2, top, 0);
     px_line(r0, top, r1, top, px_ink, 1);                             /* the run's edges */
     px_line(r0, bot, r1, bot, px_ink, 1);
     for (x = r0 + 1; x < r1; x++) {                                    /* the sample (phase 2: the take) */
@@ -470,6 +465,10 @@ static void viz_channel(uint32_t f)
     vz_label(DX0 + w * 70 / 100 + 4, "HIGH", on && f == 1u);
     vz_label(DX0 + w / 2, "FILT", on && f == 2u);
     vz_label(107, "PAN", on && f == 3u);
+    {   /* whose channel: the selected track, tagged (the fader with the border above) */
+        char n[3] = {'T', (char)('1' + sys.sel), 0};
+        px_tag(1, DLBL - 1, PXF_3, n, px_ink, px_bg);
+    }
 }
 
 /* a message: an inverted box over the panel, its words wrapped at 18 characters */
@@ -530,7 +529,7 @@ static void draw_viz(void)
         return;
     ui.sig_viz = sig;
     px_colors();
-    cv_begin(240, VZ_H, T_BG);
+    cv_begin(240, VZ_H, px_bg);
     if (ui.msg_t) {
         viz_message();
     } else if (ui.view == VIEW_MIXER) {

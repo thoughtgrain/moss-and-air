@@ -11,7 +11,7 @@
 #                        USB audio (descriptors with and without CDC, ring, packets), every USB descriptor layout
 #   display              text against the reference renderer, palettes (contrast, GREY gray, MONO neutral)
 #   Bryo                 tests/bryo_host.c: the chain (silence, pitch, mute, release, shedding, the ceiling), the
-#                        input mapping, every screen in every palette; tests/ui_golden.py: the screens pixel-identical
+#                        input mapping, every screen; tests/ui_golden.py: the screens pixel-identical
 #                        to tests/bryo_golden.txt (a change of the screen must be deliberate: update it then);
 #                        tests/controls_check.py: docs/controls.tsv well formed, every physical control in it
 #   installer            tools/fm1_install.py against a simulated FM-1; the web installer and its backup code
@@ -87,9 +87,9 @@ if "$PY" -c "import PIL" 2>/dev/null; then
 fi
 
 # ---- Bryo
-mkdir -p build/bryo_ui/ppm
+rm -rf build/bryo_ui/ppm && mkdir -p build/bryo_ui/ppm      # (no renders left over from another layout)
 $CC -I"$GEN" -Itests -o "$OUT/bryo_host" tests/bryo_host.c -lm
-run "Bryo: chain, input mapping, every screen in every palette" "$OUT/bryo_host" build/bryo_ui
+run "Bryo: chain, input mapping, every screen" "$OUT/bryo_host" build/bryo_ui
 run "Bryo screens pixel-identical to tests/bryo_golden.txt" "$PY" tests/ui_golden.py check tests/bryo_golden.txt build/bryo_ui
 run "controls map (docs/controls.tsv): well formed, every physical control mapped" "$PY" tests/controls_check.py
 

@@ -306,7 +306,7 @@ Done: `bryo.c` builds the kept hardware layer with Bryo's core, and Felucca's in
 | `firmware/src/settings.c` | the settings record, kept in Felucca's layout so calibration and USB prefs carry over |
 | `firmware/src/ui.c`, `ui_input.c` | the header, the 4-value strip with dials, the footer; pads, keys, knobs, LEDs (the track tiles moved into the mixer: see "The screen, revised") |
 | `firmware/src/panel.c` | the panel map plus HARDWARE CALIBRATION (moved here from Felucca's UI) |
-| `tests/bryo_host.c` | the chain, the input mapping, the settings carry-over, every screen in every palette |
+| `tests/bryo_host.c` | the chain, the input mapping, the settings carry-over, every screen (one ink: one set) |
 | `tests/bryo_golden.txt` | the screens' pixel fingerprints |
 | `tests/run_tests.sh` | everything above plus a clang type check of the firmware and the kept hardware tests |
 
@@ -347,10 +347,12 @@ After phase 1, two changes to the screen, from your review:
   - **Type** is two bitmap faces I drew as ASCII art in `tools/gen_px_font.py` (generated into
     `build/gen/ui_pxfont.h` like the other headers): 5 x 7 for labels and values (doubled to the right for the
     bold titles) and 3 x 5 for small print. Square corners on purpose.
-  - **One ink.** Everything is the palette's THEME colour plus a dim version of it (40 % from the background),
-    so the palette still picks the screen's character (amber, green, paper...). Emphasis is inversion, never
-    colour: the last-turned knob's label is inverted in the strip and in the plot under it. A modulator slot's
-    colour only survives as a 1-dot stripe under its `M1`..`M4` box.
+  - **One ink: white on black, fixed for now.** I first let the palette pick the ink (amber, green, paper...),
+    but you wanted the look settled before any colour comes back, so these screens ignore the palette setting
+    (it's still stored, so nothing is lost when a palette comes back). There's a dim ink for guides and
+    unlit things; values are full ink, since dim numbers were hard to read. Emphasis is inversion and borders,
+    never colour: the last-turned knob's label is inverted in the strip and in the plot under it, and REC is a
+    solid dot in the tempo bar.
   - **The header** is a box with the track (`T1`) or slot (`M2`), the page in bold, and an inverted tempo bar
     holding REC, the transport and the metronome, like the references.
   - **The strip** is four pictograms, and each one is the value: a dial's pointer, a fader's fill, a slope's
@@ -360,7 +362,7 @@ After phase 1, two changes to the screen, from your review:
     gets it never leaves its box or touches its neighbours. The label sits under it (4 letters, Elektron-style: `STRT`, `TUNE`, `DRIV`, `SWNG`), the value
     under that in the dim ink.
   - **The plot below** speaks the same language (TAPE is a reel-to-reel with the reels close over the middle, so it
-    reads in proportion; the run along the bottom is the whole tape with the sample drawn on it, lit inside the
+    reads in proportion, and no tape path from the reels down, which only cluttered it; the run along the bottom is the whole tape with the sample drawn on it, lit inside the
     loop window and dim outside; the first version was a dashed strip that read as a road): 1-dot lines, square nodes where a value sits, dotted drop
     lines and guides, 3 x 5 labels under the stretch they name (the ADSR page is the clearest example of the
     pattern). Messages show as an inverted box over the plot, so the title never moves.
@@ -369,7 +371,8 @@ After phase 1, two changes to the screen, from your review:
     too; HARDWARE CALIBRATION keeps Felucca's look since it's a one-time setup screen.
 - **The mixer carries its meters in the faders, and each track has a channel strip.** On the mixer the four
   pictograms are faders: two notches show the level you set, and the fill inside is the track's live meter, so
-  one glance gives both. That freed the panel below for the selected track's channel: LOW and HIGH shelves
+  one glance gives both. The selected track's fader has a border, and the channel panel below is tagged with the
+  same track, so it's clear whose EQ and filter you're looking at. That freed the panel below for the selected track's channel: LOW and HIGH shelves
   (+-12 dB), FILT (one knob, DJ-style: low-pass to the left of 0, high-pass to the right, 0 is open) and PAN.
   Below the faders they're drawn as one response curve over 8 octaves with a node on each corner, plus two
   speaker bars for the pan. Hold EDIT on the mixer and KNOB 1-4 set them; let go and you're back on the levels.

@@ -39,7 +39,8 @@ What works on the panel now (every control, in every context, with what's planne
 | Black keys OP1 to OP4 | track mutes |
 | SCL | nothing yet (proposed: hold for the system menu) |
 
-The screen is drawn like a groovebox OLED: a grid of 2 x 2 px dots, bitmap type, one ink from your palette.
+The screen is drawn like a groovebox OLED: a grid of 2 x 2 px dots, bitmap type, white on black (your palette
+setting is kept, but these screens don't use it for now).
 Each knob is a pictogram that shows its value (a dial's pointer, a fader's fill, a slope's length, a keyboard
 with the root lit, a feedback ring that wobbles into chaos as it rises), with a 4-letter label under it. Under the four of them, each page plots what it does in the
 same dotted language: a reel-to-reel with the sample on the tape and the loop bracketed on it, the sample lit where grains read

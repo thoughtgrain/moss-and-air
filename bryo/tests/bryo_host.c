@@ -6,7 +6,7 @@
  *
  * Audio: silence at rest, a held key's pitch, mute, a click-free release, load shedding, the master stage's
  *        ceiling. Input: what each pad, key and knob does (PRD 2, phase 1). Screens: every phase 1 screen in
- *        every palette, for tests/ui_golden.py (pixel fingerprints) and the eye (tests/bryo_ui.sh makes PNGs). */
+ *        the one ink, for tests/ui_golden.py (pixel fingerprints) and the eye (tests/bryo_ui.sh makes PNGs). */
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -451,16 +451,12 @@ static void screens_in(const char *pal)
 
 int main(int argc, char **argv)
 {
-    uint32_t p;
     out_dir = argc > 1 ? argv[1] : "build/bryo_ui";
     test_audio();
     test_input();
     test_settings();
-    for (p = 0; p < NPALETTES; p++) {
-        palette_set(p);
-        screens_in(UI_PALETTES[p].name);
-    }
-    palette_set(UI_GREY_INDEX);
+    palette_set(UI_GREY_INDEX);                          /* (the screens are one ink now, whatever the palette) */
+    screens_in("BRYO");
     printf(fails ? "bryo: %d FAILED\n" : "bryo: all passed\n", fails);
     return fails != 0;
 }

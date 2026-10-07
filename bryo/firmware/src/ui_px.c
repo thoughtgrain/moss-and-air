@@ -1,6 +1,7 @@
 /* SPDX-License-Identifier: GPL-3.0-only */
-/* Bryo: the dot grid. The main screens are drawn on a 120 x 120 grid of 2 x 2 px dots, in one ink (the palette's
- * THEME) and a dim ink (THEME 40 % of the way from the background), the way a groovebox's OLED reads: bitmap type,
+/* Bryo: the dot grid. The main screens are drawn on a 120 x 120 grid of 2 x 2 px dots, in one ink (white on black,
+ * fixed for now: the palette setting is kept in the settings record but these screens don't follow it) and a dim
+ * ink (45 % of the way from the background), the way a groovebox's OLED reads: bitmap type,
  * 1-dot strokes, dotted guides, solid nodes. Everything here takes dot coordinates on the current canvas; the
  * screen's regions start on even rows, so a region's dot 0 is its first pixel row.
  *
@@ -16,9 +17,9 @@ static uint16_t px_ink, px_dim, px_bg;
 
 static void px_colors(void)
 {
-    px_ink = T_THEME;
-    px_dim = ux_mix(T_BG, T_THEME, 40);
-    px_bg = T_BG;
+    px_ink = 0xFFFFu;
+    px_bg = 0x0000u;
+    px_dim = ux_mix(px_bg, px_ink, 45);
 }
 
 static void px_dot(int32_t x, int32_t y, uint16_t c) { cv_rect(2 * x, 2 * y, 2, 2, c); }

@@ -11,7 +11,7 @@
  * repeat them; the header and the footer name the focused track.
  *
  * Main loop only. The audio ISR never touches the UI; the UI reads the ISR's meters (track_rt[].peak) as plain
- * words. Colour is never the only cue: a modulator slot's colour always comes with its number. */
+ * words. One ink for now: emphasis is inversion and borders, never colour. */
 
 #define UI_HEAD_H 26
 #define UI_STRIP_Y 26
@@ -44,10 +44,6 @@ static struct {
     char msg[40];
     uint32_t sig_head, sig_strip, sig_viz, sig_foot;
 } ui;
-
-/* modulator slot colours (PRD 5: 1 cyan, 2 amber, 3 green, 4 magenta), RGB565, chosen to read on every dark
- * palette; each is always drawn with its slot number next to it */
-static const uint16_t SLOT_COLOR[NSLOT] = {0x3E7Du, 0xFD20u, 0x5F0Bu, 0xE31Fu};
 
 static void draw_viz(void);           /* ui_viz.c */
 
@@ -123,13 +119,11 @@ static void draw_head(void)
         return;
     ui.sig_head = sig;
     px_colors();
-    cv_begin(240, UI_HEAD_H, T_BG);
+    cv_begin(240, UI_HEAD_H, px_bg);
     {
         int32_t bw = px_text_w(PXF_5, box) + 4, x = bw + 2, bar;
         px_frame(0, 1, bw, 11, px_ink, 1);
         px_text(2, 3, PXF_5, box, px_ink);
-        if (slot)
-            px_box(0, 12, bw, 1, SLOT_COLOR[ui.slot]);     /* the slot's colour, under its number */
         x = px_text(x, 3, PXF_5B, ti, px_ink);
         bar = x + 1;
         px_box(bar, 1, 120 - bar, 11, px_ink);
@@ -145,14 +139,10 @@ static void draw_head(void)
         } else {
             px_box(x, 4, 4, 5, px_bg);
         }
-        if ((ui.rec >> sys.sel) & 1u) {                    /* REC armed: a round dot in a ring of the background, so */
-            x -= 7;                                        /* it shows where REC's colour is the ink (GREY, MONO) */
-            px_box(x, 4, 5, 5, px_bg);
-            px_dot(x, 4, px_ink);
-            px_dot(x + 4, 4, px_ink);
-            px_dot(x, 8, px_ink);
-            px_dot(x + 4, 8, px_ink);
-            px_box(x + 1, 5, 3, 3, T_REC);
+        if ((ui.rec >> sys.sel) & 1u) {                    /* REC armed: a round dot */
+            x -= 7;
+            px_box(x + 1, 4, 3, 5, px_bg);
+            px_box(x, 5, 5, 3, px_bg);
         }
     }
     cv_blit(0, 0);
@@ -172,13 +162,13 @@ static void draw_strip(void)
         if (ui.view == VIEW_MIXER && !ui.chan)          /* the faders carry the meters */
             sig = (sig ^ (uint32_t)(meter_w(track_rt[k].peak, 19) | track[k].mute << 8)) * 16777619u;
     }
-    sig += (ui.last < 4u ? ui.last + 1u : 0u) * 7919u + ui.view * 31u + ui.chan * 5u + ui.kind * 131u +
+    sig += (ui.last < 4u ? ui.last + 1u : 0u) * 7919u + sys.sel * 104729u + ui.view * 31u + ui.chan * 5u + ui.kind * 131u +
            ui.dev * 1031u + (ui.kind == FOCUS_SLOT ? tp[sys.sel].engine[ui.slot] * 65537u : 0u);
     if (!ui.force && sig == ui.sig_strip)
         return;
     ui.sig_strip = sig;
     px_colors();
-    cv_begin(240, UI_STRIP_H, T_BG);
+    cv_begin(240, UI_STRIP_H, px_bg);
     for (k = 0; k < 4u; k++) {
         int16_t *vp;
         const pdesc_t *d = ui_page(k, &vp);
@@ -188,6 +178,8 @@ static void draw_strip(void)
         int lvl = ui.view == VIEW_MIXER && !ui.chan, mute = lvl && track[k].mute;
         char val[12];
         const char *unit;
+        if (lvl && k == sys.sel)                       /* the selected track (its channel is the one below) */
+            px_frame(x, 0, 30, 48, px_ink, 1);
         if (lvl)                                       /* the level set, and the live meter inside it */
             px_meter_fader(x + 4, 2, param_ratio(d, v), meter_w(track_rt[k].peak, 19), mute ? px_dim : px_ink);
         else
@@ -202,7 +194,7 @@ static void draw_strip(void)
         }
         param_format(d, v, val, &unit);
         str_cpy(val + str_len(val), unit, 4);          /* "-140%", "250MS": at most 5, 29 dots */
-        px_text_c(x, 30, 37, PXF_5, val, px_dim);
+        px_text_c(x, 30, 37, PXF_5, val, px_ink);
     }
     cv_blit(0, UI_STRIP_Y);
 }
@@ -227,7 +219,7 @@ static void draw_foot(void)
         return;
     ui.sig_foot = sig;
     px_colors();
-    cv_begin(240, UI_FOOT_H, T_BG);
+    cv_begin(240, UI_FOOT_H, px_bg);
     px_line(0, 1, 119, 1, px_dim, 2);
     px_text(1, 5, PXF_3, a, px_dim);
     {
@@ -245,10 +237,10 @@ static void draw_uboot(void)
 {
     char n[4];
     px_colors();
-    cv_begin(240, 107, T_BG);
+    cv_begin(240, 107, px_bg);
     px_text_c(0, 120, 38, PXF_5B, "UPDATE MODE IN", px_ink);
     cv_blit(0, UI_HEAD_H);
-    cv_begin(240, 107, T_BG);
+    cv_begin(240, 107, px_bg);
     fmt_int(n, ui.uboot);
     px_text_big(60 - (6 * 4 * (int32_t)str_len(n) - 4) / 2, 0, 4, n, px_ink);
     px_text_c(0, 120, 36, PXF_3, "LET GO OF OCT-/OCT+ TO CANCEL", px_dim);
