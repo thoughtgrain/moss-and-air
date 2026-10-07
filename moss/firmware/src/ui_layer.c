@@ -623,38 +623,55 @@ static void layer_edit(void)                            /* the engines from F3, 
     engine_sound_row(104);
 }
 
-static void layer_cards(uint32_t l)
+/* the FX layer's knobs: FILTER CRUSH THROW DEPTH (SHIMR while OCT UP / DN plays) */
+static void cards_layer_fx(card_t *k)
+{
+    char val[12];
+    int32_t m = perf_k[0];
+    fmt_int(val, m < 0 ? -m : m);
+    card_set(&k[0], "FILTER", m ? val : "OFF", m < 0 ? "LP" : m > 0 ? "HP" : "", m ? VAL(0u) : T_DIM, (m + 100) * 5,
+             ICON_CUTOFF);
+    fmt_int(val, perf_k[1]);
+    card_set(&k[1], "CRUSH", perf_k[1] ? val : "OFF", perf_k[1] ? "%" : "", perf_k[1] ? VAL(1u) : T_DIM,
+             perf_k[1] * 10, ICON_BITS);
+    fmt_int(val, perf_k[2]);
+    card_set(&k[2], "THROW", perf_k[2] ? val : "OFF", perf_k[2] ? "%" : "", perf_k[2] ? VAL(2u) : T_DIM,
+             perf_k[2] * 10, ICON_DELAY);
+    if (perf_harm_on()) {                               /* OCT UP / DN playing: KNOB 4 is its shimmer (SHIMR) */
+        fmt_int(val, perf_k[3]);
+        card_set(&k[3], "SHIMR", perf_k[3] ? val : "OFF", perf_k[3] ? "%" : "", perf_k[3] ? VAL(3u) : T_DIM,
+                 perf_k[3] * 10, ICON_FEEDBACK);
+    } else {
+        fmt_int(val, 100 - perf_k[3]);
+        card_set(&k[3], "DEPTH", val, "%", VAL(3u), (100 - perf_k[3]) * 10, ICON_MIX);
+    }
+}
+
+/* the GLO layer's knobs: T1..T4 LEVEL (the track's icon; muted: dim) */
+typedef char glo_cards_are_four[NTRK == 4 ? 1 : -1];  /* cards_layer_glo fills one card per track */
+static void cards_layer_glo(card_t *k)
 {
     char val[12];
     const char *unit;
     uint32_t c;
-    if (l == LAYER_FX) {                                /* FILTER CRUSH THROW DEPTH */
-        int32_t m = perf_k[0];
-        fmt_int(val, m < 0 ? -m : m);
-        draw_column(0, "FILTER", m ? val : "OFF", m < 0 ? "LP" : m > 0 ? "HP" : "", m ? VAL(0u) : T_DIM, (m + 100) * 5,
-                    ICON_CUTOFF);
-        fmt_int(val, perf_k[1]);
-        draw_column(1, "CRUSH", perf_k[1] ? val : "OFF", perf_k[1] ? "%" : "", perf_k[1] ? VAL(1u) : T_DIM,
-                    perf_k[1] * 10, ICON_BITS);
-        fmt_int(val, perf_k[2]);
-        draw_column(2, "THROW", perf_k[2] ? val : "OFF", perf_k[2] ? "%" : "", perf_k[2] ? VAL(2u) : T_DIM,
-                    perf_k[2] * 10, ICON_DELAY);
-        if (perf_harm_on()) {                           /* OCT UP / DN playing: KNOB 4 is its shimmer (SHIMR) */
-            fmt_int(val, perf_k[3]);
-            draw_column(3, "SHIMR", perf_k[3] ? val : "OFF", perf_k[3] ? "%" : "", perf_k[3] ? VAL(3u) : T_DIM,
-                        perf_k[3] * 10, ICON_FEEDBACK);
-        } else {
-            fmt_int(val, 100 - perf_k[3]);
-            draw_column(3, "DEPTH", val, "%", VAL(3u), (100 - perf_k[3]) * 10, ICON_MIX);
-        }
-    } else if (l == LAYER_GLO) {                        /* T1..T4 LEVEL (the track's icon; muted: dim) */
-        for (c = 0; c < NTRK; c++) {
-            param_format(&TP[P_LEVEL], trk[c].p[P_LEVEL], val, &unit);
-            draw_column(c, "LEVEL", val, unit, glo_sounding(c) ? VAL(c) : T_DIM, RATIO(&TP[P_LEVEL], trk[c].p[P_LEVEL]),
-                        trk_icon(c, 1));
-        }
-    } else if (l == LAYER_EDIT) {
-        engine_columns();
+    for (c = 0; c < NTRK; c++) {
+        param_format(&TP[P_LEVEL], trk[c].p[P_LEVEL], val, &unit);
+        card_set(&k[c], "LEVEL", val, unit, glo_sounding(c) ? VAL(c) : T_DIM, RATIO(&TP[P_LEVEL], trk[c].p[P_LEVEL]),
+                 trk_icon(c, 1));
+    }
+}
+
+static void layer_cards(uint32_t l)
+{
+    card_t k[4];
+    if (l == LAYER_FX || l == LAYER_GLO || l == LAYER_EDIT) {
+        if (l == LAYER_FX)
+            cards_layer_fx(k);
+        else if (l == LAYER_GLO)
+            cards_layer_glo(k);
+        else
+            cards_engine(k);
+        cards_draw(k);
     } else {                                            /* the page's four (SCL: LY_SCL) */
         uint8_t h = ui.home, pg = ui.page;
         ui.home = 0;

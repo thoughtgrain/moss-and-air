@@ -477,13 +477,6 @@ static void draw_column(uint32_t c, const char *label, const char *val, const ch
     cv_blit((uint32_t)CARD_X(c), Y_LABEL + (strip ? ROLL_Y : 0));
 }
 
-/* an action's column (act_cols): picked, the OCT+ keycap (accent while it would do something); else "--" */
-static void draw_act_column(uint32_t c, const char *label, uint16_t vc, uint32_t icon)   /* icon: ICON_AUTO = by label */
-{
-    int picked = act_col() == c + 1u;
-    draw_column(c, label, picked ? "[OCT+]" : "--", "", picked ? (act_ready() ? T_ACCENT : T_DIM) : vc, -1, icon);
-}
-
 /* action pages: the footer's first row says what OCT+ and OCT- do ("OCT+ LOAD   OCT- BACK") */
 static void foot_hint(char *a, char *b)
 {
@@ -618,228 +611,349 @@ static void draw_foot(void)
     }
     cv_blit(0, Y_FOOT);
 }
-/* the EDIT layer's cards (ui_layer.c): ENG (the engine), No. (its sounds: KNOB 2's list), FAV, an empty card */
-static void engine_columns(void)
+/* ---- the cards: each page fills four card_t, cards_draw draws them (Moss) ----
+ * One filler per kind of page, picked by draw_columns; the drawing is draw_column's, unchanged. card_set takes from
+ * the globals what draw_column took at the same moment: fmt_named (params.c param_format: the value is a name) and
+ * card_mot_next (card_mot_of: MOTION drives it), and clears them as draw_column did, so filling the four in order
+ * and then drawing them is the same as drawing each in turn. val and unit are copied: the fillers format into one
+ * shared buffer. The labels are static (literals, descriptors). */
+typedef struct {
+    const char *label;
+    char val[24], unit[16];
+    uint16_t vc;
+    uint8_t named, mot;
+    int32_t ratio;                                      /* the gauge 0..1000, -1 none */
+    uint32_t icon;                                      /* ICON_*, ICON_AUTO: by label */
+} card_t;
+
+static void card_set(card_t *k, const char *label, const char *val, const char *unit, uint16_t vc, int32_t ratio,
+                     uint32_t icon)
 {
-    uint32_t total, cur = eng_list_pos(&total), e = TSEL->eng_req % NENGINES;
-    char val[8], u[8];
-    fmt_int(val, (int32_t)cur + 1);
-    str_cpy(u, "/", 8);
-    fmt_int(u + 1, (int32_t)total);
-    draw_column(0, "ENG", ENGINES[e]->name, "", VAL(0u), (int32_t)eng_rank(e) * 1000 / (NENG_SHOWN > 1 ? NENG_SHOWN - 1 : 1),
-                engine_icon(ENGINES[e]->name));
-    draw_column(1, "No.", val, u, VAL(1u), total > 1u ? (int32_t)(cur * 1000u / (total - 1u)) : 0, ICON_NONE);
-    draw_column(2, "FAV", preset_favorite() ? "ON" : "OFF", "", VAL(2u), -1, ICON_X_STAR);
-    draw_column(3, "", "", "", T_THEME, -1, ICON_NONE);
+    k->label = label;
+    str_cpy(k->val, val, sizeof k->val);
+    str_cpy(k->unit, unit, sizeof k->unit);
+    k->vc = vc;
+    k->ratio = ratio;
+    k->icon = icon;
+    k->named = fmt_named;
+    k->mot = card_mot_next;
+    fmt_named = 0;
+    card_mot_next = 0;
 }
-static void draw_columns(void)
+
+/* a knob that does nothing on this page */
+static void card_empty(card_t *k, uint32_t icon) { card_set(k, "", "", "", T_THEME, -1, icon); }
+
+/* a position: "3" over "/16" (i <= 0: "--", nothing picked) */
+static void card_count(card_t *k, const char *label, int32_t i, int32_t n, uint16_t vc, int32_t ratio, uint32_t icon)
+{
+    char v[12], u[12];
+    if (i > 0)
+        fmt_int(v, i);
+    else
+        str_cpy(v, "--", sizeof v);
+    u[0] = '/';
+    fmt_int(u + 1, n);
+    card_set(k, label, v, u, vc, ratio, icon);
+}
+
+/* an action's card (act_cols): picked, the OCT+ keycap (accent while it would do something); else "--" */
+static void card_act(card_t *k, uint32_t c, const char *label, uint16_t vc, uint32_t icon)
+{
+    int picked = act_col() == c + 1u;
+    card_set(k, label, picked ? "[OCT+]" : "--", "", picked ? (act_ready() ? T_ACCENT : T_DIM) : vc, -1, icon);
+}
+
+/* "ON" / "--": a step's lane hit or accent */
+static void card_flag(card_t *k, uint32_t c, const char *label, uint32_t on)
+{
+    card_set(k, label, on ? "ON" : "--", "", on ? VAL(c) : T_DIM, -1, ICON_AUTO);
+}
+
+static void cards_draw(const card_t *k)
+{
+    uint32_t c;
+    for (c = 0; c < 4u; c++, k++) {
+        fmt_named = k->named;
+        card_mot_next = k->mot;
+        draw_column(c, k->label, k->val, k->unit, k->vc, k->ratio, k->icon);
+    }
+}
+
+/* HOME: the four home_param picks */
+static void cards_home(card_t *k)
 {
     uint32_t c;
     char val[12];
     const char *unit;
-    (void)motion_mask(song.sel, card_mot_mask);       /* (PLAY OFF: no scan) */
-    if (ui.home) {
-        for (c = 0; c < 4u; c++) {
-            int16_t *vp;
-            const param_desc_t *d = home_param(c, &vp);
-            param_format(d, *vp, val, &unit);
-            card_mot_of(vp);
-            draw_column(c, d->label, val, unit, VAL(c), RATIO(d, enum_rank(d, *vp)), param_icon(d, *vp));
-        }
-        return;
-    }
-    if (cur_page()->graph == GR_SONG) {
-        uint32_t row = ui.song_row < CHAIN_ROWS ? ui.song_row : CHAIN_ROWS - 1u;
-        int used = row < chain_config.count;
-        fmt_int(val, (int32_t)row + 1);
-        draw_column(0, "ROW", val, "", VAL(0u), -1, ICON_X_SONG);
-        if (used) { val[0] = (char)('A' + chain_config.row[row].slot); val[1] = 0; }
-        else str_cpy(val, "--", sizeof val);
-        draw_column(1, "PAT", val, "", used ? VAL(1u) : T_DIM, -1, ICON_X_PATTERN);
-        if (used) fmt_int(val, chain_config.row[row].repeat);
-        else str_cpy(val, "--", sizeof val);
-        draw_column(2, "REPS", val, "", used ? VAL(2u) : T_DIM, -1, ICON_AUTO);
-        draw_column(3, "", "", "", T_THEME, -1, ICON_NONE);
-        return;
-    }
-    if (cur_page()->graph == GR_CHANCE) {
-        fmt_int(val, (int32_t)ui.cursor + 1);
-        draw_column(0, "STEP", val, "", VAL(0u), -1, ICON_AUTO);
-        fmt_int(val, (int32_t)step_chance(&TSEL->step[ui.cursor]));
-        draw_column(1, "CHANCE", val, "%", VAL(1u), -1, ICON_PROB);   /* the die */
-        draw_column(2, "", "", "", T_THEME, -1, ICON_NONE);
-        draw_column(3, "", "", "", T_THEME, -1, ICON_NONE);
-        return;
-    }
-    if (cur_page()->graph == GR_MOTION) {
-        draw_column(0, "PLAY", motion_enabled(TSEL) ? "ON" : "OFF", "", VAL(0u), -1, motion_icon());
-        fmt_int(val, (int32_t)motion_count(TSEL));
-        draw_column(1, "EVENT", val, "", T_MID, -1, ICON_NONE);
-        draw_column(2, "", "", "", T_THEME, -1, ICON_NONE);
-        draw_act_column(3, "CLEAR", T_MID, ICON_X_MOTION_DEL);
-        return;
-    }
-    if (cur_page()->graph == GR_TOOLS) {
-        static const char *const labels[] = {"PAT", "SOUND", "ROW", "SONG"};
-        static const uint8_t icons[] = {ICON_AUTO, ICON_AUTO, ICON_X_SONG, ICON_X_SONG};   /* ROW, SONG: the song's */
-        for (c = 0; c < 4u; c++) draw_act_column(c, labels[c], VAL(c), icons[c]);
-        return;
-    }
-    if (cur_page()->scope == SC_TRK) {                 /* LEVEL PAN REV MUTE of the selected track */
-        const track_t *t = TSEL;
-        uint32_t lvl = trk_level(song.sel);
-        param_format(&TP[P_LEVEL], (int32_t)lvl, val, &unit);   /* (0: OFF) */
-        card_mot_of(&TSEL->p[P_LEVEL]);
-        draw_column(0, "LEVEL", val, unit, lvl && !t->p[P_MUTE] ? VAL(0u) : T_DIM, (int32_t)lvl * 1000 / 127, ICON_AUTO);
-        param_format(&TP[P_PAN], t->p[P_PAN], val, &unit);
-        card_mot_of(&TSEL->p[P_PAN]);
-        draw_column(1, "PAN", val, unit, VAL(1u), RATIO(&TP[P_PAN], t->p[P_PAN]), param_icon(&TP[P_PAN], t->p[P_PAN]));
-        param_format(&TP[P_REV], t->p[P_REV], val, &unit);
-        card_mot_of(&TSEL->p[P_REV]);
-        draw_column(2, "REV", val, unit, VAL(2u), RATIO(&TP[P_REV], t->p[P_REV]), ICON_AUTO);
-        draw_column(3, "MUTE", t->p[P_MUTE] ? "ON" : "OFF", "", t->p[P_MUTE] ? T_ACCENT : VAL(3u), -1, ICON_AUTO);
-        return;
-    }
-    if (cur_page()->graph == GR_BROWSE) {
-        uint32_t total, cur = preset_pos(&total);
-        char u[8];
-        if (cur < total) fmt_int(val, (int32_t)cur + 1);
-        else str_cpy(val, "--", 8);
-        str_cpy(u, "/", 8);
-        fmt_int(u + 1, (int32_t)total);
-        draw_column(0, "No.", val, u, VAL(0u), -1, ICON_NONE);
-        draw_column(1, "ENG", ENGINES[TSEL->eng_req]->name, "", VAL(1u), -1, engine_icon(ENGINES[TSEL->eng_req]->name));
-        draw_column(2, "FAV", preset_favorite() ? "ON" : "OFF", "", VAL(2u), -1, ICON_X_STAR);
-        draw_column(3, "LIST", favorites.filter ? "FAV" : "ALL", "", VAL(3u), -1, ICON_X_FOLDER);
-        return;
-    }
-    if (cur_page()->graph == GR_PATS) {                  /* PAT, then LOAD (a GO button) */
-        uint32_t n = pat_count(), k = pat_pick();
-        char tag[4], nm[13];
-        pat_label(k, tag, nm);
-        draw_column(0, "PAT", tag, "", VAL(0u), (int32_t)k * 1000 / (int32_t)(n > 1u ? n - 1u : 1u), ICON_X_PATTERN);
-        draw_act_column(1, "LOAD", T_THEME, ICON_AUTO);
-        draw_column(2, "", "", "", T_THEME, -1, ICON_AUTO);
-        draw_column(3, "", "", "", T_THEME, -1, ICON_AUTO);
-        return;
-    }
-    if (cur_page()->graph == GR_USER) {                  /* SLOT, then three GO buttons */
-        int used = up_used(ui.uslot);
-        up_slot_label(val, ui.uslot);
-        draw_column(0, "SLOT", val, "", VAL(0u), (int32_t)ui.uslot * 1000 / (int32_t)(UP_SLOTS - 1u), ICON_AUTO);
-        draw_act_column(1, "LOAD", used ? T_THEME : T_DIM, ICON_AUTO);
-        draw_act_column(2, "ERASE", used ? T_THEME : T_DIM, ICON_AUTO);
-        draw_act_column(3, "SAVE", T_THEME, ICON_AUTO);
-        return;
-    }
-#if FELUCCA_SLICE
-    if (cur_page()->graph == GR_SLICES) {                /* SLICE POS, then SPLIT JOIN (ui_slice.c) */
-        uint32_t n = slice_count(), j = slice_sel(), src, div, ok = slice_src(&src, &div) && src;
-        char u[8];
-        if (j < n) {
-            fmt_int(val, (int32_t)j + 1);
-            str_cpy(u, "/", 8);
-            fmt_int(u + 1, (int32_t)n);
-        } else {
-            str_cpy(val, n ? "END" : "--", sizeof val);
-            u[0] = 0;
-        }
-        draw_column(0, "SLICE", val, u, VAL(0u), -1, ICON_SLICE);
-        slice_time(val, slice_mark(j));
-        draw_column(1, "POS", val, "S", ok ? VAL(1u) : T_DIM, -1, ICON_AUTO);
-        draw_act_column(2, "SPLIT", ok ? T_THEME : T_DIM, ICON_AUTO);
-        draw_act_column(3, "JOIN", ok ? T_THEME : T_DIM, ICON_AUTO);
-        return;
-    }
-#endif
-    if (cur_page()->graph == GR_MOD) {                   /* SLOT, then that slot's SRC DST AMT */
-        const track_t *t = TSEL;
-        uint32_t id = P_M1SRC + 3u * mod_ui_slot;
-        int32_t s = t->p[id], d = t->p[id + 1u], a = t->p[id + 2u];
-        fmt_int(val, (int32_t)mod_ui_slot + 1);
-        draw_column(0, "SLOT", val, "/4", VAL(0u), (int32_t)mod_ui_slot * 1000 / 3, mod_src_icon(MS_OFF));   /* (the mod icon) */
-        draw_column(1, "SRC", N_MSRC[clamp(s, 0, MS_N - 1)], "", s ? VAL(1u) : T_DIM, -1, mod_src_icon(s));
-        draw_column(2, "DST", mod_dst_name(t, d), "", d ? VAL(2u) : T_DIM, -1, mod_dst_icon(t, d));
-        param_format(&TP[id + 2u], a, val, &unit);
-        draw_column(3, "AMT", val, unit, a ? VAL(3u) : T_DIM, RATIO(&TP[id + 2u], a), mod_src_icon(MS_OFF));
-        return;
-    }
-    if (cur_page()->scope == SC_STEP && drum_track(TSEL)) {   /* the grid: STEP LANE HIT ACC */
-        const step_t *st = &seq_steps(TSEL)[ui.cursor];
-        uint32_t b = 1u << ui.lane, on = (step_lanes(st) & b) != 0u, ac = (step_accents(st) & b) != 0u;
-        char sn[8], sl[8];
-        fmt_int(sn, (int32_t)ui.cursor + 1);
-        str_cpy(sl, "/", 8);
-        fmt_int(sl + 1, TSEL->p[P_SLEN]);
-        draw_column(0, "STEP", sn, sl, VAL(0u), -1, ICON_AUTO);
-        draw_column(1, "LANE", drum_lane_name(TSEL, ui.lane), "", VAL(1u), -1, ICON_AUTO);
-        draw_column(2, "HIT", on ? "ON" : "--", "", on ? VAL(2u) : T_DIM, -1, ICON_AUTO);
-        draw_column(3, "ACC", ac ? "ON" : "--", "", ac ? VAL(3u) : T_DIM, -1, ICON_AUTO);
-        return;
-    }
-    if (cur_page()->scope == SC_STEP) {
-        static const char *const TIME_N[3] = {"NOTE", "TIE", "REST"};
-        const step_t *st = &seq_steps(TSEL)[ui.cursor];
-        char u[8];
-        uint32_t cnt = st->n, first = st->note[0], l;
-        for (l = NLANE; l-- > 0;)                         /* (lane hits count as their notes) */
-            if ((st->hit >> l) & 1u) {
-                cnt++;
-                if (!st->n)
-                    first = DRUM_LANE_NOTE[l];
-            }
-        if (cnt) {
-            note_name(val, first);
-            u[0] = 0;
-            if (cnt > 1) {
-                str_cpy(u, "+", 8);
-                fmt_int(u + 1, (int32_t)cnt - 1);
-            }
-        } else {
-            str_cpy(val, "--", 12);
-            u[0] = 0;
-        }
-        {
-            static const char *const FLAG_N[4] = {"-", "ACC", "SLD", "A+S"};
-            char sn[8], sl[8];
-            fmt_int(sn, (int32_t)ui.cursor + 1);
-            str_cpy(sl, "/", 8);
-            fmt_int(sl + 1, TSEL->p[P_SLEN]);
-            draw_column(0, "STEP", sn, sl, VAL(0u), -1, ICON_AUTO);
-            draw_column(1, "NOTE", val, u, step_on(st) ? VAL(1u) : T_DIM, -1, ICON_AUTO);
-            draw_column(2, "TIME", TIME_N[st->time % 3u], "", VAL(2u), -1, ICON_AUTO);
-            draw_column(3, "FLAG", FLAG_N[(st->flags & SF_ACCENT ? 1u : 0u) | (st->flags & SF_SLIDE ? 2u : 0u)], "",
-                        VAL(3u), -1, ICON_AUTO);
-        }
-        return;
-    }
     for (c = 0; c < 4u; c++) {
         int16_t *vp;
-        const param_desc_t *d = page_desc(cur_page(), c, &vp);
+        const param_desc_t *d = home_param(c, &vp);
+        param_format(d, *vp, val, &unit);
+        card_mot_of(vp);
+        card_set(&k[c], d->label, val, unit, VAL(c), RATIO(d, enum_rank(d, *vp)), param_icon(d, *vp));
+    }
+}
+
+/* the EDIT layer (ui_layer.c): ENG (the engine), No. (its sounds: KNOB 2's list), FAV, an empty card */
+static void cards_engine(card_t *k)
+{
+    uint32_t total, cur = eng_list_pos(&total), e = TSEL->eng_req % NENGINES;
+    card_set(&k[0], "ENG", ENGINES[e]->name, "", VAL(0u), (int32_t)eng_rank(e) * 1000 / (NENG_SHOWN > 1 ? NENG_SHOWN - 1 : 1),
+             engine_icon(ENGINES[e]->name));
+    card_count(&k[1], "No.", (int32_t)cur + 1, (int32_t)total, VAL(1u), total > 1u ? (int32_t)(cur * 1000u / (total - 1u)) : 0,
+               ICON_NONE);
+    card_set(&k[2], "FAV", preset_favorite() ? "ON" : "OFF", "", VAL(2u), -1, ICON_X_STAR);
+    card_empty(&k[3], ICON_NONE);
+}
+
+/* SONG: ROW PAT REPS of the chain row */
+static void cards_song(card_t *k)
+{
+    uint32_t row = ui.song_row < CHAIN_ROWS ? ui.song_row : CHAIN_ROWS - 1u;
+    int used = row < chain_config.count;
+    char val[12];
+    fmt_int(val, (int32_t)row + 1);
+    card_set(&k[0], "ROW", val, "", VAL(0u), -1, ICON_X_SONG);
+    if (used) { val[0] = (char)('A' + chain_config.row[row].slot); val[1] = 0; }
+    else str_cpy(val, "--", sizeof val);
+    card_set(&k[1], "PAT", val, "", used ? VAL(1u) : T_DIM, -1, ICON_X_PATTERN);
+    if (used) fmt_int(val, chain_config.row[row].repeat);
+    else str_cpy(val, "--", sizeof val);
+    card_set(&k[2], "REPS", val, "", used ? VAL(2u) : T_DIM, -1, ICON_AUTO);
+    card_empty(&k[3], ICON_NONE);
+}
+
+/* CHANCE: the step and its chance */
+static void cards_chance(card_t *k)
+{
+    char val[12];
+    fmt_int(val, (int32_t)ui.cursor + 1);
+    card_set(&k[0], "STEP", val, "", VAL(0u), -1, ICON_AUTO);
+    fmt_int(val, (int32_t)step_chance(&TSEL->step[ui.cursor]));
+    card_set(&k[1], "CHANCE", val, "%", VAL(1u), -1, ICON_PROB);   /* the die */
+    card_empty(&k[2], ICON_NONE);
+    card_empty(&k[3], ICON_NONE);
+}
+
+/* MOTION: PLAY, the events, CLEAR */
+static void cards_motion(card_t *k)
+{
+    char val[12];
+    card_set(&k[0], "PLAY", motion_enabled(TSEL) ? "ON" : "OFF", "", VAL(0u), -1, motion_icon());
+    fmt_int(val, (int32_t)motion_count(TSEL));
+    card_set(&k[1], "EVENT", val, "", T_MID, -1, ICON_NONE);
+    card_empty(&k[2], ICON_NONE);
+    card_act(&k[3], 3, "CLEAR", T_MID, ICON_X_MOTION_DEL);
+}
+
+/* TOOLS: four actions */
+static void cards_tools(card_t *k)
+{
+    static const char *const labels[] = {"PAT", "SOUND", "ROW", "SONG"};
+    static const uint8_t icons[] = {ICON_AUTO, ICON_AUTO, ICON_X_SONG, ICON_X_SONG};   /* ROW, SONG: the song's */
+    uint32_t c;
+    for (c = 0; c < 4u; c++) card_act(&k[c], c, labels[c], VAL(c), icons[c]);
+}
+
+/* MIXER: LEVEL PAN REV MUTE of the selected track */
+static void cards_mixer(card_t *k)
+{
+    const track_t *t = TSEL;
+    uint32_t lvl = trk_level(song.sel);
+    char val[12];
+    const char *unit;
+    param_format(&TP[P_LEVEL], (int32_t)lvl, val, &unit);   /* (0: OFF) */
+    card_mot_of(&TSEL->p[P_LEVEL]);
+    card_set(&k[0], "LEVEL", val, unit, lvl && !t->p[P_MUTE] ? VAL(0u) : T_DIM, (int32_t)lvl * 1000 / 127, ICON_AUTO);
+    param_format(&TP[P_PAN], t->p[P_PAN], val, &unit);
+    card_mot_of(&TSEL->p[P_PAN]);
+    card_set(&k[1], "PAN", val, unit, VAL(1u), RATIO(&TP[P_PAN], t->p[P_PAN]), param_icon(&TP[P_PAN], t->p[P_PAN]));
+    param_format(&TP[P_REV], t->p[P_REV], val, &unit);
+    card_mot_of(&TSEL->p[P_REV]);
+    card_set(&k[2], "REV", val, unit, VAL(2u), RATIO(&TP[P_REV], t->p[P_REV]), ICON_AUTO);
+    card_set(&k[3], "MUTE", t->p[P_MUTE] ? "ON" : "OFF", "", t->p[P_MUTE] ? T_ACCENT : VAL(3u), -1, ICON_AUTO);
+}
+
+/* PRESETS: No., ENG, FAV, LIST */
+static void cards_browse(card_t *k)
+{
+    uint32_t total, cur = preset_pos(&total);
+    card_count(&k[0], "No.", cur < total ? (int32_t)cur + 1 : 0, (int32_t)total, VAL(0u), -1, ICON_NONE);
+    card_set(&k[1], "ENG", ENGINES[TSEL->eng_req]->name, "", VAL(1u), -1, engine_icon(ENGINES[TSEL->eng_req]->name));
+    card_set(&k[2], "FAV", preset_favorite() ? "ON" : "OFF", "", VAL(2u), -1, ICON_X_STAR);
+    card_set(&k[3], "LIST", favorites.filter ? "FAV" : "ALL", "", VAL(3u), -1, ICON_X_FOLDER);
+}
+
+/* PHRASES: PAT, then LOAD (a GO button) */
+static void cards_pats(card_t *k)
+{
+    uint32_t n = pat_count(), p = pat_pick();
+    char tag[4], nm[13];
+    pat_label(p, tag, nm);
+    card_set(&k[0], "PAT", tag, "", VAL(0u), (int32_t)p * 1000 / (int32_t)(n > 1u ? n - 1u : 1u), ICON_X_PATTERN);
+    card_act(&k[1], 1, "LOAD", T_THEME, ICON_AUTO);
+    card_empty(&k[2], ICON_AUTO);
+    card_empty(&k[3], ICON_AUTO);
+}
+
+/* USER: SLOT, then LOAD ERASE SAVE */
+static void cards_user(card_t *k)
+{
+    int used = up_used(ui.uslot);
+    char val[12];
+    up_slot_label(val, ui.uslot);
+    card_set(&k[0], "SLOT", val, "", VAL(0u), (int32_t)ui.uslot * 1000 / (int32_t)(UP_SLOTS - 1u), ICON_AUTO);
+    card_act(&k[1], 1, "LOAD", used ? T_THEME : T_DIM, ICON_AUTO);
+    card_act(&k[2], 2, "ERASE", used ? T_THEME : T_DIM, ICON_AUTO);
+    card_act(&k[3], 3, "SAVE", T_THEME, ICON_AUTO);
+}
+
+#if FELUCCA_SLICE
+/* SLICES: SLICE POS, then SPLIT JOIN (ui_slice.c) */
+static void cards_slices(card_t *k)
+{
+    uint32_t n = slice_count(), j = slice_sel(), src, div, ok = slice_src(&src, &div) && src;
+    char val[12];
+    if (j < n)
+        card_count(&k[0], "SLICE", (int32_t)j + 1, (int32_t)n, VAL(0u), -1, ICON_SLICE);
+    else
+        card_set(&k[0], "SLICE", n ? "END" : "--", "", VAL(0u), -1, ICON_SLICE);
+    slice_time(val, slice_mark(j));
+    card_set(&k[1], "POS", val, "S", ok ? VAL(1u) : T_DIM, -1, ICON_AUTO);
+    card_act(&k[2], 2, "SPLIT", ok ? T_THEME : T_DIM, ICON_AUTO);
+    card_act(&k[3], 3, "JOIN", ok ? T_THEME : T_DIM, ICON_AUTO);
+}
+#endif
+
+/* MOD: SLOT, then that slot's SRC DST AMT */
+static void cards_mod(card_t *k)
+{
+    const track_t *t = TSEL;
+    uint32_t id = P_M1SRC + 3u * mod_ui_slot;
+    int32_t s = t->p[id], d = t->p[id + 1u], a = t->p[id + 2u];
+    char val[12];
+    const char *unit;
+    fmt_int(val, (int32_t)mod_ui_slot + 1);
+    card_set(&k[0], "SLOT", val, "/4", VAL(0u), (int32_t)mod_ui_slot * 1000 / 3, mod_src_icon(MS_OFF));   /* (the mod icon) */
+    card_set(&k[1], "SRC", N_MSRC[clamp(s, 0, MS_N - 1)], "", s ? VAL(1u) : T_DIM, -1, mod_src_icon(s));
+    card_set(&k[2], "DST", mod_dst_name(t, d), "", d ? VAL(2u) : T_DIM, -1, mod_dst_icon(t, d));
+    param_format(&TP[id + 2u], a, val, &unit);
+    card_set(&k[3], "AMT", val, unit, a ? VAL(3u) : T_DIM, RATIO(&TP[id + 2u], a), mod_src_icon(MS_OFF));
+}
+
+/* STEP on a drum track (the grid): STEP LANE HIT ACC */
+static void cards_drumstep(card_t *k)
+{
+    const step_t *st = &seq_steps(TSEL)[ui.cursor];
+    uint32_t b = 1u << ui.lane;
+    card_count(&k[0], "STEP", (int32_t)ui.cursor + 1, TSEL->p[P_SLEN], VAL(0u), -1, ICON_AUTO);
+    card_set(&k[1], "LANE", drum_lane_name(TSEL, ui.lane), "", VAL(1u), -1, ICON_AUTO);
+    card_flag(&k[2], 2, "HIT", (step_lanes(st) & b) != 0u);
+    card_flag(&k[3], 3, "ACC", (step_accents(st) & b) != 0u);
+}
+
+/* STEP (the piano roll): STEP NOTE TIME FLAG */
+static void cards_step(card_t *k)
+{
+    static const char *const TIME_N[3] = {"NOTE", "TIE", "REST"};
+    static const char *const FLAG_N[4] = {"-", "ACC", "SLD", "A+S"};
+    const step_t *st = &seq_steps(TSEL)[ui.cursor];
+    char val[12], u[8];
+    uint32_t cnt = st->n, first = st->note[0], l;
+    for (l = NLANE; l-- > 0;)                           /* (lane hits count as their notes) */
+        if ((st->hit >> l) & 1u) {
+            cnt++;
+            if (!st->n)
+                first = DRUM_LANE_NOTE[l];
+        }
+    u[0] = 0;
+    if (cnt) {
+        note_name(val, first);
+        if (cnt > 1) {
+            str_cpy(u, "+", 8);
+            fmt_int(u + 1, (int32_t)cnt - 1);
+        }
+    } else {
+        str_cpy(val, "--", sizeof val);
+    }
+    card_count(&k[0], "STEP", (int32_t)ui.cursor + 1, TSEL->p[P_SLEN], VAL(0u), -1, ICON_AUTO);
+    card_set(&k[1], "NOTE", val, u, step_on(st) ? VAL(1u) : T_DIM, -1, ICON_AUTO);
+    card_set(&k[2], "TIME", TIME_N[st->time % 3u], "", VAL(2u), -1, ICON_AUTO);
+    card_set(&k[3], "FLAG", FLAG_N[(st->flags & SF_ACCENT ? 1u : 0u) | (st->flags & SF_SLIDE ? 2u : 0u)], "", VAL(3u),
+             -1, ICON_AUTO);
+}
+
+/* every other page: the four parameters of its PAGES[] row (GO ids: actions; USB and CPU: live readouts) */
+static void cards_table(card_t *k, const page_t *pg)
+{
+    uint32_t c;
+    char val[12];
+    const char *unit;
+    for (c = 0; c < 4u; c++) {
+        int16_t *vp;
+        const param_desc_t *d = page_desc(pg, c, &vp);
         if (!d || !d->label || d->label[0] == '-') {
-            draw_column(c, "", "", "", T_THEME, -1, ICON_AUTO);
+            card_empty(&k[c], ICON_AUTO);
             continue;
         }
-        if (cur_page()->id[c] == G_MIDI && cur_page()->scope == SC_GLOBAL) {
+        if (pg->id[c] == G_MIDI && pg->scope == SC_GLOBAL) {
             str_cpy(val, !usb.up ? "OFF" : usb.config ? "MIDI" : usb.setups ? "ENUM" : usb.sof_seen ? "BUS" : "WAIT", 12);
-            unit = "USB";
-            draw_column(c, "USB", val, unit, T_THEME, -1, ICON_AUTO);
+            card_set(&k[c], "USB", val, "USB", T_THEME, -1, ICON_AUTO);
             continue;
         }
         if ((act_cols() >> c) & 1u) {
-            draw_act_column(c, d->label, T_THEME, ICON_AUTO);
+            card_act(&k[c], c, d->label, T_THEME, ICON_AUTO);
             continue;
         }
-        if (cur_page()->id[c] == G_INFO && cur_page()->scope == SC_GLOBAL) {
+        if (pg->id[c] == G_INFO && pg->scope == SC_GLOBAL) {
             fmt_int(val, (int32_t)(song.cpu_q8 * 100u / 256u));
             unit = "%";
         } else {
             param_format(d, *vp, val, &unit);
         }
         card_mot_of(vp);                                /* (a global: never) */
-        draw_column(c, d->label, val, unit, VAL(c), d->fmt == F_ENUM && d->max < 2 ? -1 : RATIO(d, enum_rank(d, *vp)),
-                    param_icon(d, *vp));
+        card_set(&k[c], d->label, val, unit, VAL(c), d->fmt == F_ENUM && d->max < 2 ? -1 : RATIO(d, enum_rank(d, *vp)),
+                 param_icon(d, *vp));
     }
+}
+
+static void draw_columns(void)
+{
+    const page_t *pg = cur_page();
+    card_t k[4];
+    (void)motion_mask(song.sel, card_mot_mask);       /* (PLAY OFF: no scan) */
+    if (ui.home)
+        cards_home(k);
+    else if (pg->graph == GR_SONG)
+        cards_song(k);
+    else if (pg->graph == GR_CHANCE)
+        cards_chance(k);
+    else if (pg->graph == GR_MOTION)
+        cards_motion(k);
+    else if (pg->graph == GR_TOOLS)
+        cards_tools(k);
+    else if (pg->scope == SC_TRK)
+        cards_mixer(k);
+    else if (pg->graph == GR_BROWSE)
+        cards_browse(k);
+    else if (pg->graph == GR_PATS)
+        cards_pats(k);
+    else if (pg->graph == GR_USER)
+        cards_user(k);
+#if FELUCCA_SLICE
+    else if (pg->graph == GR_SLICES)
+        cards_slices(k);
+#endif
+    else if (pg->graph == GR_MOD)
+        cards_mod(k);
+    else if (pg->scope == SC_STEP && drum_track(TSEL))
+        cards_drumstep(k);
+    else if (pg->scope == SC_STEP)
+        cards_step(k);
+    else
+        cards_table(k, pg);
+    cards_draw(k);
 }
 
 

@@ -168,7 +168,7 @@ Every step has to pass `tests/ui_host.sh` with **0 renders changed** (`ui_golden
 the fingerprints on purpose.
 
 1. **`card_t` and the helpers.** Rewrite the 15 card branches to fill `card_t[4]` and draw them in one loop.
-   This is mechanical, and the biggest readability win.
+   This is mechanical, and the biggest readability win. **Done** (see "Step 1, as built" below).
 2. **`KINDS` for the panel.** Replace the `draw_graph` switch and the per-case `cv_oy`.
 3. **Actions.** Fold `act_cols` / `act_col` / `act_name` / `act_ready` / `act_do` into `page_act_t` rows.
 4. **Footer kinds**, so the layers' key row and the ACTIONS footer go through one path.
@@ -179,6 +179,37 @@ the fingerprints on purpose.
 Steps 1–2 are where I'd start; they touch only drawing code, and the golden renders cover it fully. Steps 3
 and 7 touch behaviour, so they also lean on `ui_test.c` (which already covers the loaders, undo, REC and
 the drum grid).
+
+### Step 1, as built
+
+How it works: every page now fills four `card_t` (label, value, unit, colour, gauge, icon) through a small
+filler function, `cards_<kind>()`, and `cards_draw()` draws them with upstream's `draw_column`, which I left
+unchanged. The fillers are in `firmware/src/ui_draw.c` (`cards_home`, `cards_table`, `cards_step`,
+`cards_song` and so on) and `firmware/src/ui_layer.c` (`cards_layer_fx`, `cards_layer_glo`). Four helpers
+cover the repetition: `card_empty`, `card_count` ("3" over "/16"), `card_act` (an OCT+ action) and
+`card_flag` ("ON" / "--").
+
+The catch: `draw_column` reads two globals the moment it's called. `fmt_named` (set by `param_format`) says
+the value is a name and shouldn't roll its digits, and `card_mot_next` (set by `card_mot_of`) puts MOTION's
+icon on the card. Filling all four cards first and drawing afterwards would let the later cards overwrite
+those flags. So `card_set` copies both into the card and clears them, exactly as `draw_column` did, and
+`cards_draw` restores each one just before it draws that card.
+
+How I verified it:
+
+- `tests/ui_golden.py`: all 1,392 renders pixel-identical.
+- The same comparison against the unmodified code for the outputs the fingerprints don't cover: the
+  `FELUCCA_FM4=1` build's screens and the rolling-digit filmstrips. 2,916 files, all identical.
+- Upstream's `ui_test.c` passes in both builds, including its rolling-digit check, which exercises the
+  `fmt_named` path.
+- `tests/ui_screens.py` now also checks that every `CUSTOM:<x>` in the screen map has a `cards_<x>()`
+  function, so the map stays tied to the code.
+
+Still open: the host timing of an idle HOME frame (nothing changed on screen) reads about 5 µs slower
+(roughly 25 → 30 µs) across four alternating runs. Copying four small cards per frame shouldn't cost that
+much, and wall-clock timing in this container is noisy, so I'm checking it with an instruction count
+(valgrind) before calling it real. The texts drawn, glyph pixels read and pixels blitted are identical
+before and after.
 
 ## Design notes from the walk-through
 

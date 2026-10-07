@@ -3,7 +3,7 @@
 # list is complete and groups the PNGs by it). Columns, tab separated:
 #   screen  the render's name (build/ui_new/<palette>/<screen>.png)
 #   shell   PAGE (header, 4 cards, panel, footer) | LAYER (the PAGE frame drawn by ui_layer.c: the layer's cards, key map and key row) | DIALOG | MENU | NAME | INFO
-#   cards   HOME (home_param) | TABLE (PAGES[] ids, the generic loop) | CUSTOM:<branch of draw_columns> | -
+#   cards   HOME (cards_home) | TABLE (cards_table: PAGES[] ids) | CUSTOM:<x> (cards_<x>, ui_draw.c / ui_layer.c) | -
 #   panel   SCOPE | KEYMAP (a layer's key map) | CHART:<kind> | LIST | NOTE (an empty-state message) | EDITOR:<kind> | STRIPS | -
 #   footer  STEPS (16 step bars) | ACTIONS (OCT+ / OCT- keycaps) | GRID (drum page + keys) | KEYS (a layer's key row) | -
 screen	shell	cards	panel	footer
@@ -88,11 +88,11 @@ layer_glo_active	LAYER	CUSTOM:layer_glo	KEYMAP	KEYS
 layer_glo_ext	LAYER	CUSTOM:layer_glo	KEYMAP	KEYS
 layer_scl_peek	LAYER	TABLE	KEYMAP	KEYS
 layer_scl_active	LAYER	TABLE	KEYMAP	KEYS
-layer_edit_peek	LAYER	CUSTOM:layer_edit	KEYMAP	KEYS
-layer_edit_active	LAYER	CUSTOM:layer_edit	KEYMAP	KEYS
-layer_edit_user	LAYER	CUSTOM:layer_edit	KEYMAP	KEYS
+layer_edit_peek	LAYER	CUSTOM:engine	KEYMAP	KEYS
+layer_edit_active	LAYER	CUSTOM:engine	KEYMAP	KEYS
+layer_edit_user	LAYER	CUSTOM:engine	KEYMAP	KEYS
 layer_hint	LAYER	CUSTOM:layer_glo	KEYMAP	KEYS
-layer_lock	LAYER	CUSTOM:layer_edit	KEYMAP	KEYS
+layer_lock	LAYER	CUSTOM:engine	KEYMAP	KEYS
 layer_lock_fx	LAYER	CUSTOM:layer_fx	KEYMAP	KEYS
 perform_peek	LAYER	CUSTOM:layer_fx	KEYMAP	KEYS
 perform_held	LAYER	CUSTOM:layer_fx	KEYMAP	KEYS

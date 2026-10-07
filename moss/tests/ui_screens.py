@@ -8,7 +8,8 @@ MANIFEST is tests/ui_screens.tsv; UI_DIR is build/ui_new (after tests/ui_render.
 
 The check (exit 1 on a finding): every PNG tests/ui_render.c drew is in the manifest, and every manifest row
 was drawn, so a new screen can't land without being given a pattern. The values of each column are from a
-fixed set too.
+fixed set too, and every CUSTOM:<x> card source names a cards_<x>() in firmware/src (the fillers in ui_draw.c and
+ui_layer.c), so the map can't drift from the code.
 
 The output, in UI_DIR/patterns/: one contact sheet per pattern (by shell, then cards, panel and footer) for
 each palette (GREY by default), and summary.txt with the counts.
@@ -75,6 +76,11 @@ def main():
     drawn = {p.stem for p in ref.glob("*.png")}
     errors += [f"drawn but not in the manifest: {s} (give it a pattern in {manifest})" for s in sorted(drawn - listed)]
     errors += [f"in the manifest but not drawn: {s}" for s in sorted(listed - drawn)]
+    src = Path(manifest).resolve().parent.parent / "firmware" / "src"
+    code = "".join(f.read_text(errors="replace") for f in sorted(src.glob("ui*.c")))
+    fillers = sorted({r["cards"][7:] for r in rows if r["cards"].startswith("CUSTOM:")})
+    errors += [f"cards CUSTOM:{x}: no static void cards_{x}( in {src}/ui*.c" for x in fillers
+               if f"static void cards_{x}(" not in code]
 
     out = ui / "patterns"
     out.mkdir(exist_ok=True)
