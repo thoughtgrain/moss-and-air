@@ -205,11 +205,19 @@ How I verified it:
 - `tests/ui_screens.py` now also checks that every `CUSTOM:<x>` in the screen map has a `cards_<x>()`
   function, so the map stays tied to the code.
 
-Still open: the host timing of an idle HOME frame (nothing changed on screen) reads about 5 µs slower
-(roughly 25 → 30 µs) across four alternating runs. Copying four small cards per frame shouldn't cost that
-much, and wall-clock timing in this container is noisy, so I'm checking it with an instruction count
-(valgrind) before calling it real. The texts drawn, glyph pixels read and pixels blitted are identical
-before and after.
+The cost: the host's wall-clock timing of an idle HOME frame (nothing changed on screen) first read about 20%
+slower, so I measured it in instructions instead, with valgrind's callgrind. A small harness runs tests/ui_render.c's
+own HOME setup, then N idle frames, built once from the code before this step and once after; the difference
+between N = 800 and N = 0, divided by 800, is the cost of one frame:
+
+| | instructions per idle HOME frame |
+| --- | --- |
+| before (`28197d6`) | 458,063 |
+| after | 460,980 (+2,917, +0.64%) |
+
+That's what copying four small cards should cost, so the 20% was timing noise in this container. The work that
+reaches the screen (texts drawn, glyph pixels, pixels blitted) is identical. On the device the 0.64% would
+come out of the UI loop, not the audio interrupt.
 
 ## Design notes from the walk-through
 
