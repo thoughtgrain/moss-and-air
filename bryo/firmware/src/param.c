@@ -25,9 +25,11 @@ static const char *const N_TRIG[2] = {"FREE", "KEY"};
 static const char *const N_CLK[2] = {"FREE", "BPM"};
 static const char *const N_MODE[2] = {"KEYS", "FLLW"};
 static const char *const N_DIR[4] = {"FWD", "REV", "PING", "RND"};
-static const char *const N_SHAPE[3] = {"SIN", "TRI", "SQR"};
+static const char *const N_SHAPE[5] = {"SIN", "TRI", "SQR", "SAW", "RND"};
+static const char *const N_SRC[6] = {"SELF", "T1", "T2", "T3", "T4", "USB"};
+static const char *const N_HOLD[5] = {"OFF", "1/32", "1/16", "1/8", "1/4"};
 
-#define NPK 8u                   /* knobs a device or engine can have: two pages of four */
+#define NPK 16u                  /* knobs a device or engine can have: up to four pages of four */
 
 static const char *const DEV_NAME[NDEV] = {"TAPE", "GRAIN", "RESONATOR", "COLOR", "SPACE"};
 
@@ -66,8 +68,17 @@ static const pdesc_t DEV_P[NDEV][NPK] = {
         {"PRE", 0, 200, 20, F_MS}, {"WIDE", 0, 100, 100, F_PCT}},
 };
 
-/* a device's or an engine's pages: 2 when its page 2 has knobs */
-static uint32_t pdesc_pages(const pdesc_t *p) { return p[4].label[0] ? 2u : 1u; }
+/* an unused knob on a page (no label) */
+static int pdesc_empty(const pdesc_t *d) { return !d->label || !d->label[0]; }
+
+/* a device's or an engine's pages: up to the first page whose first knob has no label */
+static uint32_t pdesc_pages(const pdesc_t *p)
+{
+    uint32_t n = 1;
+    while (n < NPK / 4u && !pdesc_empty(&p[4u * n]))
+        n++;
+    return n;
+}
 
 /* each track's channel strip, after the chain and before the mix (the mixer's second page: EDIT held under GLO).
  * LOW and HIGH are shelves (+-12 dB); FILT is one knob for two filters, a low-pass turning left of 0 and a
@@ -78,33 +89,52 @@ static const pdesc_t CH_P[NCH] = {
     {"LOW", -12, 12, 0, F_DB}, {"HIGH", -12, 12, 0, F_DB}, {"FILT", -100, 100, 0, F_BIPCT}, {"PAN", -100, 100, 0, F_BIPCT},
 };
 
-/* the modulator engines (phase 7 runs them; their knobs exist now so a slot's page can be edited) */
-enum { ME_WAVE, ME_RANDOM, ME_ADSR, ME_SEQ, NME };
-static const char *const ME_NAME[NME] = {"WAVE", "RANDOM", "ADSR", "SEQ"};
+/* The modulator engines (phase 7 runs them; their knobs exist now so a slot's page can be edited), lined up with
+ * the Torso S-4's modulators (docs/bryo-architecture.md, "Modulators"). The S-4's WAVE and RANDOM are one LFO
+ * here: random is one of its shapes (RND), on the same core, so every shape gets the same rate, placement and
+ * timing, and the random knobs (SMTH, VAR, LEN) work on every shape. ADSR and FOLLOW are the S-4's; SEQ is the
+ * PRD's. Page by page: the shape's character first, then its refinements, its depth and placement (AMT, OFS,
+ * PHAS, SPRD), then the timing switches. The PRD's hold-and-turn sets each target's depth; AMT scales the slot as
+ * a whole, as the S-4's AMOUNT does. */
+enum { ME_WAVE, ME_ADSR, ME_SEQ, ME_FOLLOW, NME };
+static const char *const ME_NAME[NME] = {"LFO", "ADSR", "SEQ", "FOLLOW"};
+#define P_AMT {"AMT", 0, 100, 100, F_PCT}
+#define P_OFS {"OFS", -100, 100, 0, F_BIPCT}
+#define P_PHAS {"PHAS", 0, 359, 0, F_NUM}
+#define P_SPRD {"SPRD", 0, 100, 0, F_PCT}            /* the right channel's phase against the left: the S-4's SPREAD */
+#define P_TRIG {"TRIG", 0, 1, 0, F_ENUM, N_TRIG}      /* free-running, or restarted by a key */
+#define LFO_RND 4                                     /* the LFO's random shape (N_SHAPE) */
 static const pdesc_t ME_P[NME][NPK] = {
-    {{"RATE", 0, 127, 64, F_NUM}, {"SHPE", 0, 2, 0, F_ENUM, N_SHAPE}, {"FOLD", 0, 100, 0, F_PCT},
-     {"SKEW", -100, 100, 0, F_BIPCT},
-     /* 2: the start phase, free-running or restarted by a key, free or locked to the tempo, a fade-in */
-     {"PHAS", 0, 359, 0, F_NUM}, {"TRIG", 0, 1, 0, F_ENUM, N_TRIG}, {"CLK", 0, 1, 0, F_ENUM, N_CLK},
-     {"FADE", 0, 100, 0, F_PCT}},
-    {{"RATE", 0, 127, 64, F_NUM}, {"SMTH", 0, 100, 0, F_PCT}, {"SPRD", 0, 100, 100, F_PCT},
-     {"BIAS", -100, 100, 0, F_BIPCT}, {""}, {""}, {""}, {""}},
-    {{"ATK", 0, 127, 10, F_NUM}, {"DEC", 0, 127, 50, F_NUM}, {"SUS", 0, 100, 60, F_PCT}, {"REL", 0, 127, 50, F_NUM},
-     /* 2: the PRD's ADSR / FOLLOW: triggered by keys or following the track's tape; the follower's sensitivity;
-      * looping (attack-decay cycling); how much a key's velocity scales it */
-     {"MODE", 0, 1, 0, F_ENUM, N_MODE}, {"SENS", 0, 100, 50, F_PCT}, {"LOOP", 0, 1, 0, F_ENUM, N_OFFON},
-     {"VEL", 0, 100, 0, F_PCT}},
-    {{"LEN", 1, 16, 16, F_NUM}, {"RATE", 0, 5, 2, F_NUM}, {"SLEW", 0, 100, 0, F_PCT}, {"SWNG", 0, 100, 0, F_PCT},
-     /* 2: the play order, free-running or restarted by a key, the chance a step plays, the step it starts on */
-     {"DIR", 0, 3, 0, F_ENUM, N_DIR}, {"TRIG", 0, 1, 0, F_ENUM, N_TRIG}, {"PROB", 0, 100, 100, F_PCT},
-     {"STRT", 1, 16, 1, F_NUM}},
+    {   /* LFO. 1: RATE and the shape (SIN TRI SQR SAW RND), bent by SKEW (squashed to a side) and FOLD (peaks
+         * folded back). 2: CURV widens or narrows the curves; SMTH slews it (RND: glides between its steps); VAR
+         * lets each time round drift from the last (0: the same forever); LEN is RND's steps per loop, and for
+         * the other shapes the cycles before VAR's drift repeats. 3: depth and placement. 4: the clock (free Hz
+         * or the tempo's divisions), the key restart, a fade-in. */
+        {"RATE", 0, 127, 64, F_NUM}, {"SHPE", 0, 4, 0, F_ENUM, N_SHAPE}, {"SKEW", -100, 100, 0, F_BIPCT},
+        {"FOLD", 0, 100, 0, F_PCT},
+        {"CURV", -100, 100, 0, F_BIPCT}, {"SMTH", 0, 100, 0, F_PCT}, {"VAR", 0, 100, 0, F_PCT}, {"LEN", 1, 16, 8, F_NUM},
+        P_AMT, P_OFS, P_PHAS, P_SPRD,
+        {"SYNC", 0, 1, 1, F_ENUM, N_CLK}, P_TRIG, {"FADE", 0, 100, 0, F_PCT}, {""}},
+    {   /* ADSR: the four stages, then their curves (0 straight, - logarithmic, + exponential) and SPRD, then the
+         * key's velocity, looping (attack and decay cycling), depth and offset */
+        {"ATK", 0, 127, 10, F_NUM}, {"DEC", 0, 127, 50, F_NUM}, {"SUS", 0, 100, 60, F_PCT}, {"REL", 0, 127, 50, F_NUM},
+        {"ACRV", -100, 100, 0, F_BIPCT}, {"DCRV", -100, 100, 0, F_BIPCT}, {"RCRV", -100, 100, 0, F_BIPCT}, P_SPRD,
+        {"VEL", 0, 100, 0, F_PCT}, {"LOOP", 0, 1, 0, F_ENUM, N_OFFON}, P_AMT, P_OFS},
+    {   /* SEQ (the PRD's): 16 steps of values, then their order, restart, chance and first step */
+        {"LEN", 1, 16, 16, F_NUM}, {"RATE", 0, 5, 2, F_NUM}, {"SLEW", 0, 100, 0, F_PCT}, {"SWNG", 0, 100, 0, F_PCT},
+        {"DIR", 0, 3, 0, F_ENUM, N_DIR}, P_TRIG, {"PROB", 0, 100, 100, F_PCT}, {"STRT", 1, 16, 1, F_NUM}},
+    {   /* FOLLOW: the envelope of a track's sound (SELF: this track's tape) or USB in; GAIN into it, how fast it
+         * rises and falls; then sample-and-hold to the tempo, depth, offset, spread */
+        {"SRC", 0, 5, 0, F_ENUM, N_SRC}, {"GAIN", -12, 12, 0, F_DB}, {"RISE", 0, 127, 10, F_NUM},
+        {"FALL", 0, 127, 50, F_NUM},
+        {"HOLD", 0, 4, 0, F_ENUM, N_HOLD}, P_AMT, P_OFS, P_SPRD},
 };
 /* a SEQ slot's steps before you set them: a pattern with an accent on each beat, so the page shows the idea
  * (the slot's depth is 0 until it's assigned, so this moves nothing) */
 static const int8_t SEQ_DEF[16] = {100, 25, 60, 25, 80, 25, 60, 40, 100, 25, 60, 25, 80, 50, 35, 20};
 
 /* the slots' default engines: the pads are labelled LFO ENV SEQ ARP (PRD 2.2) */
-static const uint8_t SLOT_DEF_ENGINE[NSLOT] = {ME_WAVE, ME_ADSR, ME_SEQ, ME_RANDOM};
+static const uint8_t SLOT_DEF_ENGINE[NSLOT] = {ME_WAVE, ME_ADSR, ME_SEQ, ME_WAVE};   /* slot 4: the LFO, RND */
 
 typedef struct {
     int16_t dev[NDEV][NPK];
@@ -115,21 +145,32 @@ typedef struct {
 } track_params_t;
 static track_params_t tp[NTRK];
 
+/* slot s of track t runs engine e: its knobs start from that engine's defaults */
+static void param_engine(uint32_t t, uint32_t s, uint32_t e)
+{
+    uint32_t k;
+    tp[t].engine[s] = (uint8_t)e;
+    for (k = 0; k < NPK; k++)
+        tp[t].mod[s][k] = pdesc_empty(&ME_P[e][k]) ? 0 : ME_P[e][k].def;
+}
+
 static void param_defaults(void)
 {
     uint32_t t, d, k, s;
     for (t = 0; t < NTRK; t++) {
         for (d = 0; d < NDEV; d++)
             for (k = 0; k < NPK; k++)
-                tp[t].dev[d][k] = DEV_P[d][k].def;
+                tp[t].dev[d][k] = pdesc_empty(&DEV_P[d][k]) ? 0 : DEV_P[d][k].def;
         for (k = 0; k < NCH; k++)
             tp[t].ch[k] = CH_P[k].def;
         for (s = 0; s < NSLOT; s++) {
-            tp[t].engine[s] = SLOT_DEF_ENGINE[s];
+            param_engine(t, s, SLOT_DEF_ENGINE[s]);
+            if (s == 3u) {                               /* ARP's slot: the random LFO, a loop that drifts a little */
+                tp[t].mod[s][1] = LFO_RND;
+                tp[t].mod[s][6] = 20;
+            }
             for (k = 0; k < 16u; k++)
                 tp[t].steps[s][k] = SEQ_DEF[k];
-            for (k = 0; k < NPK; k++)
-                tp[t].mod[s][k] = ME_P[SLOT_DEF_ENGINE[s]][k].def;
         }
     }
 }

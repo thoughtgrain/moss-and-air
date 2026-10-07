@@ -172,7 +172,7 @@ static void draw_strip(void)
     for (k = 0; k < 4u; k++) {
         int16_t *vp;
         const pdesc_t *d = ui_page(k, &vp);
-        sig = hash_str(sig, d->label) + (uint32_t)(*vp + 32768) * 2654435761u;
+        sig = hash_str(sig, pdesc_empty(d) ? "" : d->label) + (uint32_t)(*vp + 32768) * 2654435761u;
         if (ui.view == VIEW_MIXER && !ui.chan)          /* the faders carry the meters */
             sig = (sig ^ (uint32_t)(meter_w(track_rt[k].peak, 19) | track[k].mute << 8)) * 16777619u;
     }
@@ -187,6 +187,10 @@ static void draw_strip(void)
         int16_t *vp;
         const pdesc_t *d = ui_page(k, &vp);
         int32_t x = 30 * (int32_t)k, v = *vp;
+        if (pdesc_empty(d)) {                          /* an unused knob on this page: an empty cell */
+            px_frame(x + 9, 8, 12, 12, px_dim, 2);
+            continue;
+        }
         uint32_t pk = ui.view == VIEW_MIXER ? CH_PK[k]
                     : ui.kind == FOCUS_SLOT ? ME_PK[tp[sys.sel].engine[ui.slot]][4u * ui.page + k]
                     : DEV_PK[ui.dev][4u * ui.page + k];

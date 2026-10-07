@@ -398,18 +398,38 @@ After phase 1, two changes to the screen, from your review:
   | GRAIN 2 | MIX, JIT, WIN, REV | without a dry/wet GRAIN always replaces the tape; where grains land, their window, the chance one plays backwards |
   | COLOR 2 | LVL, MIX, SRR, GATE | drive adds loudness with nothing to take it back; a blend; the rate split off CRSH (which keeps the bits); where the noise's envelope opens |
   | SPACE 2 | DMIX, RMIX, PRE, WIDE | the PRD gives no wet level for the delay or the reverb; the reverb's pre-delay; the stereo width |
-  | WAVE 2 | PHAS, TRIG, CLK, FADE | where the cycle starts, free or restarted by a key, free or locked to the tempo, a fade-in |
-  | ADSR 2 | MODE, SENS, LOOP, VEL | the PRD's "ADSR / FOLLOW" had nothing to pick between them; the follower's sensitivity; cycling; velocity |
-  | SEQ 2 | DIR, TRIG, PROB, STRT | forward, reverse, ping-pong, random; key restart; the chance a step plays; the step it starts on |
 
-  RESONATOR and RANDOM stay at one page: their four knobs already cover them. Every page 2 knob also shows in the
+  RESONATOR stays at one page: its four knobs already cover it. (The modulators' pages are under "Modulators".) Every page 2 knob also shows in the
   picture below, not only as a number: GAIN scales (and clips) the sample on the tape, FADE draws ramps at the
   loop's ends, REV and HALF turn and halve the chevrons; WIN rounds the grains, REV makes some hollow, JIT adds
   whiskers; COLOR's curve and wave include MIX and LVL, and GATE draws its line over the noise; SPACE's echoes
-  and tail scale by their mixes and the tail waits for PRE; WAVE starts at PHAS, fades in, shows the beat ticks
-  when locked and the key when restarted; ADSR draws the hits it follows, the loop, and the softest key's
-  envelope; SEQ hollows the steps PROB skips and marks STRT. A page 2 knob you turn is tagged with its value.
+  and tail scale by their mixes and the tail waits for PRE; the LFO starts at PHAS, fades in, shows the beat ticks
+  when locked, the key when restarted and its next time round dotted; ADSR bends each stage by its curve and
+  draws the loop and the softest key's envelope; FOLLOW draws its envelope over what it listens to; SEQ hollows the steps PROB skips and marks STRT. A page 2 knob you turn is tagged with its value.
   Switch-like values (REV, LOOP, TRIG, CLK, MODE, DIR, SHPE) print their names, not numbers.
+- **Modulators, lined up with the Torso S-4.** I checked the S-4's modulator reference (Torso's docs for WAVE,
+  RANDOM, ADSR and FOLLOW, and its CC map) and gave Bryo's engines the same knobs, with one change you asked for:
+  the S-4's WAVE and RANDOM are a single LFO here, and random is one of its shapes. Why: they share everything
+  but the shape (rate, phase, depth, offset, stereo spread, sync), so one core is less to learn and less code,
+  and it means the random knobs (SMTH, VAR, LEN) work on every shape: a square that glides, a sine whose level
+  drifts each cycle. The engines are now LFO, ADSR, SEQ (the PRD's) and FOLLOW; hold the focused slot's pad and
+  turn SELECT to pick one (this was phase 7's plan; it's in now because FOLLOW can't be reached any other way).
+
+  | Engine | Page 1 | Page 2 | Page 3 | Page 4 |
+  | --- | --- | --- | --- | --- |
+  | LFO | RATE, SHPE (SIN TRI SQR SAW RND), SKEW, FOLD | CURV, SMTH, VAR, LEN | AMT, OFS, PHAS, SPRD | SYNC, TRIG, FADE |
+  | ADSR | ATK, DEC, SUS, REL | ACRV, DCRV, RCRV, SPRD | VEL, LOOP, AMT, OFS | |
+  | SEQ | LEN, RATE, SLEW, SWNG | DIR, TRIG, PROB, STRT | | |
+  | FOLLOW | SRC (SELF, T1-T4, USB), GAIN, RISE, FALL | HOLD (sample and hold), AMT, OFS, SPRD | | |
+
+  VAR is the S-4's VARIATION: each time round the loop drifts from the last by up to that much (0: the same loop
+  forever); on RND that's the steps themselves, on the other shapes each cycle's level, repeating every LEN
+  cycles. SMTH is a slew on any shape. SPRD is the right channel's phase against the left, drawn as a dim second
+  trace. AMT scales the slot as a whole (the S-4's AMOUNT); the PRD's hold-and-turn still sets each target's
+  depth. The ARP pad's slot starts as the LFO on RND with a little VAR, so the random modulator is still one press
+  away. ADSR's MODE/SENS from the last pass went to FOLLOW, where they belong. What I couldn't confirm from the
+  S-4 docs: FOLLOW's exact knob names (the docs describe a source, rise and fall times and sample and hold), so
+  those four names are mine.
 
 The controls are mapped in `docs/controls.tsv` (one row per context, control and gesture, with status and
 phase), validated by `tests/controls_check.py`, which also fails if a physical control goes unmentioned.

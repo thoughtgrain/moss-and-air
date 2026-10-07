@@ -21,10 +21,10 @@ page	BTN_HOME	press	focus the track's source device (TAPE); again: TAPE 2 (FADE 
 page	BTN_HOME	tap	on a POLY track, again while its page is up: the next page (SAMPLE, ENV, FILTER)	planned	3	change
 page	BTN_EDIT	press	focus GRAIN; again: GRAIN 2 (MIX JIT WIN REV); again: RESONATOR; again: GRAIN	now	-	PRD 2.2
 page	BTN_FX	press	focus COLOR; again: COLOR 2 (LVL MIX SRR GATE); again: SPACE; again: SPACE 2 (DMIX RMIX PRE WIDE)	now	-	PRD 2.2
-page	BTN_LFO	press	focus modulator slot 1 (default engine WAVE); again: its page 2 (PHAS TRIG CLK FADE)	now	-	PRD 2.2
-page	BTN_ENV	press	focus modulator slot 2 (default engine ADSR / FOLLOW); again: its page 2 (MODE SENS LOOP VEL)	now	-	PRD 2.2
+page	BTN_LFO	press	focus modulator slot 1 (default engine LFO, SIN); again: its next page (4: shape, refine, place, timing)	now	-	PRD 2.2
+page	BTN_ENV	press	focus modulator slot 2 (default engine ADSR); again: its next page (3: stages, curves, VEL LOOP AMT OFS)	now	-	PRD 2.2
 page	BTN_SEQ	press	focus modulator slot 3 (default engine SEQ); again: its page 2 (DIR TRIG PROB STRT)	now	-	PRD 2.2
-page	BTN_ARP	press	focus modulator slot 4 (default engine RANDOM, one page)	now	-	PRD 2.2
+page	BTN_ARP	press	focus modulator slot 4 (default engine LFO on its random shape, RND); again: its next page	now	-	PRD 2.2
 page	BTN_GLO	tap	open the mixer and keep it up	now	-	change
 page	BTN_GLO	hold	the mixer while held; letting go returns to the page	now	-	change
 page	BTN_SCL	press	nothing (the PRD's SEL; track picking moved under GLO)	unassigned	-	change
@@ -69,7 +69,7 @@ glo-held	WHITE_1-4	press	focus track 1..4 (the white keys don't play while GLO i
 glo-held	ENC_K1-4	turn	the four track levels; letting go of GLO returns to the page	now	-	change
 glo-held	BTN_GLO	release	back to the page if something was done or it was held past HOLD; else the mixer stays up	now	-	change
 slot-held	ENC_K1-4	hold-turn	modulation depth from this slot to that knob's parameter on the page; release commits	planned	7	PRD 4.2
-slot-held	ENC_SELECT	hold-turn	choose the slot's engine (WAVE, RANDOM, ADSR/FOLLOW, SEQ); release commits	planned	7	change
+slot-held	ENC_SELECT	hold-turn	the focused slot's pad held: its engine (LFO ADSR SEQ FOLLOW), starting from that engine's defaults; the tempo is left alone	now	-	change
 slot-held	BTN_HOME	hold	(on HOME) choose the track's source engine with SELECT: TAPE, SYNTH, POLY	planned	2	change
 slot-held+step	ENC_K1-4	hold-turn	the depth for that step only (p-lock); release the key and pad to commit	planned	7	PRD 4.3
 project-view	ENC_PRESETS	turn	move through the project slots	planned	8	change

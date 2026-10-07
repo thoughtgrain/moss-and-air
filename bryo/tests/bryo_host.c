@@ -277,7 +277,25 @@ static void test_input(void)
     check("a slot pad again: the slot's page 2", ui.kind == FOCUS_SLOT && ui.slot == 0u && ui.page == 1u);
     press(B_ARP);
     press(B_ARP);
-    check("RANDOM has one page: again stays on it", ui.slot == 3u && ui.page == 0u);
+    press(B_ARP);
+    press(B_ARP);
+    press(B_ARP);
+    check("slot 4 (the random LFO) has four pages, coming round to the first", ui.slot == 3u && ui.page == 0u &&
+          tp[0].engine[3] == ME_WAVE && tp[0].mod[3][1] == LFO_RND);
+    {
+        uint32_t bpm = sys.bpm;
+        hold(B_ARP);                                     /* slot 4's pad held + SELECT: its engine */
+        host_enc[panel.enc[EN_SELECT]] = 3;
+        ui_input();
+        let_go(B_ARP);
+        check("a slot's pad held + SELECT: LFO -> FOLLOW, from its defaults, the tempo untouched",
+              tp[0].engine[3] == ME_FOLLOW && tp[0].mod[3][2] == ME_P[ME_FOLLOW][2].def && sys.bpm == bpm && ui.page == 0u);
+        hold(B_ARP);
+        host_enc[panel.enc[EN_SELECT]] = -3;
+        ui_input();
+        let_go(B_ARP);
+        check("..and back (round the four engines: LFO ADSR SEQ FOLLOW)", tp[0].engine[3] == ME_WAVE);
+    }
     press(B_HOME);
 
     hold(B_GLO);                                         /* GLO held + white key 3: TRACK 3 */
@@ -461,22 +479,37 @@ static void screens_in(const char *pal)
         shot(pal, nm);
     }
     press(B_LFO);
-    turn(1, 1);                                          /* WAVE: TRIANGLE, FOLD 40, SKEW +50 */
+    turn(1, 1);                                          /* LFO: TRIANGLE, SKEW +40, FOLD 50 */
     turn(2, 40);
     turn(3, 50);
     shot(pal, "mod1_tri_fold");
-    press(B_LFO);                                        /* WAVE 2: PHAS 90, TRIG KEY, CLK BPM, FADE 40 */
-    turn(0, 90);
-    turn(1, 1);
-    turn(2, 1);
-    turn(3, 40);
+    press(B_LFO);                                        /* LFO 2: CURV -60, SMTH 30, VAR 40, LEN 4 */
+    turn(0, -60);
+    turn(1, 30);
+    turn(2, 40);
+    turn(3, -4);
     shot(pal, "mod1_p2");
-    press(B_ENV);                                        /* ADSR 2: FLLW, LOOP on, VEL 40 */
+    press(B_LFO);                                        /* LFO 3: AMT 70, OFS +20, PHAS 90, SPRD 50 */
+    turn(0, -30);
+    turn(1, 20);
+    turn(2, 90);
+    turn(3, 50);
+    shot(pal, "mod1_p3");
+    press(B_LFO);                                        /* LFO 4: TRIG KEY, FADE 40 (SYNC stays BPM) */
+    turn(1, 1);
+    turn(2, 40);
+    shot(pal, "mod1_p4");
+    press(B_ENV);                                        /* ADSR 2: ACRV -60, DCRV +60, RCRV +40, SPRD 40 */
     press(B_ENV);
-    turn(0, 1);
-    turn(2, 1);
+    turn(0, -60);
+    turn(1, 60);
+    turn(2, 40);
     turn(3, 40);
     shot(pal, "mod2_p2");
+    press(B_ENV);                                        /* ADSR 3: VEL 40, LOOP on */
+    turn(0, 40);
+    turn(1, 1);
+    shot(pal, "mod2_p3");
     press(B_SEQ);
     turn(0, -4);                                         /* SEQ: LEN 12, SLEW 60, SWING 50 */
     turn(2, 60);
@@ -488,8 +521,29 @@ static void screens_in(const char *pal)
     turn(3, 4);
     shot(pal, "mod3_p2");
     press(B_ARP);
-    turn(1, 40);                                         /* RANDOM: SMOOTH 40 */
+    shot(pal, "mod4_rnd");                               /* slot 4: the LFO on RND, VAR 20 */
+    press(B_ARP);                                        /* LFO 2 on RND: SMTH 40, VAR 60, LEN 12 */
+    turn(1, 40);
+    turn(2, 40);
+    turn(3, 4);
     shot(pal, "mod4_smooth");
+    press(B_ARP);                                        /* LFO 3: AMT 80, OFS +20, PHAS 90, SPRD 40 */
+    turn(0, -20);
+    turn(1, 20);
+    turn(2, 90);
+    turn(3, 40);
+    shot(pal, "mod4_p3");
+    hold(B_ARP);                                         /* slot 4 runs FOLLOW: RISE 4, FALL 30, GAIN +6 */
+    host_enc[panel.enc[EN_SELECT]] = -1;
+    ui_input();
+    let_go(B_ARP);
+    turn(1, 6);
+    turn(2, -6);
+    turn(3, -20);
+    shot(pal, "mod4_follow");
+    press(B_ARP);                                        /* FOLLOW 2: HOLD 1/16 */
+    turn(0, 2);
+    shot(pal, "mod4_follow2");
     press(B_HOME);
     tap(B_GLO);
     track[1].mute = 1;                                   /* track 2 muted, track 1 sounding */

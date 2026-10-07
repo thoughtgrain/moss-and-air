@@ -5,7 +5,7 @@
  *   HOME           focus the track's source (TAPE); again: its page 2
  *   EDIT           focus GRAIN; again: GRAIN 2, RESONATOR, GRAIN ... (each device's pages, then the next device)
  *   FX             focus COLOR; again: COLOR 2, SPACE, SPACE 2, COLOR ...
- *   LFO ENV SEQ ARP  focus modulator slot 1..4; again: the slot's page 2
+ *   LFO ENV SEQ ARP  focus modulator slot 1..4; again: the slot's next page; held + SELECT: the slot's engine
  *   GLO held       the mixer while held: white keys 1..4 pick the track, KNOB 1..4 set the levels; let go: back
  *   GLO tapped     the mixer stays up; tap again (or any page pad): back
  *   EDIT held      on the mixer: KNOB 1..4 set the selected track's channel (LOW HIGH FILT PAN); let go: levels
@@ -222,7 +222,7 @@ static void on_knob(uint32_t c, int32_t d)
     int16_t *vp;
     const pdesc_t *p = ui_page(c, &vp);
     int16_t v;
-    if (!p->label[0])                                   /* an empty knob on a page */
+    if (pdesc_empty(p))                                 /* an unused knob on a page */
         return;
     v = param_nudge(p, *vp, d);
     if (ui.view == VIEW_MIXER && !ui.chan)
@@ -265,8 +265,18 @@ static void ui_input(void)
     for (k = 0; k < 4u; k++)
         if ((d = panel_enc(EN_K1 + k)) != 0)
             on_knob(k, d);
-    if ((d = panel_enc(EN_SELECT)) != 0)                /* SELECT: the global tempo */
-        sys.bpm = (uint16_t)clamp((int32_t)sys.bpm + d, 40, 240);
+    if ((d = panel_enc(EN_SELECT)) != 0) {
+        static const uint8_t SLOT_BTN[NSLOT] = {B_LFO, B_ENV, B_SEQ, B_ARP};
+        if (ui.view == VIEW_PAGE && ui.kind == FOCUS_SLOT && ((fm1_in.buttons >> panel.btn[SLOT_BTN[ui.slot]]) & 1u)) {
+            /* the focused slot's pad held + SELECT: its engine (LFO RANDOM ADSR SEQ FOLLOW), from its defaults */
+            uint32_t e = (uint32_t)(((int32_t)tp[sys.sel].engine[ui.slot] + d % (int32_t)NME + (int32_t)NME) % (int32_t)NME);
+            param_engine(sys.sel, ui.slot, e);
+            ui.page = 0;
+            ui.last = 0xFF;
+        } else {                                        /* SELECT: the global tempo */
+            sys.bpm = (uint16_t)clamp((int32_t)sys.bpm + d, 40, 240);
+        }
+    }
     if (panel_enc(EN_PRESET))
         ui_message("PROJECTS ARRIVE IN PHASE 8");
     if (panel_enc(EN_ALGO))

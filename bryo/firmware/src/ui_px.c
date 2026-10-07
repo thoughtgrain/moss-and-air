@@ -183,7 +183,8 @@ enum {
     PK_KNOB, PK_FADER, PK_ATTACK, PK_DECAY, PK_SUSTAIN, PK_RELEASE, PK_START, PK_LENGTH, PK_SPEED, PK_LAYERS,
     PK_SQUARE, PK_DOTS, PK_BOWTIE, PK_LOOP, PK_MIX, PK_DRIVE, PK_STAIRS, PK_NOISE, PK_TONE, PK_CLOCK, PK_ROOM,
     PK_SHAPE, PK_FOLD, PK_SKEW, PK_SMOOTH, PK_STEPS, PK_SLEW, PK_SWING, PK_KEYS, PK_SHELF_LO, PK_SHELF_HI, PK_FILTER,
-    PK_PAN, PK_TOGGLE, PK_FADE, PK_WINDOW, PK_GATE, PK_PRE, PK_MODE, PK_DIR, PK_STEPAT, PK_NONE
+    PK_PAN, PK_TOGGLE, PK_FADE, PK_WINDOW, PK_GATE, PK_PRE, PK_MODE, PK_DIR, PK_STEPAT, PK_NONE,
+    PK_CURVE, PK_VAR, PK_SRC
 };
 
 /* the waveform shapes WAVE's SHAPE picks, at phase p (0..63 a cycle), x1000 */
@@ -194,6 +195,12 @@ static int32_t px_wave(uint32_t shape, int32_t p)
         return p < 16 ? p * 1000 / 16 : p < 48 ? (32 - p) * 1000 / 16 : (p - 64) * 1000 / 16;
     if (shape == 2u)                                     /* square */
         return p < 32 ? 1000 : -1000;
+    if (shape == 3u)                                     /* saw: up, then the drop */
+        return (p - 32) * 1000 / 32;
+    if (shape == 4u) {                                   /* random: 8 held steps a cycle */
+        static const int16_t RS[8] = {600, -300, 900, -800, 100, 700, -500, -100};
+        return RS[(p / 8) & 7];
+    }
     return px_sin(p);
 }
 
@@ -654,6 +661,36 @@ static void px_picto(uint32_t kind, int32_t x, int32_t y, const pdesc_t *d, int3
         }
         break;
     }
+    case PK_CURVE: {                                     /* a rise bent by the value: - bows up (log), + sags (exp) */
+        int32_t py = b;
+        px_line(x, b, x + 21, y + 1, m, 3);
+        for (i = 1; i <= 21; i++) {
+            int32_t t = i * 1000 / 21, bend = v * t / 1000 * (1000 - t) / 100;   /* -1000..1000 x t(1-t) */
+            int32_t yy = b - (t - bend) * (b - y - 1) / 1000;
+            px_line(x + i - 1, py, x + i, clamp(yy, y, b), c, 1);
+            py = clamp(yy, y, b);
+        }
+        break;
+    }
+    case PK_VAR: {                                       /* variation: a loop of steps, and the next time round dotted, */
+        static const int8_t LV[5] = {12, 4, 16, 8, 13};  /* further off as the value grows */
+        int32_t k, dv = r * 6 / 1000;
+        for (k = 0; k < 5; k++) {
+            int32_t x0 = x + k * 4 + 1, alt = ((k * 3 + 1) % 3 - 1) * dv;
+            px_line(x0, y + LV[k], x0 + 3, y + LV[k], c, 1);
+            if (dv)
+                px_line(x0, clamp(y + LV[k] + alt, y, b), x0 + 3, clamp(y + LV[k] + alt, y, b), c, 2);
+        }
+        break;
+    }
+    case PK_SRC: {                                       /* the source: a jack and its name */
+        const char *n = d->names[v - d->min];
+        px_frame(x + 1, y + 2, 20, 13, c, 1);
+        px_text_c(x + 1, 20, y + 6, PXF_3, n, c);
+        px_line(x + 11, y + 15, x + 11, b, c, 1);
+        px_box(x + 9, b - 1, 5, 2, c);
+        break;
+    }
     case PK_NONE:
         break;
     case PK_KEYS: {                                      /* an octave: one outline, the dividers, the root marked */
@@ -695,12 +732,15 @@ static const uint8_t DEV_PK[NDEV][NPK] = {
 };
 static const uint8_t CH_PK[NCH] = {PK_SHELF_LO, PK_SHELF_HI, PK_FILTER, PK_PAN};
 static const uint8_t ME_PK[NME][NPK] = {
-    {PK_KNOB, PK_SHAPE, PK_FOLD, PK_SKEW,            /* WAVE: RATE SHPE FOLD SKEW */
-     PK_CLOCK, PK_TOGGLE, PK_TOGGLE, PK_ATTACK},     /*       PHAS TRIG CLK FADE */
-    {PK_KNOB, PK_SMOOTH, PK_BOWTIE, PK_FADER,        /* RANDOM: RATE SMTH SPRD BIAS */
-     PK_NONE, PK_NONE, PK_NONE, PK_NONE},
+    {PK_KNOB, PK_SHAPE, PK_SKEW, PK_FOLD,            /* LFO: RATE SHPE SKEW FOLD */
+     PK_CURVE, PK_SMOOTH, PK_VAR, PK_STEPS,          /*      CURV SMTH VAR LEN */
+     PK_FADER, PK_FADER, PK_CLOCK, PK_BOWTIE,        /*      AMT OFS PHAS SPRD */
+     PK_TOGGLE, PK_TOGGLE, PK_ATTACK, PK_NONE},      /*      SYNC TRIG FADE */
     {PK_ATTACK, PK_DECAY, PK_SUSTAIN, PK_RELEASE,    /* ADSR */
-     PK_MODE, PK_KNOB, PK_TOGGLE, PK_FADER},         /*      MODE SENS LOOP VEL */
+     PK_CURVE, PK_CURVE, PK_CURVE, PK_BOWTIE,        /*      ACRV DCRV RCRV SPRD */
+     PK_FADER, PK_TOGGLE, PK_FADER, PK_FADER},       /*      VEL LOOP AMT OFS */
     {PK_STEPS, PK_KNOB, PK_SLEW, PK_SWING,           /* SEQ: LEN RATE SLEW SWNG */
      PK_DIR, PK_TOGGLE, PK_DOTS, PK_STEPAT},         /*      DIR TRIG PROB STRT */
+    {PK_SRC, PK_FADER, PK_ATTACK, PK_DECAY,          /* FOLLOW: SRC GAIN RISE FALL */
+     PK_STAIRS, PK_FADER, PK_FADER, PK_BOWTIE},      /*         HOLD AMT OFS SPRD */
 };

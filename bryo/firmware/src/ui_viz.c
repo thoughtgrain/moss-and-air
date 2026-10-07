@@ -17,8 +17,8 @@
  *   COLOR      a sine through the device (dotted: in; solid: out); the inset follows the last-turned knob: the
  *              transfer curve (DRIVE, CRUSH), the noise (NOISE) or the tone filter (TONE)
  *   SPACE      the dry hit, the echoes as stems with nodes (TIME apart, falling by FDBK) and the reverb tail
- *   MOD slots  WAVE's shape, RANDOM's steps, ADSR's envelope with its stages named, SEQ's 16 steps as bars of
- *              their values
+ *   MOD slots  LFO's shape (RND: its loop of steps) and its next time round dotted, ADSR's envelope with its
+ *              stages named and bent, SEQ's 16 steps as bars of their values, FOLLOW's envelope over what it listens to
  *   MIXER      the selected track's channel: EQ and filter as one response, the pan as two speakers
  *
  * The DSP of each device will use the same mappings as these pictures (the comments name them), so what is drawn
@@ -403,72 +403,143 @@ static void viz_space(const int16_t *v, uint32_t f)
 }
 
 /* ------------------------------------------------------------- MODS --- */
+/* The modulators share the S-4's placement knobs: AMT scales the shape, OFS moves it up or down, PHAS starts it
+ * later in its cycle, SPRD is the right channel's phase against the left (drawn as a dotted second trace). A
+ * page 2 or 3 knob you turn is tagged with its value at the right of the label row. */
+static int32_t vz_place(int32_t y, int32_t amt, int32_t ofs)         /* Q15 -> Q15: AMT, then OFS */
+{
+    return clamp(y * amt / 100 + ofs * 327, -32767, 32767);
+}
+
+static int32_t isqrt(int32_t n)                                       /* floor(sqrt(n)), n >= 0 */
+{
+    int32_t x = n, y = (n + 1) / 2;
+    if (n < 2)
+        return n;
+    while (y < x) {
+        x = y;
+        y = (x + n / x) / 2;
+    }
+    return x;
+}
+
+/* The LFO's random steps: a loop of LEN values (Q15), and the next time round, drifted by VAR. One table for
+ * both RND's steps and, on the other shapes, each cycle's level (VAR's drift repeats every LEN cycles). */
+static void lfo_rand(const int16_t *v, int32_t *now, int32_t *next)
+{
+    int32_t k;
+    vz_seed = 4242u;
+    for (k = 0; k < 16; k++)
+        now[k] = ((int32_t)(vz_rand() % 2001u) - 1000) * 32;
+    for (k = 0; k < 16; k++)
+        next[k] = clamp(now[k] + ((int32_t)(vz_rand() % 2001u) - 1000) * 32 * v[6] / 100, -32767, 32767);
+}
+
+/* the LFO at phase q (0..999 of a cycle), Q15: the shape (SIN TRI SQR SAW, or RND's step from rnd[]), SKEW's
+ * warped phase, FOLD, CURV */
+static int32_t lfo_at(const int16_t *v, int32_t q, const int32_t *rnd)
+{
+    int32_t sk = clamp(500 + v[2] * 5, 50, 950), sh = clamp(v[1], 0, 4), n = clamp(v[7], 1, 16), y, a;
+    q = q < sk ? q * 500 / sk : 500 + (q - sk) * 500 / (1000 - sk);  /* SKEW: squashed to one side */
+    if (sh == 0)
+        y = sine_i((uint32_t)q * 4294967u);
+    else if (sh == 1)
+        y = q < 250 ? q * 131 : q < 750 ? (500 - q) * 131 : (q - 1000) * 131;
+    else if (sh == 2)
+        y = q < 500 ? 30000 : -30000;
+    else if (sh == 3)
+        y = (q - 500) * 65;                                           /* saw: a ramp up and the drop */
+    else
+        y = rnd[clamp(q * n / 1000, 0, n - 1)];                       /* RND: LEN held steps a cycle */
+    y = y * (100 + v[3] * 3) / 100;                                   /* FOLD: overdrive, then fold back */
+    while (y > 32767 || y < -32767)
+        y = y > 0 ? 65534 - y : -65534 - y;
+    a = y < 0 ? -y : y;                                               /* CURV: + narrows the curves, - widens them */
+    if (v[4] > 0)
+        a = (a * (100 - v[4]) + (a * a / 32767) * v[4]) / 100;
+    else if (v[4] < 0)
+        a = (a * (100 + v[4]) + isqrt(a * 32767) * (-v[4])) / 100;
+    return y < 0 ? -a : a;
+}
+
 static void viz_wave(const int16_t *v, uint32_t f)
 {
-    /* SHAPE 0 sine, 1 triangle, 2 square; SKEW moves the peak (-100..100); FOLD folds the top back (0..100) */
-    static const char *const NAME[3] = {"SINE", "TRIANGLE", "SQUARE"};
-    /* page 2: PHAS starts it later in its cycle; FADE fades it in over that share of the first cycle; CLK BPM puts
-     * the beat ticks it locks to on the line; TRIG KEY marks the key that restarts it */
-    int32_t i, py = DMID, sk = clamp(500 + v[3] * 5, 50, 950), sh = clamp(v[1], 0, 2), fade = v[7] * DW / 200;
+    /* Two cycles from PHAS. SMTH slews what's drawn (RND's steps glide); VAR: the next time round, dotted (RND: the
+     * loop's steps drifted; the other shapes: each cycle's level drifted, repeating every LEN cycles). FADE fades
+     * the first cycle in; SYNC BPM puts the beat ticks on the line; TRIG KEY marks the key that restarts it; SPRD's
+     * right channel, dim. AMT and OFS place it all. */
+    static const char *const NAME[5] = {"SINE", "TRIANGLE", "SQUARE", "SAW", "RANDOM"};
+    int32_t i, py = DMID, sh = clamp(v[1], 0, 4), fade = v[14] * DW / 200, half = DH / 2 - 1, now[16], nxt[16];
+    int32_t sm = 0, smn = 0, smr = 0, k = 1000 - v[5] * 9, n = clamp(v[7], 1, 16);
+    lfo_rand(v, now, nxt);
     px_line(DX0, DMID, DX1, DMID, px_dim, 2);
-    if (v[6])
+    if (v[12])
         for (i = 0; i <= 8; i++)
             px_line(DX0 + i * DW / 8, DMID - 1, DX0 + i * DW / 8, DMID + 1, px_ink, 1);
-    if (v[5]) {                                                        /* a key going down, at the start */
+    if (v[13]) {                                                       /* a key going down, at the start */
         px_box(DX0, DY0 - 1, 3, 4, px_ink);
         px_line(DX0 + 1, DY0 + 3, DX0 + 1, DY1, px_ink, 3);
     }
     for (i = 0; i <= DW; i++) {
-        int32_t p = (i * 2000 / DW + v[4] * 1000 / 360) % 1000, q, y;   /* two cycles, from PHAS */
-        q = p < sk ? p * 500 / sk : 500 + (p - sk) * 500 / (1000 - sk); /* SKEW: a warped phase */
-        if (sh == 0)
-            y = sine_i((uint32_t)q * 4294967u);
-        else if (sh == 1)
-            y = q < 250 ? q * 131 : q < 750 ? (500 - q) * 131 : (q - 1000) * 131;
-        else
-            y = q < 500 ? 30000 : -30000;
-        y = y * (100 + v[2] * 3) / 100;                                 /* FOLD: overdrive, then fold back */
-        while (y > 32767 || y < -32767)
-            y = y > 0 ? 65534 - y : -65534 - y;
-        if (i < fade)
+        int32_t ph = i * 2000 / DW + v[10] * 1000 / 360, p = ph % 1000, cyc = ph / 1000, y, yn, yr;
+        if (sh == 4) {
+            y = lfo_at(v, p, now);
+            yn = lfo_at(v, p, nxt);
+        } else {                                                       /* VAR on a shape: each cycle's level */
+            int32_t a0 = now[cyc % n] < 0 ? -now[cyc % n] : now[cyc % n], a1 = nxt[cyc % n] < 0 ? -nxt[cyc % n] : nxt[cyc % n];
+            int32_t lv = 32767 - a0 * v[6] / 100, ln = 32767 - a1 * v[6] / 100;
+            y = lfo_at(v, p, now);
+            yn = y * (ln / 64) / 512;
+            y = y * (lv / 64) / 512;
+        }
+        yr = lfo_at(v, (p + v[11] * 5) % 1000, now);
+        if (i == 0) {
+            sm = y;
+            smn = yn;
+            smr = yr;
+        }
+        sm += (y - sm) * k / 1000;                                     /* SMTH: a one-pole slew */
+        smn += (yn - smn) * k / 1000;
+        smr += (yr - smr) * k / 1000;
+        y = sm;
+        yn = smn;
+        yr = smr;
+        if (i < fade) {
             y = y * i / fade;
-        y = DMID - y * (DH / 2 - 1) / 32767;
+            yn = yn * i / fade;
+            yr = yr * i / fade;
+        }
+        y = DMID - vz_place(y, v[8], v[9]) * half / 32767;
+        if (v[6] && (i % 3) == 0)
+            px_dot(DX0 + i, DMID - vz_place(yn, v[8], v[9]) * half / 32767, px_ink);
+        if (v[11] && (i & 1) == 0)
+            px_dot(DX0 + i, DMID - vz_place(yr, v[8], v[9]) * half / 32767, px_dim);
         if (i)
             px_line(DX0 + i - 1, py, DX0 + i, y, px_ink, 1);
         py = y;
     }
     vz_label(DX0 + 14, NAME[sh], f == 1u);
     if (f == 2u || f == 3u)
-        vz_label(DX1 - 10, f == 2u ? "FOLD" : "SKEW", 1);
-    if (f >= 4u && f < 8u)
+        vz_label(DX1 - 10, f == 2u ? "SKEW" : "FOLD", 1);
+    if (f >= 4u && f < NPK)
         vz_ktag(118, DLBL - 1, &ME_P[ME_WAVE][f], v[f]);
 }
 
-static void viz_random(const int16_t *v, uint32_t f)
+/* t (0..1000) along a stage bent by its curve c (-100..100): 0 straight, + sags (exponential), - bows (log) */
+static int32_t vz_bend(int32_t t, int32_t c)
 {
-    /* 16 values as steps around the middle; SMTH draws the glide between them; SPRD scales them; BIAS shifts them */
-    int32_t k, sw = 7, val[16], py = DMID;
-    px_line(DX0, DMID, DX1, DMID, px_dim, 2);
-    vz_seed = 4242u;
-    for (k = 0; k < 16; k++)
-        val[k] = clamp(((int32_t)(vz_rand() % 2001u) - 1000) * v[2] / 100 + v[3] * 10, -1000, 1000);
-    for (k = 0; k < 16; k++) {
-        int32_t x = DX0 + 2 + k * sw, y = DMID - val[k] * (DH / 2 - 1) / 1000, gl = v[1] * (sw - 1) / 100;
-        if (k)
-            px_line(x - 1, py, x + gl, y, px_ink, 1);                   /* the move into this value (SMTH leans it) */
-        px_line(x + gl, y, x + sw - 1, y, px_ink, 1);
-        vz_node(x + gl, y, 1);
-        py = y;
-    }
-    vz_label(DX0 + 10, f == 1u ? "SMTH" : f == 2u ? "SPRD" : f == 3u ? "BIAS" : "STEPS", f >= 1u);
+    return t - c * t / 1000 * (1000 - t) / 400;
 }
 
 static void viz_adsr(const int16_t *v, uint32_t f)
 {
-    /* the times (0..127 on TIME_MS_X10: 1 ms .. 10 s) on a square-root scale so short and long both read */
+    /* the times (0..127 on TIME_MS_X10: 1 ms .. 10 s) on a square-root scale so short and long both read; each
+     * stage bent by its curve (ACRV DCRV RCRV); VEL: the softest key's envelope, dotted; LOOP: attack and decay
+     * coming round again, dotted; SPRD: the right channel, dotted, later; AMT, OFS place it */
     int32_t a = (int32_t)TIME_MS_X10[v[0] & 127], d = (int32_t)TIME_MS_X10[v[1] & 127], r = (int32_t)TIME_MS_X10[v[3] & 127];
-    int32_t sa = 1, sd = 1, sr = 1, tot, xs[5], ys[5], k, base = DY1, top = DY0 + 2, w = DW - 4;
+    int32_t sa = 1, sd = 1, sr = 1, tot, xs[5], ys[5], k, x, base = DY1, top = DY0 + 2, w = DW - 4, py = 0;
     static const char *const L[4] = {"ATK", "DEC", "SUS", "REL"};
+    static const uint8_t CRV[4] = {4, 5, 0xFF, 6};                     /* each stage's curve knob (SUS holds) */
     while (sa * sa < a) sa++;
     while (sd * sd < d) sd++;
     while (sr * sr < r) sr++;
@@ -478,41 +549,78 @@ static void viz_adsr(const int16_t *v, uint32_t f)
     xs[2] = xs[1] + sd * w / tot;
     xs[3] = xs[2] + (sa + sd + sr) / 3 * w / tot;
     xs[4] = DX1 - 2;
-    ys[0] = base;
-    ys[1] = top;
-    ys[2] = ys[3] = base - v[2] * (base - top) / 100;
-    ys[4] = base;
+    ys[0] = 0;                                                         /* levels 0..1000, placed below */
+    ys[1] = 1000;
+    ys[2] = ys[3] = v[2] * 10;
+    ys[4] = 0;
     px_line(DX0, base + 1, DX1, base + 1, px_dim, 2);
-    /* page 2: FLLW draws the tape's hits it follows, dim, behind; VEL the softest key's envelope, dotted; LOOP the
-     * attack and decay coming round again, dotted, where the sustain would hold */
-    if (v[4])
-        for (k = 0; k < 8; k++) {
-            int32_t hx = DX0 + 2 + k * (DW - 4) / 8, hh = (k & 1 ? 12 : 22) * v[5] / 100 + 4;
-            px_line(hx, base, hx, base - hh, px_dim, 1);
+    for (k = 0; k < 4; k++)                                            /* the envelope, stage by stage */
+        for (x = xs[k]; x <= xs[k + 1]; x++) {
+            int32_t span = xs[k + 1] - xs[k], t = span ? (x - xs[k]) * 1000 / span : 1000, lv, yy, c;
+            c = CRV[k] == 0xFF ? 0 : v[CRV[k]];
+            lv = ys[k] + (ys[k + 1] - ys[k]) * vz_bend(t, ys[k + 1] > ys[k] ? -c : c) / 1000;
+            lv = clamp(lv * v[10] / 100 + v[11] * 10, 0, 1000);
+            yy = base - lv * (base - top) / 1000;
+            if (v[8] && (x & 1) == 0)                                  /* VEL: the softest key */
+                px_dot(x, base - lv * (100 - v[8]) / 100 * (base - top) / 1000, px_ink);
+            if (v[7] && (x & 1) == 0 && x + v[7] * 8 / 100 <= DX1)      /* SPRD: the right channel, later */
+                px_dot(x + v[7] * 8 / 100, yy, px_dim);
+            if (x > xs[0])
+                px_line(x - 1, py, x, yy, px_ink, 1);
+            py = yy;
         }
-    if (v[7]) {
-        int32_t gy[5], m;
-        for (m = 0; m < 5; m++)
-            gy[m] = base - (base - ys[m]) * (100 - v[7]) / 100;
-        vz_poly(xs, gy, 5, px_ink, 2);
-    }
-    if (v[6]) {
-        int32_t lx[3] = {xs[2], xs[2] + (xs[1] - xs[0]), xs[2] + (xs[2] - xs[0])}, ly[3] = {ys[2], ys[1], ys[2]};
+    if (v[9]) {                                                        /* LOOP: attack and decay again */
+        int32_t sy = base - clamp(ys[2] * v[10] / 100 + v[11] * 10, 0, 1000) * (base - top) / 1000;
+        int32_t lx[3] = {xs[2], xs[2] + (xs[1] - xs[0]), xs[2] + (xs[2] - xs[0])}, ly[3] = {sy, top, sy};
         vz_poly(lx, ly, 3, px_ink, 2);
     }
-    vz_poly(xs, ys, 5, px_ink, 1);
     for (k = 1; k < 4; k++) {                                          /* nodes, and drop lines to the floor */
-        px_line(xs[k], ys[k] + 2, xs[k], base, px_dim, 2);
-        vz_node(xs[k], ys[k], 0);
+        int32_t ny = base - clamp(ys[k] * v[10] / 100 + v[11] * 10, 0, 1000) * (base - top) / 1000;
+        px_line(xs[k], ny + 2, xs[k], base, px_dim, 2);
+        vz_node(xs[k], ny, 0);
     }
-    vz_node(xs[0], ys[0], 1);
-    vz_node(xs[4], ys[4], 1);
     for (k = 0; k < 4; k++)                                            /* the stages, named under their stretch */
-        vz_label((xs[k] + xs[k + 1]) / 2 + 1, L[k], f == (uint32_t)k);
-    if (f >= 4u && f < 8u)
+        vz_label((xs[k] + xs[k + 1]) / 2 + 1, L[k], f == (uint32_t)k || f == (uint32_t)CRV[k]);
+    if (f >= 4u && f < NPK)
         vz_ktag(118, DY0 - 1, &ME_P[ME_ADSR][f], v[f]);
-    else if (v[4])
-        px_text(118 - px_text_w(PXF_3, "FOLLOW"), DY0, PXF_3, "FOLLOW", px_ink);
+}
+
+/* FOLLOW: the envelope of a sound. Until the tracks play (phase 2) the source is the demo tape's hits, dim; GAIN
+ * scales what goes in, RISE and FALL are how fast the envelope (solid) climbs and drops, HOLD samples it on the
+ * tempo's divisions (steps), AMT and OFS place it, SPRD the right channel dotted */
+static void viz_follow(const int16_t *v, uint32_t f)
+{
+    static const uint8_t HOLD_DOTS[5] = {0, 4, 7, 14, 28};            /* a division's width on this 2-bar panel */
+    int32_t x, e = 0, held = 0, py = DY1, kr = clamp(3000 / (3 + v[2]), 15, 1000), kf = clamp(3000 / (3 + v[3]), 15, 1000);
+    int32_t gain = db_x1000(v[1]), hd = HOLD_DOTS[clamp(v[4], 0, 4)], src = clamp(v[0], 0, 5);
+    uint32_t t = src >= 1 && src <= 4 ? (uint32_t)(src - 1) : sys.sel;
+    char b[12];
+    px_line(DX0, DY1 + 1, DX1, DY1 + 1, px_dim, 2);
+    for (x = DX0; x <= DX1; x++) {
+        int32_t in = clamp(tape_env(t, (x - DX0) * 1000 / DW) * gain / 1000, 0, 1000), out, yy;
+        if ((x & 1) == 0)
+            px_line(x, DY1, x, DY1 - in * (DH - 2) / 1000, px_dim, 1);   /* what it listens to */
+        e += (in - e) * (in > e ? kr : kf) / 1000;
+        if (!hd || (x - DX0) % hd == 0)
+            held = e;
+        out = clamp(held * v[5] / 100 + v[6] * 10, 0, 1000);
+        yy = DY1 - out * (DH - 2) / 1000;
+        if (v[7] && (x & 1) == 0 && x + v[7] * 8 / 100 <= DX1)
+            px_dot(x + v[7] * 8 / 100, yy, px_ink);
+        if (x > DX0)
+            px_line(x - 1, py, x, yy, px_ink, 1);
+        py = yy;
+    }
+    str_cpy(b, "SRC ", sizeof b);
+    str_cpy(b + 4, N_SRC[src], 6);
+    if (f == 0u)
+        px_tag(1, DLBL - 1, PXF_3, b, px_ink, px_bg);
+    else
+        px_text(2, DLBL, PXF_3, b, px_ink);
+    if (f >= 1u && f < NPK)
+        vz_ktag(118, DLBL - 1, &ME_P[ME_FOLLOW][f], v[f]);
+    else
+        px_text(118 - px_text_w(PXF_3, "DEMO"), DLBL, PXF_3, "DEMO", px_dim);
 }
 
 static void viz_seq(const int16_t *v, uint32_t f)
@@ -676,8 +784,8 @@ static void draw_viz(void)
         if (ui.kind == FOCUS_SLOT) {
             switch (tp[sys.sel].engine[ui.slot]) {
             case ME_WAVE: viz_wave(v, f); break;
-            case ME_RANDOM: viz_random(v, f); break;
             case ME_ADSR: viz_adsr(v, f); break;
+            case ME_FOLLOW: viz_follow(v, f); break;
             default: viz_seq(v, f); break;
             }
         } else {
