@@ -1,9 +1,9 @@
-# Hardware checkpoint: memory by usage and GRAIN's buffer (2026-10-08)
+# Hardware checkpoint: memory by usage, GRAIN's buffer and the full chain (2026-10-08)
 
-Everything since phase 2 has only run on the host. Before I build RESONATOR, COLOR and SPACE on top, I want to know
-three things only the FM-1 can tell me: whether the audio interrupt keeps up with GRAIN at its cap, whether the
+Everything since phase 2 has only run on the host, and the whole chain (GRAIN, RESONATOR, COLOR, SPACE) is built now.
+I want to know three things only the FM-1 can tell me: whether the audio interrupt keeps up with it all on, whether the
 shared memory behaves with real timing (USB packets and screen frames cutting in), and whether anything sounds wrong
-that the host tests can't hear. This page is the run sheet. It takes about 20 minutes.
+that the host tests can't hear. This page is the run sheet. It takes about 30 minutes.
 
 ## On the host first: `tests/checkpoint_sim.sh`
 
@@ -21,28 +21,35 @@ through this run sheet, with the hardware stubbed as the tests do (`tests/checkp
   owned once, listed where its owner says, none lost. I checked the check: with the WAV capture allocating from the
   interrupt again (the bug the review round found), it fails on every try within seconds.
 
-What it gave on 2026-10-08 (host instructions per output sample, the whole chain, four tracks):
+What it gives now, after COLOR and SPACE (host instructions per output sample, the whole chain, four tracks; the
+first six runs cost about 40 more than at the first checkpoint, the two new devices' calls while they're off):
 
 | Run | What | Host cost | What the firmware reported |
 | --- | --- | ---: | --- |
-| 1 | four reels, GRAIN off | 861 | |
-| 2 | WET 100, the defaults (each buffer recording) | 1,535 | 4 grains sounding, 44 chunks of buffers |
-| 3 | the cap: 8 grains a track | 3,263 | 32 grains (8 8 8 8) |
-| 4 | the cap, all backwards | 4,022 | 32 grains |
-| 5 | the cap, SCAN TAPE | 2,888 | 32 grains |
-| 6 | the cap, TRACKS 2 (16 + 16) | 2,715 | 32 grains (16 16 0 0) |
-| 7 | a blank tape recorded 12 s, then looped | 964 | the tape 12.00 s long, 65 chunks |
-| 8 | the freeze tapped on and off | 979 | frozen at 3 s, let go at 9 s |
-| 9 | SYNTH played, transport stopped, GRAIN on | 618 | grains sounding after the phrase |
+| 1 | four reels, GRAIN off | 902 | |
+| 2 | WET 100, the defaults (each buffer recording) | 1,576 | 4 grains sounding, 44 chunks of buffers |
+| 3 | the cap: 8 grains a track | 3,304 | 32 grains (8 8 8 8) |
+| 4 | the cap, all backwards | 4,063 | 32 grains |
+| 5 | the cap, SCAN TAPE | 2,929 | 32 grains |
+| 6 | the cap, TRACKS 2 (16 + 16) | 2,736 | 32 grains (16 16 0 0) |
+| 7 | a blank tape recorded 12 s, then looped | 1,005 | the tape 12.00 s long, 65 chunks |
+| 8 | the freeze tapped on and off | 1,020 | frozen at 3 s, let go at 9 s |
+| 9 | SYNTH played, transport stopped, GRAIN on | 659 | grains sounding after the phrase |
 | 10 | a 20 s WAV over TAPE3.WAV while playing | - | the tape 20.00 s, TRACK 3'S TAPE REPLACED |
+| 11 | RESONATOR WET 60 on all four | 1,847 | 16 strings |
+| 12 | RESONATOR and GRAIN at the cap | 4,228 | 16 strings, 32 grains |
+| 13 | COLOR on all four (DRIV 60, CRSH 40 BOTH, NOIS 30, TILT 30) | 1,630 | |
+| 14 | SPACE on all four (DLY 50, VERB 40) | 1,784 | 72 chunks, all 16-bit, 14.5 s free |
+| 15 | everything on all four | 5,842 | 32 grains, 16 strings, 72 chunks of SPACE, 3.3 s free |
+| 16 | TRACKS 3, GRAIN WET 100, DRIV 40, SPACE | 2,310 | 54 chunks of SPACE, 11.7 s free |
 
 These are measurements, not listening: the WAVs are there to be heard.
 No sample past full scale and no sudden jump (over 12,000 between neighbouring samples) in any of them. The stress:
-over 20 s, 132,143 audio blocks and 86,245 USB sectors cut into the main loop, and the books balanced at every one
-of 10,778 checks.
+over 20 s, 131,965 audio blocks and 86,110 USB sectors cut into the main loop while RESONATOR's and SPACE's knobs
+took memory and gave it back too, and the books balanced at every one of 9,839 checks.
 
-What that leaves for the device: the load. Run 4 costs 4.7 times run 1 on the host; on the FM-1 that ratio is the
-question. And how GRAIN's level sits against the dry sound is worth a listen: at WET 100 the grains peak around a
+What that leaves for the device: the load. Run 4 costs 4.5 times run 1 on the host, and run 15, everything on all
+four, 6.5 times; on the FM-1 those ratios are the question. And how GRAIN's level sits against the dry sound is worth a listen: at WET 100 the grains peak around a
 third of the reels.
 
 ## Build and install
@@ -76,13 +83,20 @@ Write down the CPU reading for each, and anything you hear.
 | 8 | Tap the 0 key while track 1's GRAIN plays (WET 100) | the buffer freezes into a 1-bar loop, the 0 key's LED lights; tap again to let go | does it loop in time? |
 | 9 | Track 1 to SYNTH (hold HOME, turn SELECT), GRAIN WET 100, transport stopped, play a few notes | what you play is granulated without PLAY | does it sound? |
 | 10 | Plug into a computer, copy a 20 s WAV onto the drive as TAPE3.WAV, eject, replug | track 3's tape is the whole 20 s (memory allowing) | the length on TAPE's page; any audio dropout while it copied |
+| 11 | Power-cycle. Each track: RESONATOR WET 60 (FX until RESONATOR, KNOB 4) | four strings ring through each track | CPU |
+| 12 | Same, plus each track's GRAIN at the cap (run 3's settings) | the strings and the grains together | CPU; crackle? |
+| 13 | Power-cycle. Each track's COLOR: DRIV 60, CRSH 40, NOIS 30, TILT 30 (FX, KNOB 1-4); CMOD BOTH (COLOR 2) | every track driven, crushed and noisy | CPU |
+| 14 | Power-cycle. Each track's SPACE 2: DLY 50, VERB 40 | echoes and a room on every track | CPU; does the mixer's memory ribbon show it? |
+| 15 | Runs 12, 13 and 14 together (everything on) | the hardest case there is | CPU; does it crackle, does shedding settle it? |
 
 ## What I'll do with the numbers
 
-- **Run 3 under about 70 %:** the plan holds; RESONATOR next.
+- **Run 3 under about 70 %:** GRAIN fits as it is; then run 15 decides the rest (below).
 - **Run 3 between 70 and 85 %:** I'll take the cheap savings first. The buffer recording can skip decoding when
   FDBK is 0 (about 100 a track on the host), and the grain cap's default can drop to 6.
 - **Run 3 over 85 %, or crackling:** the cap has to come down before anything else gets built, and I'll measure
   where the cycles go with the debug build's console (`BRYO_MSC=0`: `cpu_pct` there is the same number).
+- **Run 15 over 85 %:** grains and strings shed first as they do now; if that isn't enough, SPACE needs a shedding
+  step too (the room at a quarter rate is the first idea), and I'd decide it with this number in hand.
 - **Anything in runs 7 to 10 wrong:** that's a timing bug the host can't show me, and it comes first. Tell me what
   you did and what you heard.

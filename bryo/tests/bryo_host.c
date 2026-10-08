@@ -74,6 +74,8 @@ static void ui_redraw(void);
 #include "../firmware/src/source.c"
 #include "../firmware/src/grain.c"
 #include "../firmware/src/reso.c"
+#include "../firmware/src/color.c"
+#include "../firmware/src/space.c"
 #include "../firmware/src/chain.c"
 #include "../firmware/src/icons.c"
 #include "../firmware/src/panel.c"
@@ -121,6 +123,8 @@ static void power_on(void)
     memset(&capm, 0, sizeof capm);
     memset(reso, 0, sizeof reso);
     reso_cap = RS_N;
+    memset(color, 0, sizeof color);
+    memset(space, 0, sizeof space);
     memset(gbuf, 0, sizeof gbuf);                        /* (GRAIN's buffers and grains: a fresh start, as the */
     memset(grain, 0, sizeof grain);                      /* device's power-on gives) */
     gr_used = 0;
@@ -2313,6 +2317,430 @@ static void test_reso(void)
     press(B_HOME);
 }
 
+/* a device's block function over a whole buffer, CTL at a time (track 0) */
+static void dev_run(void (*f)(uint32_t, int32_t *, int32_t *, uint32_t), int32_t *l, int32_t *r, uint32_t n)
+{
+    uint32_t b;
+    for (b = 0; b + CTL <= n; b += CTL)
+        f(0, l + b, r + b, CTL);
+}
+
+static void sine_fill(int32_t *l, int32_t *r, uint32_t n, double hz, double amp)
+{
+    uint32_t i;
+    for (i = 0; i < n; i++)
+        l[i] = r[i] = (int32_t)lrint(amp * sin(2 * M_PI * hz * i / 44100.0));
+}
+
+static uint32_t peak_at(const int32_t *x, uint32_t from, uint32_t to)
+{
+    uint32_t i, at = from;
+    for (i = from; i < to; i++)
+        if (abs(x[i]) > abs(x[at]))
+            at = i;
+    return at;
+}
+
+static double rms_of(const int32_t *x, uint32_t from, uint32_t to)
+{
+    double a = 0;
+    uint32_t i;
+    for (i = from; i < to; i++)
+        a += (double)x[i] * x[i];
+    return to > from ? sqrt(a / (to - from)) : 0;
+}
+
+/* COLOR (color.c): each knob does what its picture says, and the defaults leave the sound alone */
+static void test_color(void)
+{
+    enum { N = 8192 };
+    static int32_t l[N], r[N], l0[N];
+    int16_t *p;
+    uint32_t i, ok, runs;
+    double a, b2, c;
+    char b[140];
+    power_on();
+    p = tp[0].dev[DEV_COLOR];
+    sine_fill(l, r, N, 441, 20000);
+    memcpy(l0, l, sizeof l0);
+    dev_run(color_block, l, r, N);
+    check("COLOR at its defaults: the sound untouched, sample for sample", !memcmp(l, l0, sizeof l0));
+    p[CP_LVL] = -6;
+    color[0].lvl = 0;
+    sine_fill(l, r, N, 441, 20000);
+    dev_run(color_block, l, r, N);
+    for (i = CTL, ok = 1; i < N; i++)
+        ok &= abs(l[i] - l0[i] / 2) <= 1;
+    check("LVL -6 dB alone: exactly half", ok);
+    p[CP_LVL] = 0;
+    p[CP_DRIV] = 100;
+    sine_fill(l, r, N, 441, 16000);
+    dev_run(color_block, l, r, N);
+    a = peak_of(l + CTL, N - CTL) / rms_of(l, CTL, N);
+    snprintf(b, sizeof b, "DRIV 100: the sine clipped near square (crest %.2f, a sine's 1.41), under full scale", a);
+    check(b, a < 1.15 && peak_of(l, N) <= 32767);
+    p[CP_DRIV] = 0;
+    p[CP_CRSH] = 100;                                    /* CMOD BIT: 2 bits */
+    sine_fill(l, r, N, 441, 30000);
+    dev_run(color_block, l, r, N);
+    for (i = 0, ok = 1; i < N; i++)
+        ok &= l[i] % 16384 == 0;
+    check("CRSH 100, CMOD BIT: 2 bits left (every sample a multiple of 16384)", ok && peak_of(l, N) == 16384);
+    p[CP_CMOD] = CMOD_RATE;
+    sine_fill(l, r, N, 441, 20000);
+    dev_run(color_block, l, r, N);
+    for (i = 1, runs = 0, ok = 0; i < N; i++) {
+        runs += l[i] != l[i - 1];
+        ok |= l[i] % 4 != 0;
+    }
+    snprintf(b, sizeof b, "CRSH 100, CMOD RATE: each value held 12 samples (%u changes in %u samples), bits kept", runs, N);
+    check(b, runs <= N / 12 + 1 && runs > N / 16 && ok);
+    p[CP_CMOD] = CMOD_BOTH;
+    sine_fill(l, r, N, 441, 30000);
+    dev_run(color_block, l, r, N);
+    for (i = CTL, runs = 0, ok = 1; i < N; i++) {
+        runs += l[i] != l[i - 1];
+        ok &= l[i] % 16384 == 0;
+    }
+    check("CMOD BOTH: held and 2 bits", ok && runs <= N / 12 + 1);
+    p[CP_CRSH] = 0;
+    p[CP_CMOD] = CMOD_BIT;
+
+    p[CP_NOIS] = 100;                                    /* NDEC 40: the table's */
+    memset(l, 0, sizeof l);
+    memset(r, 0, sizeof r);
+    dev_run(color_block, l, r, N);
+    check("NOIS 100 on silence: silence (the noise rides the sound)", peak_of(l, N) == 0);
+    {
+        uint32_t ndec = TIME_MS_X10[40] * 441u / 100u;   /* NDEC 40, samples */
+        static int32_t L[44100], R[44100];
+        memset(L, 0, sizeof L);
+        memset(R, 0, sizeof R);
+        for (i = 0; i < 441; i++)                        /* a 10 ms hit */
+            L[i] = R[i] = 20000;
+        dev_run(color_block, L, R, 44100);
+        a = rms_of(L, 441, 441 + ndec / 8);
+        b2 = rms_of(L, 441 + ndec * 2, 441 + ndec * 3);
+        snprintf(b, sizeof b, "NOIS after a hit: noise right after it (rms %.0f), gone by 2 x NDEC (%.1f), %u ms",
+                 a, b2, ndec * 10 / 441);
+        check(b, a > 1000 && b2 < a / 300);
+        p[CP_NTON] = -100;
+        memset(L, 0, sizeof L);
+        memset(R, 0, sizeof R);
+        for (i = 0; i < 44100; i++)
+            L[i] = R[i] = 20000;
+        color[0].nlp = 0;
+        dev_run(color_block, L, R, 44100);
+        for (i = 1, a = c = 0; i < 44100; i++) {
+            a += (double)(L[i] - 20000) * (L[i] - 20000);
+            c += (double)(L[i] - L[i - 1]) * (L[i] - L[i - 1]);
+        }
+        a = sqrt(c / a);
+        p[CP_NTON] = 100;
+        for (i = 0; i < 44100; i++)
+            L[i] = R[i] = 20000;
+        dev_run(color_block, L, R, 44100);
+        for (i = 1, b2 = c = 0; i < 44100; i++) {
+            b2 += (double)(L[i] - 20000) * (L[i] - 20000);
+            c += (double)(L[i] - L[i - 1]) * (L[i] - L[i - 1]);
+        }
+        b2 = sqrt(c / b2);
+        snprintf(b, sizeof b, "NTON: -100 dark, +100 bright (the noise's steps against its level: %.2f, %.2f)", a, b2);
+        check(b, a * 3 < b2);
+    }
+    p[CP_NOIS] = 0;
+    p[CP_NTON] = 0;
+
+    p[CP_TILT] = 100;
+    sine_fill(l, r, N, 100, 10000);
+    dev_run(color_block, l, r, N);
+    a = rms_of(l, N / 2, N) / (10000 / M_SQRT2);
+    sine_fill(l, r, N, 8000, 10000);
+    dev_run(color_block, l, r, N);
+    b2 = rms_of(l, N / 2, N) / (10000 / M_SQRT2);
+    snprintf(b, sizeof b, "TILT +100: 100 Hz down (x%.2f), 8 kHz up (x%.2f)", a, b2);
+    check(b, a < 0.6 && b2 > 1.7);
+    p[CP_TILT] = -100;
+    sine_fill(l, r, N, 100, 10000);
+    dev_run(color_block, l, r, N);
+    a = rms_of(l, N / 2, N) / (10000 / M_SQRT2);
+    sine_fill(l, r, N, 8000, 10000);
+    dev_run(color_block, l, r, N);
+    b2 = rms_of(l, N / 2, N) / (10000 / M_SQRT2);
+    snprintf(b, sizeof b, "TILT -100: the other way (x%.2f, x%.2f)", a, b2);
+    check(b, a > 1.7 && b2 < 0.6);
+    p[CP_TILT] = 0;
+
+    p[CP_DRIV] = 100;
+    p[CP_WET] = 0;
+    dev_run(color_block, l, r, N);                       /* (WET ramps over a block) */
+    sine_fill(l, r, N, 441, 20000);
+    dev_run(color_block, l, r, N);
+    check("WET 0: the dry sound, however much DRIV", !memcmp(l, l0, sizeof l0));
+    p[CP_WET] = 100;
+
+    for (i = 0; i < 9; i++)                              /* every knob at its corner, a sound past full scale */
+        p[i] = DEV_P[DEV_COLOR][i].max;
+    for (i = 0; i < N; i++)
+        l[i] = r[i] = (i / 50) & 1 ? 131071 : -131071;
+    dev_run(color_block, l, r, N);
+    check("every knob at its top, a square past full scale: bounded", peak_of(l, N) <= 2 * 131071);
+    for (i = 0; i < 9; i++)
+        p[i] = DEV_P[DEV_COLOR][i].min;
+    dev_run(color_block, l, r, N);
+    check("..and every knob at its bottom", peak_of(l, N) <= 131071);
+    for (i = 0; i < 9; i++)
+        p[i] = DEV_P[DEV_COLOR][i].def;
+}
+
+/* SPACE (space.c): the echoes where TIME says and falling by FDBK, the room's tail as long as DEC, the memory
+ * taken only while it's used, 8-bit when it's short */
+static void test_space(void)
+{
+    enum { N = 44100 };                                  /* 1 s */
+    static int32_t l[N], r[N];
+    int16_t *p;
+    uint32_t i, a1, a2, t, tot0, tot1;
+    double e1, e2, x, y;
+    char b[160];
+    power_on();
+    p = tp[0].dev[DEV_SPACE];
+    chain_poll();
+    check("SPACE at DLY 0, VERB 0 (the defaults): no memory taken", !mem_count(MEM_SPACE) && !space[0].dly.nch);
+    sine_fill(l, r, N, 441, 20000);
+    memcpy(r, l, sizeof r);
+    dev_run(space_block, l, r, N);
+    check("..and the sound untouched", !memcmp(l, r, sizeof r) && l[100] == (int32_t)lrint(20000 * sin(2 * M_PI * 441 * 100 / 44100.0)));
+
+    p[SP_DLY] = 100;
+    p[SP_FDBK] = 0;
+    p[SP_TIME] = 100;
+    p[SP_SPRD] = 0;
+    chain_poll();
+    check("DLY up: the delay's line, 8 chunks at 16 bits", space[0].dly.ready && !space[0].dly.bits8 &&
+          mem_count(MEM_SPACE) == SP_DLY16);
+    memset(l, 0, sizeof l);
+    memset(r, 0, sizeof r);
+    l[0] = r[0] = l[1] = r[1] = 20000;
+    dev_run(space_block, l, r, N / 2);
+    a1 = peak_at(l, 100, N / 2);
+    snprintf(b, sizeof b, "TIME 100, FDBK 0: one echo at %.1f ms (100) of %d (0.8 of the hit), none after", a1 / 44.1,
+             l[a1]);
+    check(b, fabs(a1 / 44.1 - 100) < 0.5 && l[a1] > 14000 && l[a1] < 17000 && peak_of(l + 5000, N / 2 - 5000) < 50 &&
+          r[a1] == l[a1]);
+    p[SP_FDBK] = 50;
+    memset(l, 0, sizeof l);
+    memset(r, 0, sizeof r);
+    l[0] = r[0] = l[1] = r[1] = 20000;
+    dev_run(space_block, l, r, N / 2);
+    a1 = peak_at(l, 100, 6000);
+    a2 = peak_at(l, 6000, 11000);
+    e1 = l[a2] / (double)l[a1];
+    snprintf(b, sizeof b, "FDBK 50: a second echo at %.1f ms, %.2f of the first", a2 / 44.1, e1);
+    check(b, fabs(a2 / 44.1 - 200) < 0.5 && e1 > 0.4 && e1 < 0.55);
+    p[SP_TONE] = -100;
+    memset(l, 0, sizeof l);
+    memset(r, 0, sizeof r);
+    l[0] = r[0] = l[1] = r[1] = 20000;
+    dev_run(space_block, l, r, N / 2);
+    e2 = l[peak_at(l, 6000, 11000)] / (double)l[peak_at(l, 100, 6000)];
+    p[SP_TONE] = 100;
+    memset(l, 0, sizeof l);
+    memset(r, 0, sizeof r);
+    l[0] = r[0] = l[1] = r[1] = 20000;
+    dev_run(space_block, l, r, N / 2);
+    x = abs(l[peak_at(l, 6000, 11000)]) / (double)l[peak_at(l, 100, 6000)];
+    snprintf(b, sizeof b, "TONE -100 and +100: each pass loses more (the second echo %.2f, %.2f of the first; 0: %.2f)",
+             e2, x, e1);
+    check(b, e2 < e1 * 0.6 && x < e1 * 0.9);
+    p[SP_TONE] = 0;
+    p[SP_FDBK] = 0;
+    p[SP_SPRD] = 100;
+    memset(l, 0, sizeof l);
+    memset(r, 0, sizeof r);
+    l[0] = r[0] = l[1] = r[1] = 20000;
+    dev_run(space_block, l, r, N / 2);
+    a1 = peak_at(l, 100, N / 2);
+    a2 = peak_at(r, 100, N / 2);
+    snprintf(b, sizeof b, "SPRD 100: the right echo %.1f ms ahead of the left (10)", (a1 - (double)a2) / 44.1);
+    check(b, fabs((a1 - (double)a2) / 44.1 - 10) < 0.3);
+    p[SP_SPRD] = 0;
+
+    p[SP_TIME] = 100;                                    /* TIME turned while it sounds: a glide, no jump */
+    sine_fill(l, r, N, 200, 10000);
+    for (i = 0; i < N / 2; i += CTL)
+        space_block(0, l + i, r + i, CTL);
+    p[SP_TIME] = 300;
+    for (; i + CTL <= N; i += CTL)
+        space_block(0, l + i, r + i, CTL);
+    for (i = 5000, a1 = 0; i < N - N % CTL; i++)
+        a1 = abs(l[i] - l[i - 1]) > (int32_t)a1 ? (uint32_t)abs(l[i] - l[i - 1]) : a1;
+    snprintf(b, sizeof b, "TIME turned 100 -> 300 ms while echoing: it glides (largest step %u; a 200 Hz sine's: 285 "
+             "plus the echo's)", a1);
+    check(b, a1 < 800);
+
+    p[SP_DLY] = 0;
+    chain_poll();
+    check("DLY 0: the line back to the pool", !space[0].dly.nch && !mem_count(MEM_SPACE));
+    fill_tape(1, 60);                                    /* memory short: 20 chunks left free */
+    fill_tape(2, 60);
+    while (mem_count(MEM_FREE) > 20u)
+        mem_alloc(MEM_IMPORT);
+    p[SP_DLY] = 100;
+    p[SP_TIME] = 100;
+    chain_poll();
+    check("memory short (20 chunks free): the delay starts 8-bit, 4 chunks", space[0].dly.ready &&
+          space[0].dly.bits8 && mem_count(MEM_SPACE) == SP_DLY8 && mem_count(MEM_FREE) == 16u);
+    memset(l, 0, sizeof l);
+    memset(r, 0, sizeof r);
+    l[0] = r[0] = l[1] = r[1] = 20000;
+    dev_run(space_block, l, r, N / 2);
+    a1 = peak_at(l, 100, N / 2);
+    snprintf(b, sizeof b, "..its echo where 16 bits put it: %.1f ms, %d", a1 / 44.1, l[a1]);
+    check(b, fabs(a1 / 44.1 - 100) < 0.5 && l[a1] > 13500 && l[a1] < 17000);
+    {
+        static int32_t s16[N], s8[N];
+        sine_fill(l, r, N / 4, 300, 3000);
+        memset(l + N / 4, 0, (N - N / 4) * sizeof l[0]);
+        memset(r + N / 4, 0, (N - N / 4) * sizeof r[0]);
+        dev_run(space_block, l, r, N / 2);
+        memcpy(s8, l, sizeof s8);
+        p[SP_DLY] = 0;
+        chain_poll();
+        for (i = 0; i < MEM_NC; i++)
+            if (mem_owner[i] == MEM_IMPORT)
+                mem_free(i);
+        p[SP_DLY] = 100;
+        chain_poll();
+        sine_fill(l, r, N / 4, 300, 3000);
+        memset(l + N / 4, 0, (N - N / 4) * sizeof l[0]);
+        memset(r + N / 4, 0, (N - N / 4) * sizeof r[0]);
+        dev_run(space_block, l, r, N / 2);
+        memcpy(s16, l, sizeof s16);
+        for (i = 6000, x = y = 0; i < N / 4; i++) {
+            x += (double)(s8[i] - s16[i]) * (s8[i] - s16[i]);
+            y += (double)s16[i] * s16[i];
+        }
+        snprintf(b, sizeof b, "..8-bit against 16: the echo of a quiet sine %.0f dB above its own noise",
+                 10 * log10(y / x));
+        check(b, 10 * log10(y / x) > 30 && space[0].dly.bits8 == 0);
+    }
+    p[SP_DLY] = 0;
+    chain_poll();
+    while (mem_count(MEM_FREE))                          /* nothing free: it takes from the longest tape */
+        mem_alloc(MEM_IMPORT);
+    tot0 = tape_ctl[1].nch + tape_ctl[2].nch;
+    p[SP_DLY] = 100;
+    chain_poll();
+    tot1 = tape_ctl[1].nch + tape_ctl[2].nch;
+    check("nothing free: 8-bit, its 4 chunks from the end of the longest tape", space[0].dly.ready &&
+          space[0].dly.bits8 && tot0 - tot1 == SP_DLY8 && mem_count(MEM_SPACE) == SP_DLY8);
+    p[SP_DLY] = 0;
+    chain_poll();
+    for (i = 0; i < MEM_NC; i++)
+        if (mem_owner[i] == MEM_IMPORT)
+            mem_free(i);
+    for (t = 1; t < NTRK; t++)
+        tape_free(t);
+    tape_poll();
+
+    p[SP_VERB] = 100;                                    /* the room */
+    p[SP_PRE] = 0;
+    p[SP_DEC] = 100;
+    chain_poll();
+    check("VERB up: the room (5 chunks) and its pre-delay (5, 16-bit)", space[0].rev.ready && space[0].pre.ready &&
+          !space[0].pre.bits8 && mem_count(MEM_SPACE) == SP_REV + SP_PRE16);
+    memset(l, 0, sizeof l);
+    memset(r, 0, sizeof r);
+    for (i = 0; i < 64; i++)
+        l[i] = r[i] = 20000;
+    dev_run(space_block, l, r, N);
+    e1 = rms_of(l, N / 2, N);
+    x = rms_of(l, 2000, 6000);
+    p[SP_DEC] = 0;
+    memset(l, 0, sizeof l);
+    memset(r, 0, sizeof r);
+    dev_run(space_block, l, r, N);                       /* (the long tail out) */
+    for (i = 0; i < 64; i++)
+        l[i] = r[i] = 20000;
+    dev_run(space_block, l, r, N);
+    e2 = rms_of(l, N / 2, N);
+    snprintf(b, sizeof b, "DEC 100 against 0: the tail at 0.5-1 s %.0f against %.1f (the early tail %.0f)", e1, e2, x);
+    check(b, e1 > 30 && e2 < e1 / 30 && x > 100);
+    p[SP_DEC] = 40;
+    p[SP_SPRD] = 100;
+    memset(l, 0, sizeof l);
+    memset(r, 0, sizeof r);
+    dev_run(space_block, l, r, N / 4);
+    for (i = 0; i < 64; i++)
+        l[i] = r[i] = 20000;
+    dev_run(space_block, l, r, N / 2);
+    for (i = 3000, x = y = e1 = 0; i < N / 2; i++) {
+        x += (double)l[i] * r[i];
+        y += (double)l[i] * l[i];
+        e1 += (double)r[i] * r[i];
+    }
+    snprintf(b, sizeof b, "SPRD 100: the room's sides differ (correlation %.2f)", x / sqrt(y * e1));
+    check(b, x / sqrt(y * e1) < 0.5);
+    p[SP_SPRD] = 0;
+    memset(l, 0, sizeof l);
+    memset(r, 0, sizeof r);
+    for (i = 0; i < 64; i++)
+        l[i] = r[i] = 20000;
+    dev_run(space_block, l, r, N / 2);
+    check("SPRD 0: mono", !memcmp(l + 2, r + 2, (N / 2 - 2) * sizeof l[0]));
+    p[SP_PRE] = 100;
+    memset(l, 0, sizeof l);
+    memset(r, 0, sizeof r);
+    for (i = 0; i < 3; i++) {                            /* (the last tail out) */
+        memset(l, 0, sizeof l);
+        memset(r, 0, sizeof r);
+        dev_run(space_block, l, r, N);
+    }
+    memset(l, 0, sizeof l);
+    memset(r, 0, sizeof r);
+    for (i = 0; i < 64; i++)
+        l[i] = r[i] = 20000;
+    dev_run(space_block, l, r, N / 2);
+    snprintf(b, sizeof b, "PRE 100 ms: nothing from the room before it (peak %d), the room after (%.0f)",
+             peak_of(l + 100, 4300), rms_of(l, 4500, 9000));
+    check(b, peak_of(l + 100, 4300) < 20 && rms_of(l, 4500, 9000) > 100);
+
+    for (i = 0; i < 9; i++)                              /* the corners: everything up, noise in, then quiet */
+        p[i] = DEV_P[DEV_SPACE][i].max;
+    for (t = 0; t < 3; t++) {
+        p[SP_TONE] = (int16_t)(t == 0 ? -100 : t == 1 ? 100 : 0);
+        p[SP_SIZE] = (int16_t)(t * 50);
+        chain_poll();
+        for (i = 0; i < N; i++)
+            l[i] = r[i] = (int32_t)(rand() % 65535) - 32767;
+        dev_run(space_block, l, r, N);
+        e1 = peak_of(l, N);
+        memset(l, 0, sizeof l);
+        memset(r, 0, sizeof r);
+        dev_run(space_block, l, r, N);
+        snprintf(b, sizeof b, "the corners (TONE %d, SIZE %d, all else up): bounded (peak %.0f), %.0f after 1 s of "
+                 "quiet", p[SP_TONE], p[SP_SIZE], e1, (double)peak_of(l + N / 2, N / 2));
+        check(b, e1 < 4 * 32767 && peak_of(l, N) < 3 * 32767);
+    }
+    for (i = 0; i < 9; i++)
+        p[i] = DEV_P[DEV_SPACE][i].def;
+    p[SP_DLY] = p[SP_VERB] = 100;
+    chain_poll();
+    chain_tracks(1);
+    tp[1].dev[DEV_SPACE][SP_DLY] = 100;                 /* (track 2's SPACE on, track 2 parked) */
+    chain_poll();
+    check("a parked track's SPACE holds nothing", !space[1].dly.nch && !mem_count(MEM_SPACE + 1));
+    chain_tracks(4);
+    chain_poll();
+    check("..TRACKS back up: it takes its line", space[1].dly.ready);
+    tp[1].dev[DEV_SPACE][SP_DLY] = 0;
+    p[SP_DLY] = p[SP_VERB] = 0;
+    chain_poll();
+    check("DLY and VERB 0: every chunk back to the pool", !mem_count(MEM_SPACE) && !mem_count(MEM_SPACE + 1) &&
+          !space[0].rev.nch && !space[0].pre.nch);
+}
+
 /* the tape's edges: an empty user reel, a loop shorter than a block, the seam running backwards */
 static void test_tape_edges(void)
 {
@@ -3044,6 +3472,8 @@ int main(int argc, char **argv)
     test_grain();
     test_grain_buffer();
     test_reso();
+    test_color();
+    test_space();
     test_input();
     test_settings();
     palette_set(UI_GREY_INDEX);                          /* (the screens are one ink now, whatever the palette) */

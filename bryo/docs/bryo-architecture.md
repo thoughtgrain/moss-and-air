@@ -148,10 +148,11 @@ Why:
 
 | Use | Bytes | How it's sized |
 | --- | ---: | --- |
-| Shared sound memory | 270,336 pool + 50,688 main RAM | 152 chunks of tape-format sound (28.2 s in all), handed out by usage: tapes as long as what's on them, GRAIN's live buffers while GRAIN is on; RESONATOR and SPACE will draw from it too. See "Memory by usage" |
+| Shared sound memory | 270,336 pool + 50,688 main RAM | 152 chunks of tape-format sound (28.2 s in all), handed out by usage: tapes as long as what's on them, GRAIN's live buffers while GRAIN is on, RESONATOR's strings and SPACE's lines while they're on. See "Memory by usage" |
 | RESONATOR | 4 chunks a track, while on | 4 strings × 1,056 samples × 2 B (lowest string F1, 43.7 Hz), from the shared memory while WET is up |
-| SPACE delay | 65,536 (planned) | 4 tracks × 8,192 samples × 2 B, from the shared memory while it's on (8-bit when memory is short) |
-| SPACE reverb | 40,000 (planned) | 4 small reverbs, Felucca's ROOM structure run at 22.05 kHz |
+| SPACE delay | 8 chunks a track, while DLY is up | 8,192 samples × 2 B at 22.05 kHz (TIME's 370 ms); 4 chunks at 8 bits when memory is short |
+| SPACE reverb | 10 chunks a track, while VERB is up | the room (a comb a chunk, the allpasses in a fifth) and the pre-delay's line (5 chunks; 3 at 8 bits) |
+| COLOR | 0 | 64 B of state a track |
 | Screen canvas | 5,460 (main RAM) | 2 bits a dot (1.6 KB) and two 4-row line buffers (3.8 KB); see "The screen as dots" |
 | GRAIN | 9,728 pool + 2,900 main RAM | 32 grains × 304 B (a 128-sample decoded window each), and each track's buffer bookkeeping; the buffers themselves are shared memory |
 | USB audio in | 16,384 (planned) | ring buffer: 4,096 stereo frames × 4 B (93 ms) for drift and jitter |
@@ -160,7 +161,7 @@ Why:
 | The drive | 17,340 | the FAT, root and write cache of the USB drive (the 36 KB WAV inbox is gone: a WAV lands in shared memory) |
 
 Measured now: the pool holds 312.0 KB of 336 (32 KB spare, 16 KB of it for USB audio in, build.py keeps 8 KB);
-main RAM 80.2 KB of 96.
+main RAM 80.9 KB of 96 (COLOR's and SPACE's state added 704 B; their sound memory is shared chunks).
 
 What gives way when memory runs short: chunks come off a cleared tape first, then a parked track's tape (TRACKS),
 then the end of the longest tape. Nothing is set aside per track, so there's no constant to shrink any more.
@@ -187,13 +188,13 @@ with its mixes. My target for all four tracks, everything on, is **at most 2,000
 | TAPE read | 20 | ADPCM decode at 22.05 kHz, linear interpolation to 44.1 kHz |
 | GRAIN | 240 | 8 sounding grains × about 30 (decoding, window ramp, interpolation, pan), plus about 100 recording its buffer (measured: see "GRAIN, as built") |
 | RESONATOR | 60 | 4 strings (measured nearer 240 a track on the host: see "RESONATOR, as built") |
-| COLOR | 30 | drive table, crush, follower plus noise |
-| SPACE | 80 | delay plus reverb at 22.05 kHz |
+| COLOR | 30 | drive table, crush, follower plus noise (measured 180 a track with every knob on, 0 at the defaults: see "COLOR, as built") |
+| SPACE | 80 | delay plus reverb at 22.05 kHz (measured 220 a track with both on: see "SPACE, as built") |
 | Modulators | 10 | control rate (every 32 samples), not per sample |
 | **Track total** | **~440** | **× 4 = ~1,760**, plus the mixer and compressor ~60 |
 
 The audio ISR's 85% guard stays. Instead of shedding voices it sheds *grains* first (lowers the sounding
-cap), then RESONATOR strings, and never the tape itself.
+cap), then RESONATOR strings, and never the tape itself. COLOR and SPACE aren't shed (yet; see "SPACE, as built").
 
 ## What I keep, reuse, and remove
 
@@ -824,6 +825,95 @@ SCAL MAJ puts the strings on the third and fifth; turning PTCH takes the root ba
 takes a string and gives it back; a parked track holds no strings; WET 0 gives the chunks back. And
 `tests/checkpoint_sim.sh` renders and measures RESONATOR on all four tracks (runs 11 and 12).
 
+## COLOR, as built (2026-10-08)
+
+COLOR is the S-4's DEFORM after RESONATOR (`firmware/src/color.c`). It takes no memory, only a few numbers a track,
+and its picture (`viz_color`) calls the same `color_shape()` the sound goes through, so what's drawn is what's
+played. In order:
+
+| Knob | What it does | How |
+| --- | --- | --- |
+| DRIV | gain 1..16 into a soft clip | Felucca's tanh table. At 0 there's no clip at all, so the default leaves the sound sample for sample untouched |
+| CRSH, CMOD | 16 down to 2 bits (BIT), a sample held 1..12 samples (RATE), or both | bits cut toward zero, so no DC creeps in |
+| NOIS, NDEC, NTON | noise riding the sound's envelope | the envelope opens at once and falls 60 dB over NDEC; NTON is a one-pole filter on the noise. Silence stays silent |
+| TILT | the low end against the high around 700 Hz | ±6 dB each way at ±100 |
+| WET, LVL | dry against coloured; the output, -24..+6 dB | both ramp across a block |
+
+I changed two things from the picture's first draft while building it. DRIV's gain is now continuous (Q8) instead of
+16 integer steps, since 1 → 2 was a 6 dB jump on the first detent; and the clip isn't normalised to full scale
+any more, because that made DRIV 1 already 2.4 dB louder. The picture changed with it.
+
+**Load**: nothing while every colouring knob is at 0 and LVL at 0 dB (the default). With everything on, 182 host
+instructions a sample a track; the first draft was 205 before I moved its state into locals (the compiler couldn't
+know the sample buffers didn't alias it, so it reloaded every field every sample). That's six times my 30 estimate,
+but the estimate only counted the drive: it's spread evenly across the features, so there's no single thing to cut.
+
+**Tests** (`test_color`): the defaults leave a sine bit-exact; LVL -6 halves it; DRIV 100 squares a sine (crest
+1.04); CRSH 100 leaves 2 bits, RATE holds 12 samples, BOTH does both; NOIS on silence is silence, after a hit it's
+there and gone by twice NDEC; NTON -100 against +100; TILT ±100 moves 100 Hz and 8 kHz the right ways; WET 0 is the
+dry sound however much drive; every knob at either end with a square past full scale stays bounded.
+
+## SPACE, as built (2026-10-08)
+
+SPACE is the S-4's VAST, last on a track (`firmware/src/space.c`): a delay and Felucca's ROOM reverb, run at half the
+rate (22.05 kHz) to halve both their memory and their load. The track goes in as mono (both sides averaged, and two
+samples into one), and the wet comes back up to 44.1 kHz by stepping halfway between samples.
+
+**The delay.** TIME (10..370 ms) back, and when TIME turns the read point glides there instead of jumping: a tape
+echo's bend, about 90 ms long and never faster than 3/8 of a sample a sample (within a fifth), so there's no click.
+FDBK 100 is a loop gain of 0.98. TONE sits in the feedback: below 0 a low-pass (to about 430 Hz), above 0 a
+high-pass (to about 650 Hz), so each echo is darker or thinner than the last. DLY 100 puts the first echo at 0.8 of
+the sound, which is the height the picture draws. SPRD moves the right echo up to 10 ms ahead of the left.
+
+**The room.** Four damped combs and two allpasses, Freeverb's shape, as Felucca's ROOM. SIZE sets the combs' lengths
+(40 % to 100 % of 38..46 ms); DEC the time the tail takes to fall 60 dB (0.2..4.2 s, each comb's gain from
+RESONATOR's `rs_gain`); TONE the combs' damping, or a high-pass in front above 0; PRE the pre-delay, up to 200 ms.
+For stereo, the right side runs its own pair of allpasses fed the combs with alternating signs, and SPRD blends it in
+(0 is mono).
+
+**Memory by usage.** DLY and VERB now default to 0, like GRAIN's and RESONATOR's WET: a device that's off takes
+nothing. With DLY up the delay takes 8 chunks (8,192 samples); with VERB up the room takes 5 and its pre-delay 5. A
+line is 16-bit when there's room for it with 3 s still free, and starts 8-bit when there isn't: 4 chunks for the
+delay and 3 for the pre-delay, companded like A-law (sign, a 3-bit segment, 4 bits inside it), so the noise rides
+under the sound, about 46 dB below a quiet sine's echo. When nothing is free it takes from the end of the longest tape,
+as GRAIN and RESONATOR do. A line never changes format while it sounds: it's chosen when it's switched on. A parked
+track holds nothing. Each line counts how many times it's been handed over, so one given back and taken again between
+two audio blocks still starts from silence. The SPACE page draws a part that's off (DLY or VERB at 0) dim, as it
+would be at 100, so TIME, FDBK, SIZE and DEC still show what they set.
+
+**A bug the tests found:** the room kept ringing on its own. After the sound had gone, its output sat at a DC of -36
+for good: every `>> 15` in a feedback loop rounds toward minus infinity, and four combs feeding back keep that bias
+alive. Rounding to nearest still left a 28-step limit cycle. The comb's gain, the delay's feedback and the allpasses
+now cut toward zero, which only ever takes energy out, so a loop with nothing in it falls to exactly 0.
+
+**Load**: 220 host instructions a sample a track with both on (the first draft was 283; the same locals fix as COLOR).
+The estimate was 80. The combs and allpasses are about 16 each per half-rate sample, the delay with SPRD's second
+tap about 60.
+
+**Tests** (`test_space`): the defaults take no memory and leave the sound alone; TIME 100 gives one echo at 100.0 ms
+of 0.8; FDBK 50 a second at 200.0 ms at 0.45; TONE either way loses more each pass; SPRD 100 puts the right echo 10.0
+ms ahead; TIME turned while echoing glides with no jump; with 20 chunks free the delay starts 8-bit in 4 chunks, its
+echo where 16 bits put it; with nothing free it takes its 4 chunks from the longest tape; DEC 100 against 0 at
+0.5..1 s; the room's sides decorrelate at SPRD 100 and match at 0; PRE 100 holds the room back 100 ms; every knob at
+its top with noise in stays bounded (TONE either way, SIZE 0..100); a parked track's SPACE holds nothing; DLY and VERB
+at 0 give every chunk back.
+
+**On the checkpoint** (`tests/checkpoint_sim.sh`, runs 13 to 16, host instructions per output sample, four tracks):
+
+| Run | What | Host cost |
+| --- | --- | ---: |
+| 1 | four reels, nothing on (the baseline) | 902 |
+| 13 | COLOR on all four (DRIV 60, CRSH 40 BOTH, NOIS 30, TILT 30) | 1,630 |
+| 14 | SPACE on all four (DLY 50, VERB 40): 72 chunks, all 16-bit, 14.5 s still free | 1,784 |
+| 15 | everything on all four: GRAIN at the cap, RESONATOR, COLOR, SPACE | 5,842 |
+| 16 | three tracks as I'd play them: TRACKS 3, GRAIN WET 100, DRIV 40, SPACE | 2,310 |
+
+Run 15 is 6.5 times the baseline: the 2,000 target holds only for setups like run 16. That's the hardware
+checkpoint's question now, more than before. If the FM-1 can't carry run 15, the shedding order (grains, then
+strings) would need a step for SPACE as well (the room at a quarter rate, say), and that's a decision for when I have
+the device's number. The stress run cuts the interrupts in while RESONATOR and SPACE take and give back memory as
+knobs turn, and the books balance (RESONATOR's strings and SPACE's lines are in the check now too).
+
 ## Memory by usage, TRACKS and REC IN (2026-10-08)
 
 Until now every track had a 36 KB tape whether it used it or not, and the plan reserved a delay and a reverb per
@@ -904,7 +994,7 @@ Each phase ends in something you can flash and hear or see, and each is its own 
 | 3b. GRAIN (**done**, host-verified; see "GRAIN, as built") | the scheduler, the sounding cap, FREEZE (key 0); the live buffer, SCAN, FDBK | grains run on 4 tracks inside the budget |
 | 3c. Memory by usage (**done**, host-verified; see "Memory by usage, TRACKS and REC IN") | the shared chunks, growing tapes, TRACKS, REC IN, long reels | memory follows what you use |
 | 4. RESONATOR (**done**, host-verified; see "RESONATOR, as built") | strings, chromatic keys, OCT shifts | tuned feedback chords from the keys |
-| 5. COLOR + SPACE | drive, crush, noise; delay and reverb | the full chain on 4 tracks inside the budget |
+| 5. COLOR + SPACE (**done**, host-verified; see "COLOR, as built" and "SPACE, as built") | drive, crush, noise; delay and reverb | the full chain on 4 tracks inside the budget (on the host it isn't: everything on all four is 5,842; the device decides) |
 | 6. Mixer + routing (routing **done** early: REC IN) | GLO mixer, filters, compressor | the mixer's DSP |
 | 7. Modulation | the 4 engines, hold-and-turn depth, assigning engines, p-locks | the PRD's §4 workflow end to end |
 | 8. Projects | save and recall with reels; user reel slots in flash and the upload tool; quick SAVE; undo for MONO and POLY | a power cycle brings a session back |

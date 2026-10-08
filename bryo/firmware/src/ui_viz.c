@@ -425,16 +425,11 @@ static void viz_reso(const int16_t *v, uint32_t f)
 }
 
 /* ------------------------------------------------------------- COLOR --- */
-/* DRIV 0..100 -> gain 1..16 into the soft clip; CRSH 0..100 takes, by CMOD, 16..2 bits (BIT), a hold of 1..12
- * samples (RATE), or both; NOIS: noise riding the signal's envelope, which falls over NDEC after the sound; NTON: a
- * one-pole filter on that noise (- dark .. + bright); TILT: the low end against the high (on a sine: nothing to
- * draw, so the inset shows it); WET: the dry and the coloured signal; LVL: the output in dB */
-static int32_t color_shape(int32_t x, const int16_t *v)             /* Q15 in -> Q15 out (before WET, LVL) */
-{
-    int32_t g = 1 + v[0] * 15 / 100, y = softclip(x * g) * 32767 / softclip(32767 * g);
-    int32_t bits = v[6] == 1 ? 16 : 16 - v[1] * 14 / 100, q = 1 << (16 - bits);
-    return q > 1 ? (y / q) * q : y;
-}
+/* the mappings color.c plays (color_shape there: the drive and the bits): DRIV 0..100 -> gain 1..16 into the soft
+ * clip (0: none); CRSH 0..100 takes, by CMOD, 16..2 bits (BIT), a hold of 1..12 samples (RATE), or both; NOIS:
+ * noise riding the signal's envelope, which falls over NDEC after the sound; NTON: a one-pole filter on that noise
+ * (- dark .. + bright); TILT: the low end against the high (on a sine: nothing to draw, so the inset shows it); WET:
+ * the dry and the coloured signal; LVL: the output in dB */
 
 static int32_t color_out(int32_t x, int32_t shaped, const int16_t *v)   /* WET, then LVL */
 {
@@ -445,7 +440,7 @@ static void viz_color(const int16_t *v, uint32_t f)
 {
     static const char *const NAME[9] = {"DRIV", "CRSH", "NOIS", "TILT", "NDEC", "NTON", "CMOD", "WET", "LVL"};
     int32_t bx = DX0, bw = 32, wx = DX0 + 37, ww = DX1 - wx, i, py = 0, held = 0;
-    int32_t hold = v[6] >= 1 ? 1 + v[1] * 11 / 100 : 1;              /* CMOD RATE or BOTH: hold a value */
+    int32_t hold = (int32_t)col_hold(v);                              /* CMOD RATE or BOTH: hold a value */
     int32_t fall = 1000 - 2000 / (2 + (int32_t)TIME_MS_X10[v[4] & 127] / 40), env = 0;   /* NDEC, per dot x1000 */
     int32_t lp = 0, a = 8 + (v[5] + 100) * 75 / 200, cy = DMID + 1, amp = DH / 2;   /* NTON: the filter's step */
     px_frame(bx, DY0, bw, DH + 2, px_dim, 2);                          /* the inset */
@@ -508,13 +503,16 @@ static void viz_color(const int16_t *v, uint32_t f)
 
 /* ------------------------------------------------------------- SPACE --- */
 /* the window is 2 s: the dry hit at 0, echoes TIME ms apart falling by FDBK, the tail rising over SIZE (10..90 ms)
- * and falling over DECAY (0.2..4.2 s) */
+ * and falling over DECAY (0.2..4.2 s). DLY or VERB at 0 is off (space.c: no memory taken): its part is drawn dim,
+ * as it would be at 100, so TIME, FDBK, SIZE and DEC still show what they set */
 static void viz_space(const int16_t *v, uint32_t f)
 {
     /* page 2: DLY scales the echoes, VERB the tail; TONE (- low-pass, + high-pass on the feedback) makes each echo
      * lose a little more; page 3: PRE holds the tail back (ms) */
     int32_t t, x, py = DY1, rise = 10 + v[2] * 80 / 100, len = 200 + v[3] * 40, g = 32767, first = -1, pre = v[8];
     int32_t tl = 100 - (v[6] < 0 ? -v[6] : v[6]) / 5;                  /* TONE: what each pass keeps, % */
+    int32_t dly = v[4] ? v[4] : 100, verb = v[5] ? v[5] : 100;
+    uint16_t dink = v[4] ? px_ink : px_dim, vink = v[5] ? px_ink : px_dim;
     px_line(DX0, DY1 + 1, DX1, DY1 + 1, px_dim, 2);
     for (x = DX0; x <= DX1; x++) {                                     /* the tail: a dim hatch under its edge */
         int32_t ms = (x - DX0) * 2000 / DW - pre, e, y;
@@ -525,12 +523,12 @@ static void viz_space(const int16_t *v, uint32_t f)
         e = ms < rise ? ms * 1000 / rise : 1000 - (ms - rise) * 1000 / len;
         if (e <= 0)
             break;
-        e = e * e / 1000 * v[5] / 100;
+        e = e * e / 1000 * verb / 100;
         y = DY1 - e * DH / 1000;
         if ((x & 1) == 0 && y < DY1)
             px_line(x, y + 2, x, DY1, px_dim, 2);
         if (x > DX0)
-            px_line(x - 1, py, x, y, px_ink, 1);
+            px_line(x - 1, py, x, y, vink, 1);
         py = y;
     }
     px_line(DX0 + 1, DY1, DX0 + 1, DY0 + 1, px_ink, 1);                /* the dry hit */
@@ -539,11 +537,14 @@ static void viz_space(const int16_t *v, uint32_t f)
         int32_t h;
         g = (t == v[0]) ? 26000 : g * v[1] / 100 * tl / 100;
         x = DX0 + t * DW / 2000;
-        h = g * DH / 32767 * v[4] / 100;
+        h = g * DH / 32767 * dly / 100;
         if (first < 0)
             first = x;
-        px_line(x, DY1, x, DY1 - h, px_ink, 1);
-        vz_node(x, DY1 - h, f <= 1u || f == 4u);
+        px_line(x, DY1, x, DY1 - h, dink, 1);
+        if (v[4])
+            vz_node(x, DY1 - h, f <= 1u || f == 4u);
+        else
+            px_dot(x, DY1 - h, px_dim);
     }
     if (f >= 4u && f < 9u)
         vz_ktag(118, DY0 - 1, &DEV_P[DEV_SPACE][f], v[f]);
@@ -1118,7 +1119,8 @@ static void viz_memory(void)
     }
     px_line(DX0, 27, DX1, 27, px_dim, 2);              /* the ribbon: free memory dotted under the rest */
     for (t = 0; t < NTRK; t++) {
-        uint32_t nt = mem_count(MEM_TAPE + t), ng = mem_count(MEM_GRAIN + t) + mem_count(MEM_RESO + t), w0 = x0;
+        uint32_t nt = mem_count(MEM_TAPE + t), ng = mem_count(MEM_GRAIN + t) + mem_count(MEM_RESO + t) +
+                 mem_count(MEM_SPACE + t), w0 = x0;
         uint32_t wt = nt * (uint32_t)DW / MEM_NC, wg = ng * (uint32_t)DW / MEM_NC;
         if (nt && !wt)
             wt = 1;

@@ -10,9 +10,9 @@ search results that quote the official device pages, the Sound On Sound review, 
 community MIDI CC list at midi.guide. Where those disagree, I say so. Anything marked *(unverified)* needs a look
 at the real manual before it's built.
 
-None of GRAIN, RESONATOR, COLOR or SPACE makes sound yet (phases 4 and 5). Changing their knobs now only touches
-`param.c`, the pictograms and the screens. Once the DSP exists, the same change costs a rewrite, so now is the
-time to settle them.
+When I wrote this, none of GRAIN, RESONATOR, COLOR or SPACE made sound yet (all four do now). Changing their knobs then only touched
+`param.c`, the pictograms and the screens. Once the DSP existed, the same change would cost a rewrite, so that was
+the time to settle them.
 
 ## Where it stands (2026-10-07)
 

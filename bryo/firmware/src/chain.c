@@ -4,8 +4,8 @@
  * Each track starts with its source (source.c): its TAPE (tape.c: the loop plays while the transport runs, the
  * white keys play its 16 slices), SYNTH or POLY (the white keys play notes). REC records onto the tape either way.
  * Then GRAIN (grain.c: grains of a live buffer of the source, or of the tape, blended by WET), from which the track
- * is stereo. Then RESONATOR (reso.c: four tuned strings the track rings through). COLOR and SPACE arrive in the next
- * phases; chain_block() keeps the shape they slot into.
+ * is stereo. Then RESONATOR (reso.c: four tuned strings the track rings through), COLOR (color.c: drive, crush,
+ * noise, tilt) and SPACE (space.c: the delay and the room).
  *
  * What REC records is each track's REC IN (param.c RIN_*, the routing view): by default (AUTO) the other three
  * tracks' mix on a TAPE track and its own source on a SYNTH or POLY track; or the others' mix, one chosen track, or
@@ -117,6 +117,8 @@ static void chain_block(int32_t *out, uint32_t n)
         chain_source(t, k, (sys.rec >> t) & 1u ? rin[t] : 0, s, n);
         grain_block(t, s, gk, (int)zero, gl, gr, n);    /* from here the track is stereo */
         reso_block(t, gl, gr, rk, tp[t].src == SRC_TAPE, n);
+        color_block(t, gl, gr, n);
+        space_block(t, gl, gr, n);
         if (a0 != 32767 || a1 != 32767)                  /* switching on or off: the 2 ms ramp */
             for (i = 0; i < n; i++) {
                 int32_t a = a0 + (((a1 - a0) * (int32_t)i) >> CTL_LOG2);
@@ -169,12 +171,13 @@ static void chain_tracks(int32_t n)
 }
 
 /* main loop, every pass: the memory's bookkeeping (tape.c tape_poll: growing tapes and their ends; grain.c
- * grain_poll: GRAIN's buffers) */
+ * grain_poll: GRAIN's buffers; reso.c reso_poll: the strings; space.c space_poll: the delay's and room's lines) */
 static void chain_poll(void)
 {
     tape_poll();
     grain_poll();
     reso_poll();
+    space_poll();
 }
 
 /* all sound off now (an update starting, a panic): the keys stop and the transport stops (the heads fade out) */

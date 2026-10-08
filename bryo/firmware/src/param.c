@@ -97,8 +97,8 @@ static const pdesc_t DEV_P[NDEV][NPK] = {
         {"TIME", 10, 370, 250, F_MS}, {"FDBK", 0, 100, 30, F_PCT},
         {"SIZE", 0, 100, 50, F_PCT}, {"DEC", 0, 100, 40, F_PCT},
         /* 2: the delay's and the reverb's levels, a tone on both (- low-pass, + high-pass, on the feedback and the
-         * tail), the stereo spread */
-        {"DLY", 0, 100, 30, F_PCT}, {"VERB", 0, 100, 30, F_PCT},
+         * tail), the stereo spread (DLY 0, VERB 0: off until turned up, taking no memory: space.c) */
+        {"DLY", 0, 100, 0, F_PCT}, {"VERB", 0, 100, 0, F_PCT},
         {"TONE", -100, 100, 0, F_BIPCT}, {"SPRD", 0, 100, 100, F_PCT},
         /* 3: the reverb's pre-delay */
         {"PRE", 0, 200, 20, F_MS}, {""}, {""}, {""}},

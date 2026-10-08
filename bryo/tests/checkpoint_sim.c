@@ -4,7 +4,7 @@
  * The FM-1's pi32v2 core has no emulator, so this runs the firmware's own sources (tests/bryo_host.c's build, the
  * hardware stubbed) through the run sheet's scenarios instead:
  *
- *   checkpoint_sim wav DIR      each run rendered to DIR/runN.wav (stereo, 44.1 kHz) to listen to, with what the
+ *   checkpoint_sim wav DIR      each run (1..16) rendered to DIR/runN.wav (stereo, 44.1 kHz) to listen to, with what the
  *                               firmware reports along the way (grains, memory, tape length)
  *   checkpoint_sim run N        run N alone, for a cost measurement (tests/checkpoint_sim.sh runs it under callgrind)
  *   checkpoint_sim stress SECS  the timing the host tests can't show: the audio interrupt and TIMER5's usb_poll as
@@ -195,6 +195,54 @@ static double run(int n, char *say, size_t sz)
                  n == 12 ? " with GRAIN at the cap" : "", reso[0].nch + reso[1].nch + reso[2].nch + reso[3].nch, sounding());
         return 6;
     }
+    case 13: case 14: case 15: case 16: {                /* COLOR, SPACE, the full chain, and three tracks as I'd
+                                                          * play them */
+        uint32_t t, nsp = 0, n8 = 0;
+        for (t = 0; t < NTRK; t++) {
+            int16_t *c = tp[t].dev[DEV_COLOR], *v = tp[t].dev[DEV_SPACE];
+            if (n == 13 || n == 15) {
+                c[CP_DRIV] = 60;
+                c[CP_CRSH] = 40;
+                c[CP_CMOD] = CMOD_BOTH;
+                c[CP_NOIS] = 30;
+                c[CP_TILT] = 30;
+                c[CP_LVL] = -6;
+            }
+            if (n == 16)
+                c[CP_DRIV] = 40;
+            if (n >= 14) {
+                v[SP_DLY] = 50;
+                v[SP_VERB] = 40;
+                v[SP_TIME] = (int16_t)(180 + 40 * t);
+            }
+            if (n == 15) {
+                tp[t].dev[DEV_RESO][RP_WET] = 60;
+                tp[t].dev[DEV_RESO][RP_PTCH] = (int16_t)(40 + 5 * t);
+            }
+        }
+        if (n == 15) {
+            all_grain(GP_WET, 100);
+            all_grain(GP_RATE, 100);
+            all_grain(GP_SIZE, 500);
+        }
+        if (n == 16) {
+            chain_tracks(3);
+            all_grain(GP_WET, 100);
+        }
+        play(6);
+        for (t = 0; t < NTRK; t++) {
+            nsp += mem_count(MEM_SPACE + t);
+            n8 += space[t].dly.bits8 + space[t].pre.bits8;
+        }
+        snprintf(say, sz, "%s: SPACE %u chunks (%u lines 8-bit), %u grains, %u strings, %.1f s free",
+                 n == 13 ? "COLOR on all four (DRIV 60, CRSH 40 BOTH, NOIS 30, TILT 30)" :
+                 n == 14 ? "SPACE on all four (DLY 50, VERB 40)" :
+                 n == 15 ? "everything on all four (GRAIN at the cap, RESONATOR, COLOR, SPACE)" :
+                           "TRACKS 3, GRAIN WET 100, DRIV 40, SPACE",
+                 nsp, n8, sounding(), reso[0].nch + reso[1].nch + reso[2].nch + reso[3].nch,
+                 mem_count(MEM_FREE) * 4096.0 / 22050);
+        return 6;
+    }
     default: {                                           /* a 20 s WAV over TAPE3.WAV while the reels play */
         static uint8_t w[20 * 22050 * 2 + 4096];
         uint32_t len = make_wav(w, 22050, 1, 16, 1, 22050 * 20, 330.0), k, lba = VD_DATA + 3000u * VD_SPC;
@@ -273,6 +321,14 @@ static uint32_t books(void)
             SEE(tape_ctl[t].map[k], MEM_TAPE + t, "a tape");
         for (k = 0; k < gbuf[t].nch; k++)
             SEE(gbuf[t].map[k], MEM_GRAIN + t, "a GRAIN buffer");
+        for (k = 0; k < reso[t].nch; k++)
+            SEE(reso[t].map[k], MEM_RESO + t, "a string");
+        for (k = 0; k < space[t].dly.nch; k++)
+            SEE(space[t].dly.map[k], MEM_SPACE + t, "the delay's line");
+        for (k = 0; k < space[t].pre.nch; k++)
+            SEE(space[t].pre.map[k], MEM_SPACE + t, "the pre-delay's line");
+        for (k = 0; k < space[t].rev.nch; k++)
+            SEE(space[t].rev.map[k], MEM_SPACE + t, "the room");
         if (tape_ctl[t].nblk > tape_ctl[t].nch * MEM_CB && !tape_ctl[t].empty)
             if (bad++ < 8)
                 printf("checkpoint: track %u's tape longer (%u blocks) than its chunks (%u)\n", t, tape_ctl[t].nblk,
@@ -370,6 +426,16 @@ static int stress(double secs)
             sys.bpm = (uint16_t)(60 + st_rand(140));
         } else if (a < 50) {                             /* a clear */
             tape_clear(st_rand(NTRK));
+        } else if (a < 62) {                             /* RESONATOR's WET, SPACE's DLY, VERB, TIME, PRE (memory */
+            static const uint8_t K[5] = {RP_WET, SP_DLY, SP_VERB, SP_TIME, SP_PRE};   /* taken and given back) */
+            uint32_t t = st_rand(NTRK), k = st_rand(5), dv = k ? DEV_SPACE : DEV_RESO;
+            const pdesc_t *d = &DEV_P[dv][K[k]];
+            int32_t x = d->min + (int32_t)st_rand((uint32_t)(d->max - d->min + 1));
+            tp[t].dev[dv][K[k]] = (int16_t)(st_rand(3) == 0 ? d->min : x);
+        } else if (a < 66) {                             /* a COLOR knob */
+            uint32_t t = st_rand(NTRK), k = st_rand(9);
+            const pdesc_t *d = &DEV_P[DEV_COLOR][k];
+            tp[t].dev[DEV_COLOR][k] = (int16_t)(d->min + (int32_t)st_rand((uint32_t)(d->max - d->min + 1)));
         }
         actions++;
         if (cap.on && cap.done && !cap.named) {          /* (the computer writes the WAV's directory entry) */
@@ -422,7 +488,7 @@ int main(int argc, char **argv)
         int n;
         wav_cap = 23u * 44100u * 2u;
         wav_buf = malloc(wav_cap * sizeof *wav_buf);
-        for (n = 1; n <= 12; n++) {
+        for (n = 1; n <= 16; n++) {
             char path[512];
             wav_n = wav_clip = 0;
             run(n, say, sizeof say);
