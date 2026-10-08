@@ -55,6 +55,7 @@
 /* ----------------------------------------------------- base, display --- */
 #include "libc.c"
 #include "lcd.c"
+#define GFX_DOT_TEXT 1           /* draw_text_line / _box: ui.c's, on the dot grid (no full-colour canvas) */
 #include "gfx.c"
 
 /* ------------------------------------------------------- Bryo core --- */

@@ -124,7 +124,7 @@ static void draw_head(void)
         return;
     ui.sig_head = sig;
     px_colors();
-    cv_begin(240, UI_HEAD_H, px_bg);
+    px_begin(UI_HEAD_H);
     {
         int32_t bw = px_text_w(PXF_5, box) + 4, x = bw + 2, bar;
         px_frame(0, 1, bw, 11, px_ink, 1);
@@ -160,7 +160,7 @@ static void draw_head(void)
             px_box(x, 5, 5, 3, px_bg);
         }
     }
-    cv_blit(0, 0);
+    px_blit(0);
 }
 
 /* ------------------------------------------------------------- strip --- */
@@ -183,7 +183,7 @@ static void draw_strip(void)
         return;
     ui.sig_strip = sig;
     px_colors();
-    cv_begin(240, UI_STRIP_H, px_bg);
+    px_begin(UI_STRIP_H);
     for (k = 0; k < 4u; k++) {
         int16_t *vp;
         const pdesc_t *d = ui_page(k, &vp);
@@ -216,7 +216,7 @@ static void draw_strip(void)
         str_cpy(val + str_len(val), unit, 4);          /* "-140%", "250MS": at most 5, 29 dots */
         px_text_c(x, 30, 37, PXF_5, val, px_ink);
     }
-    cv_blit(0, UI_STRIP_Y);
+    px_blit(UI_STRIP_Y);
 }
 
 /* ------------------------------------------------------------ footer --- */
@@ -239,7 +239,7 @@ static void draw_foot(void)
         return;
     ui.sig_foot = sig;
     px_colors();
-    cv_begin(240, UI_FOOT_H, px_bg);
+    px_begin(UI_FOOT_H);
     px_line(0, 1, 119, 1, px_dim, 2);
     px_text(1, 5, PXF_3, a, px_dim);
     {
@@ -248,23 +248,73 @@ static void draw_foot(void)
         if (track[sys.sel].mute)                      /* the focused track is muted: say so */
             px_tag(x - 4 - px_text_w(PXF_3, "MUTE"), 4, PXF_3, "MUTE", px_ink, px_bg);
     }
-    cv_blit(0, UI_FOOT_Y);
+    px_blit(UI_FOOT_Y);
 }
 
-/* UPDATE MODE countdown (main.c: OCT- + OCT+ held), over everything below the header. Two canvases: the canvas
- * holds 124 rows (gfx.c CV_MAX), the area is 214 */
+/* UPDATE MODE countdown (main.c: OCT- + OCT+ held), over everything below the header: two strips (106 + 108 rows,
+ * both on the dot grid; the canvas holds 54 dot rows) */
 static void draw_uboot(void)
 {
     char n[4];
     px_colors();
-    cv_begin(240, 107, px_bg);
+    px_begin(106);
     px_text_c(0, 120, 38, PXF_5B, "UPDATE MODE IN", px_ink);
-    cv_blit(0, UI_HEAD_H);
-    cv_begin(240, 107, px_bg);
+    px_blit(UI_HEAD_H);
+    px_begin(108);
     fmt_int(n, ui.uboot);
     px_text_big(60 - (6 * 4 * (int32_t)str_len(n) - 4) / 2, 0, 4, n, px_ink);
     px_text_c(0, 120, 36, PXF_3, "LET GO OF OCT-/OCT+ TO CANCEL", px_dim);
-    cv_blit(0, UI_HEAD_H + 107);
+    px_blit(UI_HEAD_H + 106);
+}
+
+/* HARDWARE CALIBRATION (panel.c panel_setup, OCT- + OCT+ held at power-on), on the dot grid like everything else:
+ * the title and what to do; then, per control, the instruction and the control's name, large */
+static void ui_setup_title(void)
+{
+    px_colors();
+    lcd_fill(0, 0, 240, 240, px_bg);
+    px_begin(60);
+    px_text_c(0, 120, 3, PXF_3, "HARDWARE", px_dim);   /* (the whole title is wider than the bold face fits) */
+    px_text_c(0, 120, 10, PXF_5B, "CALIBRATION", px_ink);
+    px_text_c(0, 120, 20, PXF_3, "TEACH EACH BUTTON AND KNOB", px_dim);
+    px_line(8, 28, 111, 28, px_dim, 2);
+    px_blit(0);
+}
+
+static void ui_setup_show(const char *what, const char *name)   /* "PRESS" / "TURN RIGHT", the control */
+{
+    px_colors();
+    px_begin(60);
+    px_text_c(0, 120, 4, PXF_5, what, px_dim);
+    px_text_big(60 - (12 * (int32_t)str_len(name) - 2) / 2, 16, 2, name, px_ink);
+    px_blit(80);
+}
+
+/* Felucca's one-line text (gfx.c draw_text_line), on the dot grid (bryo.c GFX_DOT_TEXT): the boot screen, UBOOT,
+ * the crash screen and the update's progress (ota_hw.c) keep their calls and their rows, in the dot font sized to
+ * the line (AF_S: 3 x 5, AF_M: 5 x 7 bold, AF_L: 5 x 7 at 2x). x, y, w are pixels; the strip is the line's rows,
+ * full width. */
+static void draw_text_line(uint32_t x, uint32_t y, uint32_t w, const aafont_t *f, const char *s, uint16_t c,
+                           uint16_t bg, int align)
+{
+    uint32_t h = ((uint32_t)f->h + 1u) & ~1u, font = f == &AF_S ? PXF_3 : PXF_5B;
+    int32_t big = f == &AF_L, th = big ? 14 : font == PXF_3 ? 5 : 7;
+    int32_t tw = big ? 12 * (int32_t)str_len(s) - 2 : px_text_w(font, s), dx = (int32_t)x / 2, dw = (int32_t)w / 2;
+    int32_t tx = align == 1 ? dx + (dw - tw) / 2 : align == 2 ? dx + dw - tw : dx, ty = ((int32_t)h / 2 - th) / 2;
+    px_colors();
+    px_begin(h);
+    pxc_pal[0] = bg;                                    /* (the line's own colours) */
+    pxc_pal[2] = c;
+    if (big)
+        px_text_big(tx, ty, 2, s, c);
+    else
+        px_text(tx, ty, font, s, c);
+    px_blit(y & ~1u);
+    lcd_sync();                                         /* one-shots (boot, crash, UBOOT, update) finish here */
+}
+static void draw_text_box(uint32_t x, uint32_t y, uint32_t w, const aafont_t *f, const char *s, uint16_t c, int align)
+{
+    draw_text_line(x, y, w, f, s, c, T_BG, align);
 }
 
 static void ui_draw(void)

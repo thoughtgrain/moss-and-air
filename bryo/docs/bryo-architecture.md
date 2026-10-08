@@ -150,7 +150,7 @@ Why:
 | RESONATOR | 25,600 | 4 tracks × 4 strings × 800 samples × 2 B (lowest note A1, 55 Hz) |
 | SPACE delay | 65,536 | 4 tracks × 8,192 samples × 2 B (0.37 s at 22.05 kHz, or 0.74 s at half speed) |
 | SPACE reverb | 40,000 | 4 small reverbs, Felucca's ROOM structure run at 22.05 kHz |
-| Screen canvas | 29,760 | 240×62 strip (Felucca uses 240×124, 59 KiB); the UI draws in strips |
+| Screen canvas | 5,460 (main RAM) | 2 bits a dot (1.6 KB) and two 4-row line buffers (3.8 KB); see "The screen as dots" |
 | GRAIN state | 4,096 | 4 × 64 slots × 16 B |
 | USB audio in | 16,384 | ring buffer: 4,096 stereo frames × 4 B (93 ms) for drift and jitter |
 | SYNTH | 576 | 4 tracks × 3 voices of oscillator and filter state (.bss) |
@@ -627,6 +627,33 @@ and POLY's readers (8 KB). That leaves about 62 KB, and phases 3b to 5 plan abou
 GRAIN, the USB audio ring). Something has to give before RESONATOR lands. The candidates are: the inbox sharing the
 canvas's memory (it's only in use while a WAV arrives), a shorter SPACE delay (the plan's first choice), and a
 smaller canvas.
+
+## The screen as dots (2026-10-08)
+
+Bryo drew every screen strip into Felucca's full-colour canvas: 240 x 124 pixels of RGB565, 59.5 KB of the pool.
+But every Bryo screen is a grid of 2 x 2 px dots in three shades. I checked all 58 renders: four colours in all,
+and every dot one colour, except the UPDATE MODE countdown, whose lower half sat one pixel off the grid. So the
+canvas stored 16 bits a pixel to hold 2 bits a dot.
+
+**Now:** `ui_px.c` keeps the strip as dots, 2 bits each: background, dim, ink, and a spare fourth colour (the last
+other colour drawn). `px_blit` turns them into the LCD's pixels only as they're sent, two dot rows at a time into
+one of two small line buffers: one fills while the other goes out (the LCD has one transfer in flight at a time,
+so the buffer being filled is never the one being sent). The dots take 1.6 KB, the line buffers 3.8 KB, both in
+main RAM. `px_begin(h)` and `px_blit(y)` replace `cv_begin` and `cv_blit`; strips must start and end on even rows.
+
+**What changed on screen:** nothing on the 57 page screens: their renders are byte for byte what they were. UPDATE
+MODE's two strips are now 106 + 108 rows, so its lower line lands on the grid (one pixel up). Felucca's
+anti-aliased type is gone from the last screens that used it: HARDWARE CALIBRATION is redrawn in `ui.c` on the dot
+grid, and the one-line screens (boot, UBOOT, the crash screen, the update's progress) keep their calls and rows,
+but `draw_text_line` and `draw_text_box` are Bryo's own dot versions (`GFX_DOT_TEXT`). I didn't touch `ota_hw.c`:
+the update path calls the same function names it always did.
+
+**Memory**, measured on a 32-bit build: the pool went from 281.6 KB to 222.1 KB (122 KB free of 336), main RAM from
+23.0 KB to 27.2 KB (71 KB free of 96). Together about 193 KB is free against the ~151 KB phases 3b to 5 plan, so
+the SPACE delay can stay 16-bit; storing it in 8 bits (32 KB back) stays in reserve.
+
+**Tests:** the canvas clips at its edges, keeps 2 bits a dot and reaches the screen as 2 x 2 pixel dots in the
+right colours; the calibration, boot, update and crash screens are in the golden set.
 
 ## Build order
 

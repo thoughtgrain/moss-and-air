@@ -129,34 +129,13 @@ static void settings_init(void)
 /* OCT- + OCT+ held at power-on (main.c): press each button and turn each encoder as asked; the learned table is
  * saved with the settings. 30 s without input cancels and keeps the old table. */
 #define SETUP_IDLE_MS 30000u
-#define SETUP_HEAD_MY CAP_IN(M, 24)              /* the title, centred in a 24 px band */
-static void setup_title(void)
-{
-    lcd_fill(0, 0, 240, 240, T_BG);
-    {   /* the title with its icon (the menu row's), centred together; M from y 8 as before */
-        const char *t = "HARDWARE CALIBRATION";
-        int32_t x = (240 - (16 + 6 + text_w(&AF_M, t))) / 2;
-        cv_begin(240, 24, T_BG);
-        GFX_HOOK_ALIGN(0, 0, 240, 0, AL_H | AL_N(2), "calibration title centred");
-        GFX_HOOK_ALIGN(0, SETUP_HEAD_MY + AF_M_CAP_Y, 0, SETUP_HEAD_MY + AF_M_CAP_Y + AF_M_CAP_H, AL_V | AL_PASS,
-                       "header icon on its title's line");
-        cv_icon_mid(x, 12, 16, ICON_X_DOCTOR, T_THEME, T_BG);
-        cv_text(x + 22, SETUP_HEAD_MY, &AF_M, t, T_TEXT);
-        cv_blit(0, 5);
-    }
-    draw_text_box(0, 32, 240, &AF_S, "TEACH EACH BUTTON AND KNOB", T_MID, 1);
-    lcd_fill(16, 56, 208, 1, T_LINE);
-}
-static void setup_show(const char *what, const char *name)     /* "PRESS" / "TURN RIGHT", the control */
-{
-    draw_text_box(0, 80, 240, &AF_S, what, T_MID, 1);
-    draw_text_box(0, 100, 240, &AF_L, name, T_THEME, 1);
-}
+static void ui_setup_title(void);                  /* ui.c: the screens, on the dot grid */
+static void ui_setup_show(const char *what, const char *name);
 static void panel_setup(void)
 {
     uint32_t i, used = 0, t0 = fm1_ms;
     const panel_t old = panel;
-    setup_title();
+    ui_setup_title();
     while (fm1_in.buttons) {                             /* wait for OCT-/OCT+ release */
         fm1_wdt_feed();
         if (fm1_ms - t0 > SETUP_IDLE_MS)
@@ -165,7 +144,7 @@ static void panel_setup(void)
     fm1_input_edges(0);
     for (i = 0; i < NB; i++) {
         uint32_t p = 0, id;
-        setup_show("PRESS", B_NAME[i]);
+        ui_setup_show("PRESS", B_NAME[i]);
         t0 = fm1_ms;
         while (!(p & ~used)) {
             fm1_wdt_feed();
@@ -183,7 +162,7 @@ static void panel_setup(void)
     for (i = 0; i < NE; i++) {
         uint32_t e;
         int32_t st = 0;
-        setup_show("TURN RIGHT", E_NAME[i]);
+        ui_setup_show("TURN RIGHT", E_NAME[i]);
         for (e = 0; e < 7u; e++)
             fm1_enc_take(e);
         t0 = fm1_ms;
@@ -204,12 +183,12 @@ static void panel_setup(void)
         fm1_enc_take(e);
     }
     panel.magic = PANEL_MAGIC;
-    lcd_fill(0, 0, 240, 240, T_BG);
+    lcd_fill(0, 0, 240, 240, 0);                         /* (the dot grid's background) */
     ui_redraw();
     return;
 timeout:
     panel = old;
-    lcd_fill(0, 0, 240, 240, T_BG);
+    lcd_fill(0, 0, 240, 240, 0);                         /* (the dot grid's background) */
     ui_redraw();
     ui_message("SETUP CANCELLED");
 }

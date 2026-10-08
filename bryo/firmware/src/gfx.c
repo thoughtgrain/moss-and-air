@@ -824,6 +824,7 @@ static int32_t cv_free_hint(int32_t x, int32_t y, const char *s, uint16_t fg, ui
 }
 
 /* one-shot: a line of text in a box of colour bg, blitted (align: 0 left, 1 centre, 2 right) */
+#ifndef GFX_DOT_TEXT                /* (Bryo draws these two on its dot grid instead: ui.c) */
 static void draw_text_line(uint32_t x, uint32_t y, uint32_t w, const aafont_t *f, const char *s,
                            uint16_t c, uint16_t bg, int align)
 {
@@ -844,3 +845,4 @@ static void draw_text_box(uint32_t x, uint32_t y, uint32_t w, const aafont_t *f,
 {
     draw_text_line(x, y, w, f, s, c, T_BG, align);
 }
+#endif

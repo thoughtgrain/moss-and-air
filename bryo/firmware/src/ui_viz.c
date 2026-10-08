@@ -1050,7 +1050,7 @@ static void draw_viz(void)
         return;
     ui.sig_viz = sig;
     px_colors();
-    cv_begin(240, VZ_H, px_bg);
+    px_begin(VZ_H);
     if (ui.msg_t) {
         viz_message();
     } else if (ui.view == VIEW_MIXER) {
@@ -1080,5 +1080,5 @@ static void draw_viz(void)
             }
         }
     }
-    cv_blit(0, UI_VIZ_Y);
+    px_blit(UI_VIZ_Y);
 }

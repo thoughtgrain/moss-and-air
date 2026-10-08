@@ -22,11 +22,102 @@ static void px_colors(void)
     px_dim = ux_mix(px_bg, px_ink, 45);
 }
 
-static void px_dot(int32_t x, int32_t y, uint16_t c) { cv_rect(2 * x, 2 * y, 2, 2, c); }
+/* ---------------------------------------------------------- the canvas --- */
+/* A strip of the screen is drawn here as dots, 2 bits each (0 the background, 1 dim, 2 ink, 3 a fourth colour: the
+ * last other one drawn), and turned into the LCD's pixels only as it's sent: two dot rows at a time into one of two
+ * small line buffers, each sent while the other fills. A full-colour canvas of the tallest strip would be 51 KB
+ * (Felucca's gfx.c canvas, 59.5 KB, which Bryo no longer uses); this is 1.6 KB of dots and 3.8 KB of lines, and
+ * what reaches the LCD is the same, pixel for pixel. */
+#define PXC_ROWS 54u                  /* dot rows: the tallest strip, UPDATE MODE's lower 108 px */
+static uint8_t pxc[PXC_ROWS][30];     /* 120 dots a row, 4 a byte, the leftmost in the low bits */
+static uint32_t pxc_h;                /* the strip's rows */
+static uint16_t pxc_pal[4];
+static uint16_t pxc_line[2][4u * 240u];   /* 2 dot rows = 4 pixel rows, byte-swapped as the LCD takes them */
+static uint32_t pxc_b;                /* the buffer to fill next (the other may still be on its way to the LCD) */
+
+static uint32_t px_code(uint16_t c)
+{
+    if (c == pxc_pal[2])
+        return 2u;
+    if (c == pxc_pal[0])
+        return 0u;
+    if (c == pxc_pal[1])
+        return 1u;
+    pxc_pal[3] = c;
+    return 3u;
+}
+
+/* a strip h pixels tall (even: every strip starts and ends on the dot grid), cleared to the background */
+static void px_begin(uint32_t h)
+{
+    uint32_t r, i;
+    pxc_h = h / 2u > PXC_ROWS ? PXC_ROWS : h / 2u;
+    pxc_pal[0] = px_bg;
+    pxc_pal[1] = px_dim;
+    pxc_pal[2] = px_ink;
+    pxc_pal[3] = px_ink;
+    for (r = 0; r < pxc_h; r++)
+        for (i = 0; i < 30u; i++)
+            pxc[r][i] = 0;
+}
+
+static inline void px_set(int32_t x, int32_t y, uint32_t k)
+{
+    uint8_t *b;
+    uint32_t sh;
+    if ((uint32_t)x >= 120u || (uint32_t)y >= pxc_h)
+        return;
+    b = &pxc[y][(uint32_t)x >> 2];
+    sh = ((uint32_t)x & 3u) * 2u;
+    *b = (uint8_t)((*b & ~(3u << sh)) | (k << sh));
+}
+
+static void px_dot(int32_t x, int32_t y, uint16_t c) { px_set(x, y, px_code(c)); }
 static void px_box(int32_t x, int32_t y, int32_t w, int32_t h, uint16_t c)
 {
-    if (w > 0 && h > 0)
-        cv_rect(2 * x, 2 * y, 2 * w, 2 * h, c);
+    uint32_t k = px_code(c);
+    int32_t i, j;
+    if (x < 0) {
+        w += x;
+        x = 0;
+    }
+    if (y < 0) {
+        h += y;
+        y = 0;
+    }
+    if (x + w > 120)
+        w = 120 - x;
+    if (y + h > (int32_t)pxc_h)
+        h = (int32_t)pxc_h - y;
+    for (j = 0; j < h; j++)
+        for (i = 0; i < w; i++)
+            px_set(x + i, y + j, k);
+}
+
+/* the strip to the screen at pixel row y (full width) */
+static void px_blit(uint32_t y)
+{
+    uint16_t pal[4];
+    uint32_t r, j, x, k;
+    for (k = 0; k < 4u; k++)
+        pal[k] = (uint16_t)((pxc_pal[k] >> 8) | (pxc_pal[k] << 8));
+    for (r = 0; r < pxc_h; r += 2u) {
+        uint16_t *o = pxc_line[pxc_b];
+        uint32_t rows = pxc_h - r < 2u ? pxc_h - r : 2u;
+        for (j = 0; j < rows; j++) {
+            const uint8_t *s = pxc[r + j];
+            uint16_t *l = o + j * 480u;
+            for (x = 0; x < 120u; x++) {
+                uint16_t c = pal[(s[x >> 2] >> ((x & 3u) * 2u)) & 3u];
+                l[2u * x] = c;
+                l[2u * x + 1u] = c;
+            }
+            for (x = 0; x < 240u; x++)
+                l[240u + x] = l[x];
+        }
+        lcd_blit(0, y + 2u * r, 240, 2u * rows, o);
+        pxc_b ^= 1u;
+    }
 }
 
 /* a line from (x0, y0) to (x1, y1), a dot every step dots along it (1: solid, 2: dotted) */

@@ -59,6 +59,7 @@ static void lcd_blit(uint32_t x, uint32_t y, uint32_t w, uint32_t h, const uint1
 }
 
 /* ------------------------------------------------------- Bryo sources --- */
+#define GFX_DOT_TEXT 1
 #include "../firmware/src/gfx.c"
 #include "../firmware/src/bryo.h"
 static void ui_message(const char *s);
@@ -534,13 +535,18 @@ static void test_settings(void)
 
 /* -------------------------------------------------------------- screens --- */
 static const char *out_dir;
+static void shot_screen(const char *pal, const char *name);
 static void shot(const char *pal, const char *name)
+{
+    ui.force = 1;
+    ui_draw();
+    shot_screen(pal, name);
+}
+static void shot_screen(const char *pal, const char *name)   /* the screen as it is (no redraw) */
 {
     char path[512];
     FILE *f;
     uint32_t i;
-    ui.force = 1;
-    ui_draw();
     snprintf(path, sizeof path, "%s/ppm/%s_%s.ppm", out_dir, pal, name);
     f = fopen(path, "wb");
     if (!f) {
@@ -793,9 +799,29 @@ static void screens_in(const char *pal)
     shot(pal, "message");
     ui.msg_t = 0;
     ui.uboot = 3;
-    lcd_fill(0, 0, 240, 240, T_BG);
+    lcd_fill(0, 0, 240, 240, 0);
     draw_head();
     shot(pal, "uboot");
+    ui.uboot = 0;
+    ui_setup_title();                                    /* HARDWARE CALIBRATION, on the dot grid */
+    ui_setup_show("PRESS", "PLAY");
+    shot_screen(pal, "calibration");
+    ui_setup_show("TURN RIGHT", "SELECT");
+    shot_screen(pal, "calibration_turn");
+    lcd_fill(0, 0, 240, 240, T_BG);                      /* the one-shots, with main.c's and ota_hw.c's own calls */
+    draw_text_box(0, 94, 240, &AF_L, "BRYO", T_THEME, 1);
+    draw_text_box(0, 134, 240, &AF_S, "4-TRACK SOUND SCULPTING", T_MID, 1);
+    shot_screen(pal, "boot");
+    lcd_fill(0, 0, 240, 240, T_BG);
+    draw_text_box(0, 92, 240, &AF_M, "UPDATE", T_TEXT, 1);
+    draw_text_box(0, 124, 240, &AF_S, "CHECK HEAD", T_THEME, 1);
+    shot_screen(pal, "update");
+    lcd_fill(0, 0, 240, 240, UI_CRASH_BG);
+    draw_text_line(0, 8, 240, &AF_M, "BRYO CRASH", UI_CRASH_INK, UI_CRASH_BG, 1);
+    draw_text_line(10, 40, 220, &AF_M, "0000000C", UI_CRASH_INK, UI_CRASH_BG, 0);
+    draw_text_line(10, 60, 220, &AF_M, "0201A3F4", UI_CRASH_INK, UI_CRASH_BG, 0);
+    shot_screen(pal, "crash");
+    lcd_fill(0, 0, 240, 240, 0);
 }
 
 /* ---------------------------------------------------------- user reels --- */
@@ -1852,10 +1878,41 @@ static void test_drive_more(void)
     uslot_names();
 }
 
+/* the dot canvas: what's drawn off it is dropped, a fourth colour gets the spare code, and a strip reaches the LCD
+ * as 2 x 2 pixel dots */
+static void test_canvas(void)
+{
+    uint32_t x, y, ok = 1;
+    px_colors();
+    px_begin(8);                                         /* 4 dot rows */
+    px_box(-5, -5, 7, 7, px_ink);                        /* corner: (0..1, 0..1) */
+    px_box(118, 2, 9, 9, px_dim);                        /* right edge: (118..119, 2..3) */
+    px_dot(0, 4, px_ink);                                /* below the strip: dropped */
+    px_dot(60, 1, 0x07E0u);                              /* a fourth colour */
+    check("the canvas clips at its edges and keeps 2 bits a dot", pxc_h == 4 && px_code(px_ink) == 2u &&
+          ((pxc[1][0] & 15u) == 10u) && ((pxc[3][29] >> 4) == 5u) && pxc_pal[3] == 0x07E0u);
+    lcd_fill(0, 0, 240, 240, 0);
+    px_blit(100);
+    for (y = 0; y < 8u; y++)
+        for (x = 0; x < 240u; x++) {
+            uint16_t c = host_screen[(100u + y) * 240u + x];
+            c = (uint16_t)((c >> 8) | (c << 8));
+            if (x < 4u && y < 4u)
+                ok &= c == px_ink;
+            else if (x == 120u && (y == 2u || y == 3u))
+                ok &= c == 0x07E0u;
+            else if (x >= 236u && y >= 4u)
+                ok &= c == px_dim;
+        }
+    check("..and reaches the screen as 2 x 2 pixel dots, in the right colours, at the strip's row", ok &&
+          host_screen[108u * 240u] == 0);
+}
+
 int main(int argc, char **argv)
 {
     out_dir = argc > 1 ? argv[1] : "build/bryo_ui";
     memset(host_nor, 0xFF, sizeof host_nor);
+    test_canvas();
     test_tape();
     test_uslots();
     test_drive();
