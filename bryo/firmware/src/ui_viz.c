@@ -20,8 +20,7 @@
  *              filter before them (dotted: CUT RES SLOP), blended with the dotted dry line by WET
  *   COLOR      a sine through the device (dotted: in; solid: out); the inset follows the last-turned knob: the
  *              transfer curve (DRIV, CRSH, CMOD), the noise after a hit (NOIS, NDEC), its filter (NTON), TILT
- *   SPACE      a sonar from above: the dry hit at the centre, each echo a ring (TIME apart, kept by FDBK) with a
- *              notch (thrown left and right by SPRD), the reverb roughening the rings and dithering the disc
+ *   SPACE      the dry hit, the echoes as stems with nodes (TIME apart, falling by FDBK) and the reverb tail
  *   MOD slots  LFO's shape (RND: its loop of steps) and its next time round dotted, ADSR's envelope with its
  *              stages named and bent, SEQ's 16 steps as bars of their values, FOLLOW's envelope over what it listens to
  *   MIXER      the selected track's channel: EQ and filter as one response, the pan as two speakers
@@ -412,96 +411,50 @@ static void viz_color(const int16_t *v, uint32_t f)
 }
 
 /* ------------------------------------------------------------- SPACE --- */
-/* A sonar seen from above, flattened to fit the panel: the dry hit at the centre, the sound going out as rings.
- *   the delay   each echo a ring, its radius its time (TIME apart), there while it's still heard (FDBK, TONE's loss
- *               each pass, DLY's level): the first solid, the later ones dotted, rings closer than 3 dots merged;
- *               on each a notch as long as the echo is loud. SPRD sends the
- *               notches alternately left and right, the way a ping-pong delay throws echoes across: at 0 they sit
- *               at 12 o'clock.
- *   the reverb  VERB roughens each ring's 1-dot stroke and bleeds dots outward from it; the tail itself is a
- *               dither over the disc as dense as the reverb is loud at that distance: rising over SIZE (10..90 ms),
- *               falling over DEC (0.2..4.2 s), starting after PRE. Long and loud, it turns the disc into one
- *               blur of dots and eats into the rings, the notches lost in it.
- * The outermost ring is SP_W ms out. */
-#define SP_W 1500
-static int32_t isqrt(int32_t n);
-
-/* the reverb's level ms after the hit, 0..1000 (squared, as the ear hears a tail fall) */
-static int32_t sp_tail(const int16_t *v, int32_t ms)
-{
-    int32_t rise = 10 + v[2] * 80 / 100, len = 200 + v[3] * 40, e;
-    ms -= v[8];                                                        /* PRE */
-    if (ms < 0)
-        return 0;
-    e = ms < rise ? ms * 1000 / rise : 1000 - (ms - rise) * 1000 / len;
-    return e <= 0 ? 0 : e * e / 1000;
-}
-
-/* the point at normalised radius r (0..1000 of the disc) and angle a (1/64 turn, 0 = 12 o'clock) */
-#define SP_RX 44                     /* the disc: 88 x 36 dots round (60, 18) */
-#define SP_RY 18
-static int32_t sp_x(int32_t r, int32_t a) { return 60 + px_sin(a) * SP_RX / 1000 * r / 1000; }
-static int32_t sp_y(int32_t r, int32_t a) { return 18 - px_cos(a) * SP_RY / 1000 * r / 1000; }
-
+/* the window is 2 s: the dry hit at 0, echoes TIME ms apart falling by FDBK, the tail rising over SIZE (10..90 ms)
+ * and falling over DECAY (0.2..4.2 s) */
 static void viz_space(const int16_t *v, uint32_t f)
 {
-    int32_t t, k, a, x, y, g = 32767, n = 0, prev = -1000, tl = 100 - (v[6] < 0 ? -v[6] : v[6]) / 5;
-    int32_t jag = v[5] * 20 / 100, bleed = v[5] * 3 / 100, sh = v[7] * 16 / 100;   /* (jag: of the radius, 1/1000) */
-    vz_seed = 4242u;
-    for (t = v[0], k = 0; t <= SP_W; t += v[0], k++) {                 /* the echoes */
-        int32_t r = t * 1000 / SP_W, lvl, px0 = 0, py0 = 0, len, mid;
-        g = k ? g * v[1] / 100 * tl / 100 : 26000;
-        lvl = g * v[4] / 100;
-        if (lvl < 1200)
+    /* page 2: DLY scales the echoes, VERB the tail; TONE (- low-pass, + high-pass on the feedback) makes each echo
+     * lose a little more; page 3: PRE holds the tail back (ms) */
+    int32_t t, x, py = DY1, rise = 10 + v[2] * 80 / 100, len = 200 + v[3] * 40, g = 32767, first = -1, pre = v[8];
+    int32_t tl = 100 - (v[6] < 0 ? -v[6] : v[6]) / 5;                  /* TONE: what each pass keeps, % */
+    px_line(DX0, DY1 + 1, DX1, DY1 + 1, px_dim, 2);
+    for (x = DX0; x <= DX1; x++) {                                     /* the tail: a dim hatch under its edge */
+        int32_t ms = (x - DX0) * 2000 / DW - pre, e, y;
+        if (ms < 0) {
+            py = DY1;
+            continue;
+        }
+        e = ms < rise ? ms * 1000 / rise : 1000 - (ms - rise) * 1000 / len;
+        if (e <= 0)
             break;
-        n++;
-        if ((r - prev) * SP_RY / 1000 >= 3) {                          /* its ring (closer than 3 dots: merged); the */
-            for (a = 0; a <= 64; a++) {                                /* first solid, the later ones dotted */
-                int32_t rr = r + (jag && a < 64 ? (int32_t)(vz_rand() % (uint32_t)(jag + 1)) : 0);
-                int32_t xx = sp_x(rr, a), yy = sp_y(rr, a);
-                if (a)
-                    px_line(px0, py0, xx, yy, px_ink, k ? 2 : 1);
-                px0 = xx;
-                py0 = yy;
-            }
-            prev = r;
-        }
-        for (a = 0; a < bleed * 3; a++) {                              /* VERB: dots bled outward from it */
-            int32_t aa = (int32_t)(vz_rand() % 64u), d = 1 + (int32_t)(vz_rand() % (uint32_t)(bleed + 1));
-            px_dot(sp_x(r, aa) + px_sin(aa) * d / 1000, sp_y(r, aa) - px_cos(aa) * d / 1000, px_ink);
-        }
-        len = 1 + lvl * 3 / 26000;                                     /* the notch: 2 dots thick, as long as loud */
-        mid = !sh ? 0 : (k & 1) ? sh : 64 - sh;
-        for (a = (mid - len) * 4; a <= (mid + len) * 4; a++) {         /* (quarter steps: no gaps on wide rings) */
-            int32_t a0 = a >> 2, q = a & 3;
-            int32_t xx = sp_x(r, a0) + (sp_x(r, a0 + 1) - sp_x(r, a0)) * q / 4;
-            int32_t yy = sp_y(r, a0) + (sp_y(r, a0 + 1) - sp_y(r, a0)) * q / 4;
-            px_box(xx - 1, yy - 1, 2, 2, px_ink);
-        }
+        e = e * e / 1000 * v[5] / 100;
+        y = DY1 - e * DH / 1000;
+        if ((x & 1) == 0 && y < DY1)
+            px_line(x, y + 2, x, DY1, px_dim, 2);
+        if (x > DX0)
+            px_line(x - 1, py, x, y, px_ink, 1);
+        py = y;
     }
-    if (v[5])                                                          /* the tail: a dither over the disc */
-        for (y = 0; y <= 36; y++)
-            for (x = DX0; x <= DX1; x++) {
-                int32_t dx = (x - 60) * 1000 / SP_RX, dy = (y - 18) * 1000 / SP_RY, rho2 = dx * dx + dy * dy, p, h;
-                if (rho2 > 1000 * 1000)
-                    continue;
-                p = sp_tail(v, isqrt(rho2) * SP_W / 1000) * v[5] / 100 * 4 / 10;   /* 0..400 of 1000 */
-                h = (int32_t)(((uint32_t)x * 73856093u ^ (uint32_t)y * 19349663u) * 2654435761u >> 22) % 1000;
-                if (h < p)
-                    px_dot(x, y, px_ink);
-                else if (p > 250 && h < 2 * p - 250)                   /* loud and long: it eats into the rings */
-                    px_dot(x, y, px_bg);
-            }
-    px_box(59, 17, 3, 3, px_ink);                                      /* the dry hit */
-    px_dot(60, 18, px_bg);
-    {
-        char b[12] = "ECHO ";
-        fmt_int(b + 5, n);
-        vz_label(16, n ? b : "NO ECHO", f <= 1u || f == 4u || f == 7u);
+    px_line(DX0 + 1, DY1, DX0 + 1, DY0 + 1, px_ink, 1);                /* the dry hit */
+    vz_node(DX0 + 1, DY0 + 1, 1);
+    for (t = v[0]; t < 2000 && g > 1500; t += v[0]) {                  /* the echoes: stems with nodes */
+        int32_t h;
+        g = (t == v[0]) ? 26000 : g * v[1] / 100 * tl / 100;
+        x = DX0 + t * DW / 2000;
+        h = g * DH / 32767 * v[4] / 100;
+        if (first < 0)
+            first = x;
+        px_line(x, DY1, x, DY1 - h, px_ink, 1);
+        vz_node(x, DY1 - h, f <= 1u || f == 4u);
     }
-    vz_label(104, "TAIL", f == 2u || f == 3u || f == 5u || f == 8u);
     if (f >= 4u && f < 9u)
-        vz_ktag(118, DLBL - 1, &DEV_P[DEV_SPACE][f], v[f]);
+        vz_ktag(118, DY0 - 1, &DEV_P[DEV_SPACE][f], v[f]);
+    px_text(DX0, DLBL, PXF_3, "DRY", px_ink);
+    if (first >= DX0 + 20 && first < DX1 - 20)
+        vz_label(first + 2, f == 1u ? "FDBK" : "ECHO", f <= 1u || f == 4u);
+    vz_label(DX1 - 10, f == 2u ? "SIZE" : f == 3u ? "DEC" : "TAIL", (f >= 2u && f <= 3u) || f == 5u || f == 8u);
 }
 
 /* ------------------------------------------------------------- MODS --- */
