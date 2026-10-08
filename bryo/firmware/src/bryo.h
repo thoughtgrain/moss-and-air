@@ -28,6 +28,7 @@ typedef struct {
     uint8_t sel;                 /* the focused track 0..NTRK-1 */
     uint8_t keys_live;           /* 1: the white keys play the focused track (0 while SEL picks a track) */
     uint8_t rec;                 /* REC armed, a bit per track (the ISR records a track while its tape is ready) */
+    uint8_t keys_grain;          /* 1: the GRAIN page is up: on a TAPE track the white keys move GRAIN's cursor */
 } sys_t;
 static sys_t sys;
 

@@ -63,7 +63,7 @@ static const pdesc_t DEV_P[NDEV][NPK] = {
         {"PTCH", -24, 24, 0, F_ST}, {"SPRD", 0, 100, 30, F_PCT},
         /* 2: dry/wet, SPRAY (the jitter of where grains read), the window's contour (square .. smooth), the chance
          * a grain plays backwards */
-        {"WET", 0, 100, 100, F_PCT}, {"SPRY", 0, 100, 20, F_PCT},
+        {"WET", 0, 100, 0, F_PCT}, {"SPRY", 0, 100, 20, F_PCT},   /* (WET 0: off until it's turned up) */
         {"CONT", 0, 100, 50, F_PCT}, {"REV", 0, 100, 0, F_PCT},
         /* 3: WARP: how fast the read point moves through the loop (0 freezes it, - backwards); the order grains
          * fire in; their pitch held to a scale; a random pitch per grain, up to +-PRND semitones */

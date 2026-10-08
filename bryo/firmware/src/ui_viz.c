@@ -12,7 +12,8 @@
  *   TAPE       the whole tape's sound, large, lit inside the loop window (STRT, LEN, bracketed) with its 16 slices
  *              ticked under it; the playhead over it (stopped: where playing starts, moved by ROTA)
  *   GRAIN      the sound in TAPE's loop window, lit where grains read it (SIZE, scaled by PITCH), and one solid
- *              block per grain (RATE, placed by PATN) in a stereo lane under it (SPRD, up = left, down = right)
+ *              block per grain (RATE, placed by PATN) in a stereo lane under it (SPRD, up = left, down = right);
+ *              the cursor where grains start over it, FROZEN while the 0 key holds it
  *   RESONATOR  the response over 8 octaves: peaks on PTCH's partials (harmonics, or a scale's chord tones; a node on
  *              each, the root's filled and named), as sharp as DEC makes them, kept up top by TONE, shaped by the
  *              filter before them (dotted: CUT RES SLOP), blended with the dotted dry line by WET
@@ -219,6 +220,18 @@ static void viz_grain(const int16_t *v, uint32_t f)
             px_line(gx[g] + span, yy, gx[g] + span - 1 + jit, yy, px_ink, 2);
         }
         span = span0;
+    }
+    {   /* the cursor, where grains start: a triangle over the sound; FROZEN while the 0 key holds it */
+        tape_view_t tvw;
+        tape_view(sys.sel, &tvw);
+        if (tvw.len && len) {
+            int32_t cm = (int32_t)((uint32_t)(grain[sys.sel].cur >> 12) * 1000u / tvw.len), cx = DX0 + (cm - start) * gw / len;
+            if (cx >= DX0 && cx < DX0 + gw)
+                for (i = 0; i < 3; i++)
+                    px_box(cx - 2 + i, i, 5 - 2 * i, 1, px_ink);
+        }
+        if (grain_frozen)
+            px_tag(118 - px_text_w(PXF_3, "FROZEN") - 1, 0, PXF_3, "FROZEN", px_ink, px_bg);
     }
     fmt_int(b, n);
     str_cpy(b + str_len(b), " GRAINS", 8);
@@ -1027,6 +1040,8 @@ static uint32_t viz_sig(void)
     if (ui.kind == FOCUS_SLOT && tp[sys.sel].engine[ui.slot] == ME_FOLLOW)
         for (t = 0; t < NTRK; t++)
             h = (h ^ tape_ver[t]) * 16777619u;
+    if (ui.kind == FOCUS_DEV && ui.dev == DEV_GRAIN)                   /* GRAIN's cursor (to the dot), FROZEN */
+        h = (h ^ (uint32_t)((grain[sys.sel].cur >> 12) / 256 * 2 + grain_frozen)) * 16777619u;
     if (ui.kind == FOCUS_DEV && ui.dev == DEV_GRAIN)                   /* GRAIN draws TAPE's loop window too */
         h = (h ^ (uint32_t)(tp[sys.sel].dev[DEV_SRC][0] << 8 | tp[sys.sel].dev[DEV_SRC][1])) * 16777619u;
     return h + (ui.kind == FOCUS_SLOT ? tp[sys.sel].engine[ui.slot] * 65537u : 0u);

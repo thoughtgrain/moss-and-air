@@ -18,9 +18,9 @@ this repository). The loop window, speed, reverse and half speed work; the white
 REC records the other tracks onto the focused track's tape, with DUB for sound on sound; holding the POLY key clears
 a tape and holding SAVE undoes it. A track can also start with SYNTH or POLY instead (hold HOME, turn SELECT):
 SYNTH is a small subtractive synth, up to three voices; POLY plays any reel (or the track's own tape) across the
-keys, up to four notes, each with its own envelope and filter. REC prints either onto the track's tape. The
-devices after the source (GRAIN, RESONATOR, COLOR, SPACE) and the modulators don't make sound yet; that's phases 3
-to 7. Their knobs already carry the Torso S-4's names where they do the same job
+keys, up to four notes, each with its own envelope and filter. REC prints either onto the track's tape. GRAIN
+makes sound now: turn its WET up and it granulates the track's tape (the 0 black key held freezes it). RESONATOR,
+COLOR, SPACE and the modulators don't make sound yet; that's phases 4 to 7. Their knobs already carry the Torso S-4's names where they do the same job
 ([docs/s4-alignment.md](docs/s4-alignment.md)). Phases 1 and 2 are verified on the host only: nothing has been built
 for or run on an FM-1 yet. The plan, with what the hardware allows and the order of the work, is in
 [docs/bryo-architecture.md](docs/bryo-architecture.md).

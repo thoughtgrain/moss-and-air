@@ -151,7 +151,7 @@ Why:
 | SPACE delay | 65,536 | 4 tracks × 8,192 samples × 2 B (0.37 s at 22.05 kHz, or 0.74 s at half speed) |
 | SPACE reverb | 40,000 | 4 small reverbs, Felucca's ROOM structure run at 22.05 kHz |
 | Screen canvas | 5,460 (main RAM) | 2 bits a dot (1.6 KB) and two 4-row line buffers (3.8 KB); see "The screen as dots" |
-| GRAIN state | 4,096 | 4 × 64 slots × 16 B |
+| GRAIN | 19,552 | 4 tracks × 16 grains × 305 B (a 128-sample decoded window each; see "GRAIN, as built") |
 | USB audio in | 16,384 | ring buffer: 4,096 stereo frames × 4 B (93 ms) for drift and jitter |
 | SYNTH | 576 | 4 tracks × 3 voices of oscillator and filter state (.bss) |
 | POLY | 8,288 | 4 tracks × 4 voices × a 256-sample block reader (pool), plus 448 B of voice state (.bss) |
@@ -655,6 +655,61 @@ the SPACE delay can stay 16-bit; storing it in 8 bits (32 KB back) stays in rese
 **Tests:** the canvas clips at its edges, keeps 2 bits a dot and reaches the screen as 2 x 2 pixel dots in the
 right colours; the calibration, boot, update and crash screens are in the golden set.
 
+## GRAIN, as built (2026-10-08)
+
+GRAIN is the first device after the source to make sound (`grain.c`).
+
+**What it granulates: the track's tape**, inside TAPE's loop window (STRT, LEN). That's what its picture already
+drew, and what `controls.tsv` planned for the white keys on its page. I chose the tape over a live buffer of the
+source's output for memory: a live buffer is 22-33 KB a track at 22.05 kHz, and the tape is already there. It also
+means a SYNTH or POLY track granulates what you've printed onto its tape, under the live synth (WET blends them).
+
+**The cursor** is where grains start. It moves through the loop window at WARP's speed (100 %: the tape's own pace;
+0: still; below 0: backwards) while the transport plays or a key holds a slice, and wraps at the window's ends. On a
+TAPE track with the GRAIN page up, a white key moves the cursor to its slice and leaves the tape's head alone;
+stopped, grains play while the key is held. The 0 black key held freezes every track's cursor (PRD 2.3), and the
+GRAIN page tags it FROZEN.
+
+**A grain** starts around the cursor (SPRY: up to half the window either way), lasts SIZE, and reads at PTCH plus a
+random +-PRND semitones, held to SCAL's scale. REV is the share that plays backwards. CONT shapes the window, from
+square with 2 ms ends to a full Hann. SPRD places it in the stereo field, and its level is 1 / sqrt(the expected
+overlap). RATE (1..80 a second, square law) and PATN (EVEN, SWNG, CLST, RND) time the starts.
+
+**WET starts at 0**, so a track sounds as before until you turn it up. A non-zero default would put grains of the
+factory reel under every SYNTH and POLY track.
+
+**From GRAIN on, the track is stereo** (SPRD needs it). `track_rt[].last`, what the other tracks' REC hears, stays
+mono (the two sides' average).
+
+**Reading without a copy.** Each grain decodes the ADPCM itself into a 128-sample window, starting from the stored
+decoder state of the window's block. A forward grain slides its window and decodes each tape sample once. A
+backward grain re-decodes from its block's start at each refill, which is why the window is 128 samples rather
+than 64: half as many refills. 64 grains in all take 19.1 KB of the pool (it now holds 241.6 KB of 336).
+
+**Cost, measured** (instructions per output sample for the whole chain, four tracks, the host's 64-bit build under
+callgrind; a ballpark for the FM-1, not its cycles):
+
+| All four tracks | Per sample |
+| --- | ---: |
+| GRAIN off (tapes only) | 823 |
+| WET 100 at the defaults (about 2 grains sounding a track) | 1,149 |
+| WET 100, RATE 100, SIZE 500: 16 grains a track, the cap | 4,755 |
+| the same, every grain backwards | 6,099 |
+
+The first version cost 9,760 at the cap. A forward grain re-decoded its whole block every time it left its window,
+and the window's shape was a table read per sample. Now the window slides forward, the envelope is taken once a
+block and ramped, and the grain's state sits in locals for the block. The rest is the decoding itself: 64 grains read
+32 tape samples per output sample between them.
+
+**Shedding** takes grains first: two off the cap for every track (down to 4), one back after a second without
+shedding. A grain due while all the allowed ones sound is skipped, not stolen, so nothing cuts off mid-grain. Whether
+16 a track is the right cap needs the FM-1: the table above is the case where it matters.
+
+**Tests** (`test_grain`): a grain's decoder against the tape's reader, both ways, over block boundaries; one grain's
+output sample for sample; pitch inside a grain (440.2 Hz at PTCH 0, 880.2 at +12, 440.2 backwards); WET 0 changes
+nothing; no grains while stopped; SPRD 0 centred, 100 spread; the cap and shedding; WARP 100, -100 and 0; the 0 key's
+freeze; SCAL MAJ with PRND 12; the GRAIN page's keys; an empty tape.
+
 ## Build order
 
 Each phase ends in something you can flash and hear or see, and each is its own commit series.
@@ -664,7 +719,7 @@ Each phase ends in something you can flash and hear or see, and each is its own 
 | 1. Skeleton (**done**, host-verified) | `bryo.c` boots on the kept hardware layer; the old app code is removed; silence plus a test tone; the header and an empty strip; install, UBOOT and calibration still work | it installs from the web installer and returns to stock |
 | 2. TAPE + reels (**done**, host-verified; see "Phase 2, as built") | tapes play factory reels; the loop window, speed, reverse, half speed, FADE; slices on the white keys; REC and overdub (resampling the other tracks); clear and undo | you can load, slice, record and overdub a loop |
 | 3. USB audio in + SYNTH + POLY (SYNTH, POLY and source_t **done**, host-verified; see "SYNTH, as built" and "POLY, as built") | the source_t interface; the UAC OUT endpoint, drift handling, INPUT = USB; the SYNTH source; the POLY source (voices with their own envelope and filter, three HOME pages) | you can record your computer, and play the synth and samples onto a tape |
-| 3b. GRAIN | the scheduler, the sounding cap, FREEZE (key 0) | grains run on 4 tracks inside the budget |
+| 3b. GRAIN (**done**, host-verified; see "GRAIN, as built") | the scheduler, the sounding cap, FREEZE (key 0) | grains run on 4 tracks inside the budget |
 | 4. RESONATOR | strings, chromatic keys, OCT shifts | tuned feedback chords from the keys |
 | 5. COLOR + SPACE | drive, crush, noise; delay and reverb | the full chain on 4 tracks inside the budget |
 | 6. Mixer + routing | GLO mixer, filters, compressor; ALGORITHM routes track to tape | track-to-tape overdub between tracks |

@@ -71,6 +71,7 @@ static void ui_redraw(void);
 #include "../firmware/src/synth.c"
 #include "../firmware/src/poly.c"
 #include "../firmware/src/source.c"
+#include "../firmware/src/grain.c"
 #include "../firmware/src/chain.c"
 #include "../firmware/src/icons.c"
 #include "../firmware/src/panel.c"
@@ -369,10 +370,10 @@ static void test_input(void)
     check("EDIT from elsewhere: GRAIN, page 1", ui.dev == DEV_GRAIN && ui.page == 0u);
     press(B_EDIT);
     check("..again: GRAIN's page 2", ui.dev == DEV_GRAIN && ui.page == 1u);
-    host_enc[panel.enc[EN_K1]] = -30;
+    host_enc[panel.enc[EN_K1]] = 30;
     ui_input();
-    check("..whose KNOB 1 is WET (100 -> 70), not SIZE", tp[0].dev[DEV_GRAIN][4] == 70 && tp[0].dev[DEV_GRAIN][0] == 80);
-    tp[0].dev[DEV_GRAIN][4] = 100;
+    check("..whose KNOB 1 is WET (0 -> 30), not SIZE", tp[0].dev[DEV_GRAIN][4] == 30 && tp[0].dev[DEV_GRAIN][0] == 80);
+    tp[0].dev[DEV_GRAIN][4] = 0;
     press(B_EDIT);
     check("..again: GRAIN's page 3 (WARP PATN SCAL PRND)", ui.dev == DEV_GRAIN && ui.page == 2u &&
           !strcmp(dev_p(0, DEV_GRAIN)[8].label, "WARP"));
@@ -647,7 +648,8 @@ static void screens_in(const char *pal)
     turn(2, 7);
     turn(3, 60);
     shot(pal, "grain_busy");
-    press(B_EDIT);                                       /* GRAIN 2: SPRY 60, CONT 100, REV 40 */
+    press(B_EDIT);                                       /* GRAIN 2: WET 80, SPRY 60, CONT 100, REV 40 */
+    turn(0, 80);
     turn(1, 40);
     turn(2, 50);
     turn(3, 40);
@@ -658,6 +660,18 @@ static void screens_in(const char *pal)
     turn(2, 2);
     turn(3, 5);
     shot(pal, "grain3");
+    {   /* the 0 black key held while playing: the cursors frozen */
+        uint32_t u;
+        for (u = 0; u < 27u; u++)
+            if (KEY_BLACK[u] == BK_ZERO)
+                fm1_in.notes = 1u << u;
+        sys.playing = 1;
+        render(40, 0);
+        shot(pal, "grain_frozen");
+        fm1_in.notes = 0;
+        sys.playing = 0;
+        render(400, 0);
+    }
     press(B_EDIT);
     shot(pal, "resonator");
     turn(1, 35);                                         /* DEC 95: sharp peaks */
@@ -1570,6 +1584,228 @@ static void test_poly(void)
     uslot_names();
 }
 
+/* ---------------------------------------------------------------- GRAIN --- */
+static uint32_t zero_key_bit(void)
+{
+    uint32_t n;
+    for (n = 0; n < 27u; n++)
+        if (KEY_BLACK[n] == BK_ZERO)
+            return 1u << n;
+    return 0;
+}
+
+static void test_grain(void)
+{
+    enum { NB = 690 };                                   /* 0.5 s */
+    static int32_t s[NB * CTL];
+    int16_t *p;
+    char b[120];
+    uint32_t i, t, ok, maxc = 0;
+    int32_t c0;
+    power_on();
+    make_sine_reel(0, 440.0, 200);                       /* user reel 1: 2.3 s of A4 (440 Hz) */
+    tp[0].dev[DEV_SRC][TK_REEL] = (int16_t)(NREEL + 1u);
+    p = tp[0].dev[DEV_GRAIN];
+    {   /* a grain's own decoder against the tape's block reader, both ways */
+        tape_view_t v;
+        tape_rd_t rd = {0};
+        grain_t g;
+        int32_t k, pos;
+        tape_view(0, &v);
+        memset(&g, 0, sizeof g);
+        g.wlo = -1;
+        g.inc = 4096;
+        for (k = 0, ok = 1, pos = 300; k < 3000; k++, pos += 3)  /* forward, over block boundaries */
+            ok &= gr_read(&g, &v, pos << 12) == tape_at(&v, &rd, pos);
+        g.wlo = -1;
+        g.inc = -4096;
+        for (k = 0, pos = 20000; k < 3000; k++, pos -= 5)        /* backwards */
+            ok &= gr_read(&g, &v, pos << 12) == tape_at(&v, &rd, pos);
+        check("a grain decodes the tape itself, forwards and backwards, exactly as the tape's reader does", ok);
+    }
+    for (t = 1; t < NTRK; t++)                           /* (only track 1 sounds) */
+        track[t].mute = 1;
+    sys.playing = 1;
+    render(NB, s);
+    check("WET 0 (the default): no grains, the track as it was", grain_count(0) == 0 && peak_of(s, NB * CTL) > 2000);
+    p[4] = 100;                                          /* WET 100: grains only */
+    sys.playing = 0;
+    render(NB, 0);
+    check("stopped, no key: no grains start", grain_count(0) == 0);
+    {   /* one grain's output, sample for sample: the tape at its read position, through its window and its pan */
+        static int32_t dry[CTL], gl[CTL], gr[CTL];
+        tape_view_t v;
+        tape_rd_t rd = {0};
+        uint32_t blk, bad = 0, n = 0;
+        p[1] = 0;                                        /* (one grain at a time, 500 ms, from the cursor) */
+        p[0] = 500;
+        p[5] = 0;
+        grain[0].used = 0;
+        grain[0].wait = 0;
+        grain[0].cur = 0;
+        sys.playing = 1;
+        tape_view(0, &v);
+        grain_block(0, dry, 0, 0, gl, gr, CTL);
+        for (blk = 0; blk < 600u; blk++) {
+            grain_t g = grain[0].g[0];
+            grain_block(0, dry, 0, 0, gl, gr, CTL);
+            int32_t m = (int32_t)(g.left < CTL ? g.left : CTL), e0 = gr_env(&g, g.len - g.left);
+            int32_t e1 = gr_env(&g, g.len - g.left + (uint32_t)m);
+            for (i = 0; i < (uint32_t)m; i++, n++) {     /* (the window: its block ends, ramped across the block) */
+                int32_t k = g.pos >> 12, f = g.pos & 4095, a = tape_at(&v, &rd, k), bb = tape_at(&v, &rd, k + 1), x;
+                int32_t e = ((e0 << 5) + (int32_t)i * (((e1 - e0) * 32) >> CTL_LOG2)) >> 5;
+                x = (a + (((bb - a) * f) >> 12)) * e >> 15;
+                bad += ((x * (g.gl * 100 / 100)) >> 15) != gl[i] || ((x * (g.gr * 100 / 100)) >> 15) != gr[i];
+                g.pos += g.inc;
+            }
+            g.left -= (uint32_t)m;
+        }
+        check("one grain, sample for sample: the tape where it reads, through its window and pan", bad == 0 && n > 15000);
+    }
+    sys.playing = 0;                                     /* pitch: one grain at a time, measured inside it */
+    render(NB * 2, 0);
+    {
+        static const int16_t ST[3] = {0, 12, 0};
+        double got[3];
+        uint32_t k;
+        p[3] = 0;
+        for (k = 0; k < 3; k++) {
+            p[2] = ST[k];
+            p[7] = k == 2 ? 100 : 0;                     /* (the third backwards) */
+            grain[0].wait = 0;
+            grain[0].cur = 0;
+            sys.playing = 1;
+            render(600, s);                              /* 0.44 s of the first 0.5 s grain */
+            got[k] = buf_hz(s, 40 * CTL, 600 * CTL);
+            sys.playing = 0;
+            render(NB * 2, 0);
+        }
+        snprintf(b, sizeof b, "a grain's pitch: PTCH 0 %.1f Hz, PTCH +12 %.1f, backwards %.1f (440, 880, 440)", got[0],
+                 got[1], got[2]);
+        check(b, fabs(got[0] - 440) < 2 && fabs(got[1] - 880) < 3 && fabs(got[2] - 440) < 2);
+        p[2] = 0;
+        p[7] = 0;
+        p[3] = 30;
+        p[5] = 20;
+    }
+    p[1] = 40;
+    p[0] = 80;
+    sys.playing = 1;
+    render(NB, s);
+    check("WET 100, playing, the defaults: grains sound", grain_count(0) > 0 && peak_of(s, NB * CTL) > 1000);
+
+    {   /* SPRD, at GRAIN's own output (the master's DC blocker remembers each side for seconds) */
+        static int32_t dry[CTL], gl[CTL], gr[CTL];
+        uint32_t diff0 = 0, diff1 = 0, j;
+        p[3] = 0;
+        render(NB, 0);                                   /* (the grains placed before it finish) */
+        for (i = 0; i < NB; i++) {
+            grain_block(0, dry, 0, 0, gl, gr, CTL);
+            for (j = 0; j < CTL; j++)
+                diff0 += gl[j] != gr[j];
+        }
+        p[3] = 100;
+        for (i = 0; i < NB; i++) {
+            grain_block(0, dry, 0, 0, gl, gr, CTL);
+            for (j = 0; j < CTL; j++)
+                diff1 += gl[j] != gr[j];
+        }
+        check("SPRD 0: every grain in the centre (left = right); SPRD 100: placed across the stereo field",
+              diff0 == 0 && diff1 > NB * CTL / 2);
+        p[3] = 30;
+    }
+
+    p[1] = 100;                                          /* RATE 100, SIZE 500: as many as the cap allows */
+    p[0] = 500;
+    for (i = 0; i < NB; i++) {
+        render(1, 0);
+        maxc = grain_count(0) > maxc ? grain_count(0) : maxc;
+    }
+    render(NB, s);
+    check("RATE 100, SIZE 500: grains up to the cap of 16, never more, under full scale",
+          maxc == GR_CAP && peak_of(s, NB * CTL) <= 32767);
+    grain_shed();
+    for (i = 0, maxc = 0; i < 1300u; i++) {
+        render(1, 0);
+        maxc = grain_count(0) > maxc ? grain_count(0) : maxc;
+    }
+    check("shedding lowers the cap (16 -> 14): the grains follow it down", grain_cap == 14u && maxc <= 16u &&
+          grain_count(0) <= 14u);
+    render(200, 0);
+    check("..and a second without shedding gives one back", grain_cap == 15u);
+    grain_cap = GR_CAP;
+    p[1] = 40;
+    p[0] = 80;
+
+    c0 = grain[0].cur;                                   /* WARP 100: the cursor runs at the tape's pace */
+    render(100, 0);
+    check("WARP 100: the cursor moves through the loop at the tape's pace",
+          abs(((grain[0].cur - c0) >> 12) - 100 * CTL / 2) < 4);
+    fm1_in.notes = zero_key_bit();                       /* the 0 key held: frozen */
+    c0 = grain[0].cur;
+    render(100, 0);
+    check("the 0 black key held: every cursor frozen", grain[0].cur == c0 && grain_count(0) > 0);
+    fm1_in.notes = 0;
+    p[8] = -100;
+    c0 = grain[0].cur;
+    render(10, 0);
+    check("WARP -100: the cursor runs backwards", ((c0 - grain[0].cur) >> 12) == 10 * CTL / 2);
+    p[8] = 0;
+    c0 = grain[0].cur;
+    render(10, 0);
+    check("WARP 0: still", grain[0].cur == c0);
+    p[8] = 100;
+
+    p[10] = 2;                                           /* SCAL MAJ, PRND 12: every pitch on the major scale */
+    p[11] = 12;
+    for (i = 0, ok = 1; i < NB; i++) {
+        uint32_t j;
+        render(1, 0);
+        for (j = 0; j < GR_CAP; j++)
+            if ((grain[0].used >> j) & 1u) {
+                int32_t st = grain[0].g[j].st16;
+                ok &= st % 16 == 0 && ((0xAB5u >> (uint32_t)(((st / 16) % 12 + 12) % 12)) & 1u) && abs(st) <= 12 * 16;
+            }
+    }
+    check("SCAL MAJ, PRND 12: every grain's pitch a major-scale semitone within an octave", ok);
+    p[10] = 0;
+    p[11] = 0;
+
+    sys.playing = 0;                                     /* the GRAIN page, stopped: a key plays its slice */
+    render(NB, 0);
+    press(B_EDIT);
+    ui_input();
+    check("the GRAIN page up: the keys go to GRAIN", sys.keys_grain == 1);
+    fm1_in.notes = note_bit_of_white(4);
+    render(4, 0);
+    {
+        tape_view_t v;
+        int32_t ls, ll;
+        tape_view(0, &v);
+        tape_window(0, v.len, &ls, &ll);
+        check("..white key 5: the cursor to slice 5, grains while it's held, the tape's head left alone",
+              abs((grain[0].cur >> 12) - (ls + ll * 4 / 16)) <= 4 * CTL / 2 && grain_count(0) > 0 &&
+              !tape_rt[0].running);   /* (WARP moves it on from there) */
+    }
+    fm1_in.notes = 0;
+    render(NB, 0);
+    check("..let go: the grains finish, no new ones", grain_count(0) == 0);
+    press(B_HOME);
+    ui_input();
+    check("another page: the keys go back to the source", sys.keys_grain == 0);
+
+    tp[0].dev[DEV_SRC][TK_REEL] = (int16_t)(NREEL + 2u); /* an empty user reel: nothing to granulate */
+    sys.playing = 1;
+    render(NB, 0);
+    check("nothing on the tape: no grains", grain_count(0) == 0);
+    sys.playing = 0;
+    for (t = 0; t < NTRK; t++)
+        track[t].mute = 0;
+    render(NB, 0);
+    memset(host_nor, 0xFF, sizeof host_nor);
+    uslot_names();
+}
+
 /* the tape's edges: an empty user reel, a loop shorter than a block, the seam running backwards */
 static void test_tape_edges(void)
 {
@@ -1921,6 +2157,7 @@ int main(int argc, char **argv)
     test_controls_more();
     test_synth();
     test_poly();
+    test_grain();
     test_input();
     test_settings();
     palette_set(UI_GREY_INDEX);                          /* (the screens are one ink now, whatever the palette) */

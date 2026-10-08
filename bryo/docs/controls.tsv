@@ -53,9 +53,9 @@ page	BLACK_PIT	press	global pitch shift down (unmuted tracks)	planned	3	PRD 2.3
 page	BLACK_GLO	press	global pitch shift up (unmuted tracks)	planned	3	PRD 2.3
 page	BLACK_MONO	hold	held 0.5 s (countdown ring): clear the focused track's modulation routing; SAVE held undoes	planned	7	PRD 2.3
 page	BLACK_POLY	hold	held 0.5 s: clear the focused track's tape (a reel: the track goes back to its own tape, cleared); SAVE held undoes	now	-	PRD 2.3
-page	BLACK_ZERO	hold	momentary global granular freeze while held	planned	3	PRD 2.3
+page	BLACK_ZERO	hold	momentary global granular freeze while held: every track's GRAIN cursor stops (FROZEN on the GRAIN page)	now	-	PRD 2.3
 page:tape	WHITE_1-16	press	play from slice n of the loop (finger drumming, stutter)	now	-	PRD 2.3
-page:grain	WHITE_1-16	press	play from slice n of the loop, through the grains	planned	3	PRD 2.3
+page:grain	WHITE_1-16	press	on a TAPE track: GRAIN's cursor to slice n of the loop (the tape's head stays); stopped, grains while the key is held	now	-	PRD 2.3
 page	BLACK_POLY	release	(the key, not the POLY source engine) letting go before 0.5 s cancels the clear	now	-	change
 page:resonator	WHITE_1-16	press	chromatic notes for the resonator (tuned feedback chords); OCT-/OCT+ shift	planned	4	PRD 2.3
 page:slot	WHITE_1-16	press	on a SEQ slot: the 16 steps (OCT-/OCT+: steps 17-32)	planned	7	PRD 2.3

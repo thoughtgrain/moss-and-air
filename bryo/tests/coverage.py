@@ -19,7 +19,7 @@ import sys
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 OUT = os.path.join(ROOT, "build", "cov")
 GEN = os.path.join(ROOT, "build", "gen")
-FILES = ["tape.c", "synth.c", "poly.c", "reel.c", "vdisk.c", "msc.c", "usb.c", "chain.c", "param.c", "ui.c", "ui_input.c", "ui_px.c",
+FILES = ["tape.c", "synth.c", "poly.c", "grain.c", "reel.c", "vdisk.c", "msc.c", "usb.c", "chain.c", "param.c", "ui.c", "ui_input.c", "ui_px.c",
          "ui_viz.c"]
 TESTS = [   # name, source, flags, run args
     ("bryo_host", "tests/bryo_host.c", ["-O0", "-I" + GEN, "-Itests"], [os.path.join(OUT, "ui")]),
