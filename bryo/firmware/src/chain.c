@@ -4,8 +4,8 @@
  * Each track starts with its source (source.c): its TAPE (tape.c: the loop plays while the transport runs, the
  * white keys play its 16 slices), SYNTH or POLY (the white keys play notes). REC records onto the tape either way.
  * Then GRAIN (grain.c: grains of a live buffer of the source, or of the tape, blended by WET), from which the track
- * is stereo. RESONATOR,
- * COLOR and SPACE arrive in the next phases; chain_block() keeps the shape they slot into.
+ * is stereo. Then RESONATOR (reso.c: four tuned strings the track rings through). COLOR and SPACE arrive in the next
+ * phases; chain_block() keeps the shape they slot into.
  *
  * What REC records is each track's REC IN (param.c RIN_*, the routing view): by default (AUTO) the other three
  * tracks' mix on a TAPE track and its own source on a SYNTH or POLY track; or the others' mix, one chosen track, or
@@ -95,7 +95,7 @@ static void chain_block(int32_t *out, uint32_t n)
         track_rt_t *rt = &track_rt[t];
         int32_t s[CTL], gl[CTL], gr[CTL], g = c->mute ? 0 : (int32_t)LEVEL_Q12[c->level & 127u], pk = rt->peak;
         int32_t a0 = rt->act, a1 = clamp(a0 + (t < ntrk ? 1 : -1) * 372 * (int32_t)n, 0, 32767);
-        uint32_t k = t == sel ? keys : 0u, gk = 0;
+        uint32_t k = t == sel ? keys : 0u, gk = 0, rk = 0;
         rt->act = a1;
         if (!a0 && !a1) {                               /* parked (TRACKS): silent, not rendered */
             grain_kill(t);                              /* (its grain slots go to the tracks still on) */
@@ -108,8 +108,15 @@ static void chain_block(int32_t *out, uint32_t n)
             gk = k;
             k = 0;
         }
+        if (k && sys.keys_reso) {                       /* the RESONATOR page: the keys set its root; on a TAPE track
+                                                         * they pluck it, on SYNTH or POLY they still play the source */
+            rk = k;
+            if (tp[t].src == SRC_TAPE)
+                k = 0;
+        }
         chain_source(t, k, (sys.rec >> t) & 1u ? rin[t] : 0, s, n);
         grain_block(t, s, gk, (int)zero, gl, gr, n);    /* from here the track is stereo */
+        reso_block(t, gl, gr, rk, tp[t].src == SRC_TAPE, n);
         if (a0 != 32767 || a1 != 32767)                  /* switching on or off: the 2 ms ramp */
             for (i = 0; i < n; i++) {
                 int32_t a = a0 + (((a1 - a0) * (int32_t)i) >> CTL_LOG2);
@@ -129,15 +136,19 @@ static void chain_block(int32_t *out, uint32_t n)
         rt->peak = pk - (pk >> 6);                    /* ~45 ms decay at one block per 0.73 ms */
     }
     grain_recover();
+    reso_recover();
     master_block(l, r, out, n);
 }
 
-/* audio ISR, the half after two overloaded halves: take load away. GRAIN's sounding cap goes first (grain.c); the
- * tape is never shed; RESONATOR's strings will be next (phase 4). */
+/* audio ISR, the half after two overloaded halves: take load away. GRAIN's sounding cap goes first (grain.c), down
+ * to half; then RESONATOR's strings (reso.c), down to two; the tape is never shed. */
 static void chain_shed(void)
 {
     chain_shed_count++;
-    grain_shed();
+    if (grain_cap > 4u)                                 /* grains first, then strings */
+        grain_shed();
+    else
+        reso_shed();
 }
 
 /* main loop: TRACKS set to n (GLO held + SELECT). The tracks above it park: they fade out in 2 ms and stop
@@ -163,6 +174,7 @@ static void chain_poll(void)
 {
     tape_poll();
     grain_poll();
+    reso_poll();
 }
 
 /* all sound off now (an update starting, a panic): the keys stop and the transport stops (the heads fade out) */

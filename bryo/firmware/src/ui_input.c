@@ -347,6 +347,7 @@ static void ui_input(void)
         glo_up();
     sys.keys_live = (uint8_t)!ui.glo_held;            /* under GLO the white keys pick, they don't play */
     sys.keys_grain = (uint8_t)(ui.view == VIEW_PAGE && ui.kind == FOCUS_DEV && ui.dev == DEV_GRAIN);
+    sys.keys_reso = (uint8_t)(ui.view == VIEW_PAGE && ui.kind == FOCUS_DEV && ui.dev == DEV_RESO);
     for (k = 0; k < 27u; k++)
         if ((notes >> k) & 1u) {
             if (KEY_BLACK[k] != KEY_NONE) {

@@ -149,7 +149,7 @@ Why:
 | Use | Bytes | How it's sized |
 | --- | ---: | --- |
 | Shared sound memory | 270,336 pool + 50,688 main RAM | 152 chunks of tape-format sound (28.2 s in all), handed out by usage: tapes as long as what's on them, GRAIN's live buffers while GRAIN is on; RESONATOR and SPACE will draw from it too. See "Memory by usage" |
-| RESONATOR | 25,600 (planned) | 4 tracks × 4 strings × 800 samples × 2 B (lowest note A1, 55 Hz), from the shared memory while it's on |
+| RESONATOR | 4 chunks a track, while on | 4 strings × 1,056 samples × 2 B (lowest string F1, 43.7 Hz), from the shared memory while WET is up |
 | SPACE delay | 65,536 (planned) | 4 tracks × 8,192 samples × 2 B, from the shared memory while it's on (8-bit when memory is short) |
 | SPACE reverb | 40,000 (planned) | 4 small reverbs, Felucca's ROOM structure run at 22.05 kHz |
 | Screen canvas | 5,460 (main RAM) | 2 bits a dot (1.6 KB) and two 4-row line buffers (3.8 KB); see "The screen as dots" |
@@ -186,7 +186,7 @@ with its mixes. My target for all four tracks, everything on, is **at most 2,000
 | --- | ---: | --- |
 | TAPE read | 20 | ADPCM decode at 22.05 kHz, linear interpolation to 44.1 kHz |
 | GRAIN | 240 | 8 sounding grains × about 30 (decoding, window ramp, interpolation, pan), plus about 100 recording its buffer (measured: see "GRAIN, as built") |
-| RESONATOR | 60 | 4 strings |
+| RESONATOR | 60 | 4 strings (measured nearer 240 a track on the host: see "RESONATOR, as built") |
 | COLOR | 30 | drive table, crush, follower plus noise |
 | SPACE | 80 | delay plus reverb at 22.05 kHz |
 | Modulators | 10 | control rate (every 32 samples), not per sample |
@@ -771,6 +771,59 @@ halves it a pass; freeze holds the buffer while grains loop it, and the loop's p
 cursors, a key's spot and OFST taking over again; SYNTH played with the transport stopped, recorded and granulated;
 16 grains with TRACKS 2, 16-8-8 with 3; a buffer taking from the longest tape when nothing is free.
 
+## RESONATOR, as built (2026-10-08)
+
+RESONATOR comes after GRAIN (`reso.c`): four tuned strings the track rings through, the S-4's RING with the PRD's
+strings. Its picture was drawn before it made sound, with the mappings written next to it, so I built the strings to
+those mappings: what the panel draws is what you hear.
+
+**A string** is a Karplus-Strong loop: a delay line one period long, a one-pole low-pass inside the loop, and a
+loop gain. TONE is the low-pass (0 dark, 100 bright, nothing taken off). DEC is the ring time to -60 dB, from 80 ms
+at 0 to 20 s at 100, and the loop gain comes from it per string, so a low string and a high one ring for the same
+time. The low-pass delays the loop a little, which would pull every string flat, so the delay line is shortened by
+exactly that: A3 measures 220.0 Hz.
+
+**The four strings** sit on the first four partials SCAL keeps above the root, the same table the picture draws from:
+
+| SCAL | Strings above the root |
+| --- | --- |
+| HARM | harmonics 1, 2, 3, 4 (each string adds its own overtones, so the whole series rings) |
+| MAJ | root, major third, fifth, octave |
+| MIN | root, minor third, fifth, octave |
+| PEN | root, second, third, fifth |
+
+**What rings them** is the track's sound after GRAIN, through a filter first: CUT, RES and SLOP (low-, band- or
+high-pass) on the same state-variable filter POLY uses. The filter is skipped while it's open, so it costs nothing
+until you turn it. How much of the sound goes in falls as DEC rises: a long ring builds up louder from the same input,
+and this keeps it from building without bound (the loop clamps besides). WET blends the strings with the track,
+ramped across each block. The strings sit across the stereo field, 1 and 3 left, 2 and 4 right, two to one.
+
+**The keys on the RESONATOR page** set the root: a semitone a key from C of the track's octave, so OCT-/OCT+ shift
+it, and it holds until PTCH is turned again (the way GRAIN's keys hold a spot until OFST is turned). On a TAPE track
+a key also plucks the strings, a burst of noise one period long, softened by TONE. That's the PRD's sound from
+nothing: a blank tape, RESONATOR and REC. On a SYNTH or POLY track the keys keep playing the source and the strings
+take its notes as their root, so the resonance follows what you play. The picture shows a key's root as PTCH's.
+
+**Memory**: a string's delay line is a chunk of the shared memory (1,056 samples, so the lowest string is F1,
+43.7 Hz), four a track, taken while WET is above 0 on a track in use and given back otherwise, like GRAIN's buffer.
+
+**Cost, measured** (host instructions per output sample, the whole chain, four tracks): the reels alone 873;
+RESONATOR at WET 60 on all four (16 strings) 1,818, so about 950 for the strings, around 50 a string with its share
+of the blend. My budget said 60 a track; it's nearer 240. The first version cost 1,160: a division per sample in the
+blend, the input's share worked out per string, and each string summed into both sides; now the blend is Q15, the
+share is worked out once per track, and the strings are summed once per side. With GRAIN at its cap too: 4,416. That
+pair is the number for the FM-1 to settle.
+
+**Shedding** takes strings after grains: once GRAIN's allowance is down to half, each shed takes a string (down to
+two), and a second without one gives a string back.
+
+**Tests** (`test_reso`): no strings and no memory at WET 0; four chunks at WET up; a key on a TAPE track plucks at
+its note (A3 at 220.0 Hz, measured by autocorrelation so the partials don't fool it); DEC rings longer as it rises;
+SCAL MAJ puts the strings on the third and fifth; turning PTCH takes the root back; a reel through DEC 100 and TONE
+100 rings loud and never past full scale; on a SYNTH track the keys play the synth and the strings follow; shedding
+takes a string and gives it back; a parked track holds no strings; WET 0 gives the chunks back. And
+`tests/checkpoint_sim.sh` renders and measures RESONATOR on all four tracks (runs 11 and 12).
+
 ## Memory by usage, TRACKS and REC IN (2026-10-08)
 
 Until now every track had a 36 KB tape whether it used it or not, and the plan reserved a delay and a reverb per
@@ -850,7 +903,7 @@ Each phase ends in something you can flash and hear or see, and each is its own 
 | 3. USB audio in + SYNTH + POLY (SYNTH, POLY and source_t **done**, host-verified; see "SYNTH, as built" and "POLY, as built") | the source_t interface; the UAC OUT endpoint, drift handling, INPUT = USB; the SYNTH source; the POLY source (voices with their own envelope and filter, three HOME pages) | you can record your computer, and play the synth and samples onto a tape |
 | 3b. GRAIN (**done**, host-verified; see "GRAIN, as built") | the scheduler, the sounding cap, FREEZE (key 0); the live buffer, SCAN, FDBK | grains run on 4 tracks inside the budget |
 | 3c. Memory by usage (**done**, host-verified; see "Memory by usage, TRACKS and REC IN") | the shared chunks, growing tapes, TRACKS, REC IN, long reels | memory follows what you use |
-| 4. RESONATOR | strings, chromatic keys, OCT shifts | tuned feedback chords from the keys |
+| 4. RESONATOR (**done**, host-verified; see "RESONATOR, as built") | strings, chromatic keys, OCT shifts | tuned feedback chords from the keys |
 | 5. COLOR + SPACE | drive, crush, noise; delay and reverb | the full chain on 4 tracks inside the budget |
 | 6. Mixer + routing (routing **done** early: REC IN) | GLO mixer, filters, compressor | the mixer's DSP |
 | 7. Modulation | the 4 engines, hold-and-turn depth, assigning engines, p-locks | the PRD's §4 workflow end to end |

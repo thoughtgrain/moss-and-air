@@ -178,6 +178,23 @@ static double run(int n, char *say, size_t sz)
                  grain_count(0));
         return 8;
     }
+    case 11: case 12: {                                  /* RESONATOR on all four (12: with GRAIN at its cap too) */
+        uint32_t t;
+        for (t = 0; t < NTRK; t++) {
+            tp[t].dev[DEV_RESO][RP_WET] = 60;
+            tp[t].dev[DEV_RESO][RP_PTCH] = (int16_t)(40 + 5 * t);
+            tp[t].dev[DEV_RESO][RP_SCAL] = (int16_t)(t & 1u ? 1 : 0);
+        }
+        if (n == 12) {
+            all_grain(GP_WET, 100);
+            all_grain(GP_RATE, 100);
+            all_grain(GP_SIZE, 500);
+        }
+        play(6);
+        snprintf(say, sz, "RESONATOR WET 60 on all four (HARM and MAJ, four roots)%s: %u strings, %u grains",
+                 n == 12 ? " with GRAIN at the cap" : "", reso[0].nch + reso[1].nch + reso[2].nch + reso[3].nch, sounding());
+        return 6;
+    }
     default: {                                           /* a 20 s WAV over TAPE3.WAV while the reels play */
         static uint8_t w[20 * 22050 * 2 + 4096];
         uint32_t len = make_wav(w, 22050, 1, 16, 1, 22050 * 20, 330.0), k, lba = VD_DATA + 3000u * VD_SPC;
@@ -405,7 +422,7 @@ int main(int argc, char **argv)
         int n;
         wav_cap = 23u * 44100u * 2u;
         wav_buf = malloc(wav_cap * sizeof *wav_buf);
-        for (n = 1; n <= 10; n++) {
+        for (n = 1; n <= 12; n++) {
             char path[512];
             wav_n = wav_clip = 0;
             run(n, say, sizeof say);

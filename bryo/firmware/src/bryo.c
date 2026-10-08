@@ -73,6 +73,7 @@ static void ui_redraw(void);
 #include "poly.c"                /* POLY: a sound across the keys */
 #include "source.c"              /* the source engines a track starts with */
 #include "grain.c"               /* GRAIN: grains of the track's tape */
+#include "reso.c"                /* RESONATOR: four tuned strings */
 #include "chain.c"               /* the four tracks, rendered per control block */
 
 /* ------------------------------------------------------------- I/O --- */

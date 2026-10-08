@@ -1090,7 +1090,7 @@ static int32_t vz_chunk_tenths(uint32_t n) { return (int32_t)(n * TAPE_CHS * 10u
 
 /* The mixer's levels page: what each track holds of the shared memory, under its fader: its tape's seconds and,
  * when GRAIN is on, its live buffer's (GR); a parked track says OFF, its tape (kept, taken first) dim. Then the
- * memory as one ribbon (each track's tape solid, its GRAIN buffer dim, what's free dotted), and under it TRACKS and
+ * memory as one ribbon (each track's tape solid, its GRAIN buffer and strings dim, what's free dotted), and under it TRACKS and
  * the time still free. SELECT sets TRACKS here. */
 static void viz_memory(void)
 {
@@ -1118,7 +1118,7 @@ static void viz_memory(void)
     }
     px_line(DX0, 27, DX1, 27, px_dim, 2);              /* the ribbon: free memory dotted under the rest */
     for (t = 0; t < NTRK; t++) {
-        uint32_t nt = mem_count(MEM_TAPE + t), ng = mem_count(MEM_GRAIN + t), w0 = x0;
+        uint32_t nt = mem_count(MEM_TAPE + t), ng = mem_count(MEM_GRAIN + t) + mem_count(MEM_RESO + t), w0 = x0;
         uint32_t wt = nt * (uint32_t)DW / MEM_NC, wg = ng * (uint32_t)DW / MEM_NC;
         if (nt && !wt)
             wt = 1;
@@ -1312,6 +1312,8 @@ static uint32_t viz_sig(void)
             if (((gr_used >> k) & 1u) && gslot[k].trk == sys.sel)
                 h = (h ^ (uint32_t)(gslot[k].pos >> 18) ^ k << 24) * 16777619u;
     }
+    if (ui.kind == FOCUS_DEV && ui.dev == DEV_RESO)                    /* RESONATOR: a key's root */
+        h = (h ^ (uint32_t)reso_root16(sys.sel)) * 16777619u;
     if (ui.kind == FOCUS_DEV && ui.dev == DEV_GRAIN)                   /* GRAIN draws TAPE's loop window too */
         h = (h ^ (uint32_t)(tp[sys.sel].dev[DEV_SRC][0] << 8 | tp[sys.sel].dev[DEV_SRC][1])) * 16777619u;
     return h + (ui.kind == FOCUS_SLOT ? tp[sys.sel].engine[ui.slot] * 65537u : 0u);
@@ -1354,7 +1356,15 @@ static void draw_viz(void)
                     viz_tape(v, f);
                 break;
             case DEV_GRAIN: viz_grain(v, f); break;
-            case DEV_RESO: viz_reso(v, f); break;
+            case DEV_RESO: {                                    /* (a key's root shows as PTCH's) */
+                int16_t rv[NPK];
+                uint32_t k;
+                for (k = 0; k < NPK; k++)
+                    rv[k] = v[k];
+                rv[RP_PTCH] = (int16_t)(reso_root16(sys.sel) / 16);
+                viz_reso(rv, f);
+                break;
+            }
             case DEV_COLOR: viz_color(v, f); break;
             default: viz_space(v, f); break;
             }

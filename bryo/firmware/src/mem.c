@@ -23,8 +23,11 @@
 #define MEM_NC_RAM 24u               /* chunks in main RAM (50 KB) */
 #define MEM_NC (MEM_NC_POOL + MEM_NC_RAM)   /* 152: 28.2 s of tape-format sound in all */
 #define MEM_FREE 0xFFu               /* owner: nobody */
-/* owners: a track's tape (MEM_TAPE + t), its GRAIN buffer (MEM_GRAIN + t), a WAV arriving over USB (MEM_IMPORT) */
-enum { MEM_TAPE = 0, MEM_GRAIN = 4, MEM_IMPORT = 8, MEM_SPARE = 9 };   /* (SPARE: kept ready for a WAV, vdisk.c) */
+/* owners: a track's tape (MEM_TAPE + t), its GRAIN buffer (MEM_GRAIN + t), a WAV arriving over USB (MEM_IMPORT),
+ * its RESONATOR's strings (MEM_RESO + t) */
+enum { MEM_TAPE = 0, MEM_GRAIN = 4, MEM_IMPORT = 8, MEM_SPARE = 9, MEM_RESO = 10 };   /* (SPARE: kept ready for a
+                                                                                       * WAV, vdisk.c; RESO + t: a
+                                                                                       * track's strings) */
 
 typedef struct {
     uint8_t data[MEM_CB][128];       /* 16 blocks of 256 samples, 4 bits each */

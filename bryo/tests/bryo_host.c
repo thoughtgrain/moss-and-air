@@ -73,6 +73,7 @@ static void ui_redraw(void);
 #include "../firmware/src/poly.c"
 #include "../firmware/src/source.c"
 #include "../firmware/src/grain.c"
+#include "../firmware/src/reso.c"
 #include "../firmware/src/chain.c"
 #include "../firmware/src/icons.c"
 #include "../firmware/src/panel.c"
@@ -118,6 +119,8 @@ static void power_on(void)
     memset(tape_ctl, 0, sizeof tape_ctl);
     memset(&cap, 0, sizeof cap);
     memset(&capm, 0, sizeof capm);
+    memset(reso, 0, sizeof reso);
+    reso_cap = RS_N;
     memset(gbuf, 0, sizeof gbuf);                        /* (GRAIN's buffers and grains: a fresh start, as the */
     memset(grain, 0, sizeof grain);                      /* device's power-on gives) */
     gr_used = 0;
@@ -737,6 +740,10 @@ static void screens_in(const char *pal)
     turn(2, 1);
     turn(3, 1);
     shot(pal, "resonator2");
+    fm1_in.notes = note_bit_of_white(7);                 /* a key on the RESONATOR page: the root to G3, plucked */
+    render(2, 0);
+    fm1_in.notes = 0;
+    shot(pal, "resonator_key");
     press(B_FX);
     shot(pal, "color");
     turn(0, 60);                                         /* DRIVE 60: the transfer curve */
@@ -2151,6 +2158,161 @@ static void test_grain_buffer(void)
     render_poll(400);
 }
 
+/* a buffer's pitch by autocorrelation (partials and noise don't fool it as they do zero crossings), Hz */
+static double buf_pitch(const int32_t *x, uint32_t from, uint32_t n, double fmin, double fmax)
+{
+    uint32_t lag, lo = (uint32_t)(44100.0 / fmax), hi = (uint32_t)(44100.0 / fmin), best = 0, i;
+    double bc = -1e300, c[2048];
+    for (lag = lo; lag <= hi && lag < 2048u; lag++) {
+        double a = 0, e0 = 0, e1 = 0;
+        for (i = from; i + lag < n; i++) {
+            a += (double)x[i] * x[i + lag];
+            e0 += (double)x[i] * x[i];
+            e1 += (double)x[i + lag] * x[i + lag];
+        }
+        c[lag] = a / (sqrt(e0 * e1) + 1);
+        if (c[lag] > bc) {
+            bc = c[lag];
+            best = lag;
+        }
+    }
+    for (lag = lo; lag < best; lag++)                    /* (the shortest lag nearly as good: not an octave down) */
+        if (c[lag] >= 0.9 * bc && (lag == lo || c[lag] >= c[lag - 1]) && c[lag] >= c[lag + 1]) {
+            best = lag;
+            break;
+        }
+    if (best > lo && best < hi) {                        /* (between samples: a parabola through the peak) */
+        double y0 = c[best - 1], y1 = c[best], y2 = c[best + 1], d = y0 - 2 * y1 + y2;
+        return 44100.0 / (best + (d ? 0.5 * (y0 - y2) / d : 0));
+    }
+    return best ? 44100.0 / best : 0;
+}
+static double buf_rms(const int32_t *x, uint32_t from, uint32_t n)
+{
+    double a = 0;
+    uint32_t i;
+    for (i = from; i < n; i++)
+        a += (double)x[i] * x[i];
+    return sqrt(a / (n - from + 1));
+}
+
+static void test_reso(void)
+{
+    enum { NB = 690 };                                   /* 0.5 s */
+    static int32_t s[4 * NB * CTL];
+    int16_t *p;
+    char b[120];
+    double hz, r1, r2;
+    uint32_t t, k;
+    power_on();
+    p = tp[0].dev[DEV_RESO];
+    for (t = 1; t < NTRK; t++)
+        track[t].mute = 1;
+    focus_dev(DEV_RESO, 0);
+    ui_input();
+    check("the RESONATOR page up: the keys go to it", sys.keys_reso == 1 && sys.keys_grain == 0);
+    chain_poll();
+    check("RESONATOR at WET 0 (the default): no strings, no memory taken", !reso[0].nch && !mem_count(MEM_RESO));
+    fm1_in.notes = note_bit_of_white(9);
+    render(NB, s);
+    fm1_in.notes = 0;
+    check("..a key with WET 0 (stopped): silence", peak_of(s, NB * CTL) == 0);
+    p[RP_WET] = 100;
+    chain_poll();
+    check("WET up: four strings, four chunks of the shared memory", reso[0].nch == RS_N && mem_count(MEM_RESO) == RS_N);
+    render(4, 0);
+    fm1_in.notes = note_bit_of_white(9);                 /* white key 10 at OCT 3: A3 */
+    render(2, 0);
+    fm1_in.notes = 0;
+    render(NB, s);
+    hz = buf_pitch(s, 200 * CTL, NB * CTL, 100, 600);
+    snprintf(b, sizeof b, "a key on a TAPE track plucks the strings at its note: A3, %.1f Hz (220), the root A3", hz);
+    check(b, fabs(hz - 220) < 2.2 && reso[0].root16 == 57 * 16 && peak_of(s, NB * CTL) > 2000);
+    r1 = buf_rms(s, 0, NB * CTL / 4);
+    render(NB, s);
+    r2 = buf_rms(s, 0, NB * CTL);
+    p[RP_DEC] = 90;
+    fm1_in.notes = note_bit_of_white(9);
+    render(2, 0);
+    fm1_in.notes = 0;
+    render(NB, s);
+    {
+        double q1 = buf_rms(s, 0, NB * CTL / 4), q2;
+        render(NB, s);
+        q2 = buf_rms(s, 0, NB * CTL);
+        snprintf(b, sizeof b, "DEC: rings longer as it rises (after 0.5 s: DEC 60 at %.0f%% of its start, DEC 90 at %.0f%%)",
+                 100 * r2 / (r1 + 1), 100 * q2 / (q1 + 1));
+        check(b, q2 / (q1 + 1) > 2 * r2 / (r1 + 1) && q2 > 0);
+    }
+    p[RP_DEC] = 60;
+    p[RP_SCAL] = 1;                                      /* MAJ: root, third, fifth, octave */
+    {
+        int32_t r0 = 45 * 16;
+        double q = (double)rs_period_q8(r0 + RS_PART16[1][1]) / rs_period_q8(r0), f = (double)rs_period_q8(r0 + RS_PART16[1][2]) / rs_period_q8(r0);
+        snprintf(b, sizeof b, "SCAL MAJ: strings on the root, its third (%.4f of its period) and fifth (%.4f)", q, f);
+        check(b, fabs(q - 0.7937) < 0.002 && fabs(f - 0.6674) < 0.002);
+    }
+    p[RP_SCAL] = 0;
+    p[RP_PTCH] = 50;
+    render(2, 0);
+    check("PTCH turned after a key: it's the root again", reso[0].root16 == 0 && reso_root16(0) == 50 * 16);
+    p[RP_PTCH] = 45;
+    render(NB * 2, 0);
+
+    sys.playing = 1;                                     /* the track's sound through the strings */
+    p[RP_DEC] = 100;
+    p[RP_TONE] = 100;
+    for (k = 0; k < 4u; k++) {
+        render(NB, s);
+        if (peak_of(s, NB * CTL) > 32767)
+            break;
+    }
+    check("the reel ringing the strings at DEC 100, TONE 100 for 2 s: loud, and it never runs away (under full scale)",
+          k == 4u && peak_of(s, NB * CTL) > 3000 && peak_of(s, NB * CTL) <= 32767);
+    p[RP_DEC] = 60;
+    p[RP_TONE] = 60;
+    p[RP_CUT] = 40;                                      /* the filter in front: dark */
+    p[RP_SLOP] = 0;
+    render(NB, 0);
+    check("the filter in front (CUT 40) changes what rings, the strings still sound", peak_of(track_rt[0].last, CTL) > 0 ||
+          reso[0].nch == RS_N);
+    p[RP_CUT] = 127;
+    sys.playing = 0;
+    render(NB, 0);
+
+    tp[0].src = SRC_SYNTH;                               /* a SYNTH track: the keys play it, the strings follow */
+    fm1_in.notes = note_bit_of_white(4);
+    render(20, 0);
+    check("on a SYNTH track the keys still play the synth, and the strings take its note as their root",
+          syn_sounding(0) == 1 && reso[0].root16 == (12 * 4 + 4) * 16);
+    fm1_in.notes = 0;
+    render(NB, 0);
+    tp[0].src = SRC_TAPE;
+
+    {
+        uint32_t c0 = reso_cap;
+        grain_cap = 4;                                   /* (the grains already down to half) */
+        chain_shed();
+        check("shedding, the grains at half already: a string goes (4 -> 3), and a second later it's back",
+              reso_cap == c0 - 1u);
+        render(1400, 0);
+        check("..back", reso_cap == RS_N);
+        grain_cap = GR_CAP;
+    }
+    chain_tracks(1);
+    p = tp[1].dev[DEV_RESO];
+    p[RP_WET] = 100;                                     /* (track 2's RESONATOR on, track 2 parked) */
+    chain_poll();
+    check("a parked track's RESONATOR holds no strings", !reso[1].nch && mem_count(MEM_RESO + 1) == 0);
+    chain_tracks(4);
+    tp[0].dev[DEV_RESO][RP_WET] = 0;
+    chain_poll();
+    check("WET 0 again: the strings' chunks back to the pool", !reso[0].nch && !mem_count(MEM_RESO));
+    for (t = 0; t < NTRK; t++)
+        track[t].mute = 0;
+    press(B_HOME);
+}
+
 /* the tape's edges: an empty user reel, a loop shorter than a block, the seam running backwards */
 static void test_tape_edges(void)
 {
@@ -2881,6 +3043,7 @@ int main(int argc, char **argv)
     test_poly();
     test_grain();
     test_grain_buffer();
+    test_reso();
     test_input();
     test_settings();
     palette_set(UI_GREY_INDEX);                          /* (the screens are one ink now, whatever the palette) */

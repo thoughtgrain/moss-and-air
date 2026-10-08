@@ -58,7 +58,7 @@ page	BLACK_ZERO	tap	the freeze latched until the next tap (its LED lit), as a ta
 page:tape	WHITE_1-16	press	play from slice n of the loop (finger drumming, stutter)	now	-	PRD 2.3
 page:grain	WHITE_1-16	press	on a TAPE track: GRAIN's cursor to sixteenth n of the tape's loop (SCAN TAPE) or of the buffer (POS: the spot, DLY: the trail); the tape's head stays; stopped, grains while the key is held	now	-	PRD 2.3
 page	BLACK_POLY	release	(the key, not the POLY source engine) letting go before 0.5 s cancels the clear	now	-	change
-page:resonator	WHITE_1-16	press	chromatic notes for the resonator (tuned feedback chords); OCT-/OCT+ shift	planned	4	PRD 2.3
+page:resonator	WHITE_1-16	press	the strings' root, a semitone a key from C of OCT (until PTCH is turned): on a TAPE track the key plucks them too; on SYNTH or POLY the keys still play the source and the strings follow its notes	now	-	PRD 2.3
 page:slot	WHITE_1-16	press	on a SEQ slot: the 16 steps (OCT-/OCT+: steps 17-32)	planned	7	PRD 2.3
 mixer	ENC_K1	turn	track 1 level (the fader's notches; its fill is the live meter)	now	-	change
 mixer	ENC_K2	turn	track 2 level	now	-	change
