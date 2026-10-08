@@ -21,7 +21,9 @@
  *   SPACE      the dry hit, the echoes as stems with nodes (TIME apart, falling by FDBK) and the reverb tail
  *   MOD slots  LFO's shape (RND: its loop of steps) and its next time round dotted, ADSR's envelope with its
  *              stages named and bent, SEQ's 16 steps as bars of their values, FOLLOW's envelope over what it listens to
- *   MIXER      the selected track's channel: EQ and filter as one response, the pan as two speakers
+ *   REC IN     (ALGORITHM) who records whom: the tracks as boxes, a line from each one heard into the recorder
+ *   MIXER      the levels: what each track holds of the shared memory, TRACKS and the time free; EDIT held (the
+ *              channel): the selected track's EQ and filter as one response, the pan as two speakers
  *
  * The DSP of each device will use the same mappings as these pictures (the comments name them), so what is drawn
  * is what is heard. Integer only: no float on the device. */
@@ -1020,6 +1022,162 @@ static void viz_channel(uint32_t f)
     }
 }
 
+/* tenths of a second as "4.2" (the unit goes apart: an S after digits reads as a 5 in these faces) */
+static void vz_secs(char *b, int32_t tenths)
+{
+    fmt_int(b, tenths / 10);
+    str_cpy(b + str_len(b), ".", 2);
+    fmt_int(b + str_len(b), tenths % 10);
+}
+
+/* chunks as tenths of a second of tape-format sound */
+static int32_t vz_chunk_tenths(uint32_t n) { return (int32_t)(n * TAPE_CHS * 10u / TAPE_SR); }
+
+/* The mixer's levels page: what each track holds of the shared memory, under its fader: its tape's seconds and,
+ * when GRAIN is on, its live buffer's (GR); a parked track says OFF, its tape (kept, taken first) dim. Then the
+ * memory as one ribbon (each track's tape solid, its GRAIN buffer dim, what's free dotted), and under it TRACKS and
+ * the time still free. SELECT sets TRACKS here. */
+static void viz_memory(void)
+{
+    char b[20];
+    uint32_t t, x0 = DX0, c;
+    for (t = 0; t < NTRK; t++) {
+        int32_t cx = 30 * (int32_t)t, off = t >= sys.ntrk;
+        uint32_t nt = tape_ctl[t].nch, ng = mem_count(MEM_GRAIN + t);
+        uint16_t col = off ? px_dim : px_ink;
+        if (off)
+            px_text_c(cx, 30, 3, PXF_5, "OFF", px_dim);
+        if (nt) {
+            vz_secs(b, vz_chunk_tenths(nt));
+            px_text_c(cx, 30, off ? 13 : 3, off ? PXF_3 : PXF_5, b, col);
+            if (!off)
+                px_text_c(cx, 30, 12, PXF_3, "SEC", px_dim);
+        } else if (!off) {
+            px_text_c(cx, 30, 3, PXF_5, "-", px_ink);
+        }
+        if (ng && !off) {
+            str_cpy(b, "GR ", sizeof b);
+            vz_secs(b + 3, vz_chunk_tenths(ng));
+            px_text_c(cx, 30, 19, PXF_3, b, px_ink);
+        }
+    }
+    px_line(DX0, 26, DX1, 26, px_dim, 2);              /* the ribbon: free memory dotted under the rest */
+    for (t = 0; t < NTRK; t++) {
+        uint32_t nt = mem_count(MEM_TAPE + t), ng = mem_count(MEM_GRAIN + t), w0 = x0;
+        uint32_t wt = nt * (uint32_t)DW / MEM_NC, wg = ng * (uint32_t)DW / MEM_NC;
+        if (nt && !wt)
+            wt = 1;
+        if (ng && !wg)
+            wg = 1;
+        if (wt)
+            px_box((int32_t)x0, 24, (int32_t)wt, 5, t >= sys.ntrk ? px_dim : px_ink);
+        x0 += wt;
+        if (wg)
+            px_box((int32_t)x0, 24, (int32_t)wg, 5, px_dim);
+        x0 += wg;
+        if (x0 - w0 >= 6u) {                             /* its number under it, where it fits */
+            b[0] = (char)('1' + t);
+            b[1] = 0;
+            px_text_c((int32_t)w0, (int32_t)(x0 - w0), 30, PXF_3, b, px_ink);
+        }
+        if (x0 > w0)
+            x0++;                                       /* (a gap between tracks) */
+    }
+    c = mem_count(MEM_IMPORT);
+    if (c)
+        px_box((int32_t)x0, 24, (int32_t)(c * (uint32_t)DW / MEM_NC + 1u), 5, px_dim);
+    str_cpy(b, "TRACKS ", sizeof b);
+    fmt_int(b + 7, sys.ntrk);
+    px_tag(1, DLBL - 1, PXF_3, b, px_ink, px_bg);
+    str_cpy(b, "FREE ", sizeof b);
+    vz_secs(b + 5, vz_chunk_tenths(mem_count(MEM_FREE)));
+    str_cpy(b + str_len(b), " SEC", 5);
+    px_text(118 - px_text_w(PXF_3, b), DLBL, PXF_3, b, px_ink);
+}
+
+/* The routing view (ALGORITHM): what each track's REC records. The tracks are boxes under their knobs (filled while
+ * REC is armed, dim when parked); a line runs from the track heard down into a lane of the recording track's own and
+ * up into it, an arrow at its end; solid while that REC is armed, dotted while it isn't. The others' mix (AUTO on a
+ * TAPE track, OTHR) and AUTO on a SYNTH or POLY track (its own source) are named in the lane instead. SELF: a loop
+ * under the box. Under it all, the last-turned (or the
+ * focused) track's routing in words. */
+static void viz_route(uint32_t f)
+{
+    static const char *const SRC_SHORT[NSRC] = {"TAPE", "SYNTH", "POLY"};
+    uint32_t k, j, w = f < 4u ? f : sys.sel;
+    char b[28];
+    for (k = 0; k < NTRK; k++) {                         /* the tracks */
+        int32_t cx = 30 * (int32_t)k + 15, off = k >= sys.ntrk, armed = !off && ((sys.rec >> k) & 1u);
+        char n[3] = {'T', (char)('1' + k), 0};
+        if (armed) {
+            px_box(cx - 8, 1, 17, 9, px_ink);
+            px_text_c(cx - 8, 17, 3, PXF_3, n, px_bg);
+        } else {
+            px_frame(cx - 8, 1, 17, 9, off ? px_dim : px_ink, 1);
+            px_text_c(cx - 8, 17, 3, PXF_3, n, off ? px_dim : px_ink);
+        }
+    }
+    for (k = 0; k < NTRK && k < sys.ntrk; k++) {         /* each recording track's lane: what it hears */
+        uint32_t from = tp[k].recin, st = (sys.rec >> k) & 1u ? 1u : 2u;
+        int32_t y = 19 + 4 * (int32_t)k, ck = 30 * (int32_t)k + 15;   /* (words under the box, lanes below) */
+        uint16_t c = st == 1u ? px_ink : px_dim;
+        if (from == RIN_AUTO || from == RIN_OTHR)       /* (in words, below) */
+            continue;
+        if (from == RIN_T1 + k) {                        /* SELF: round under its box and back in */
+            px_line(ck - 4, 11, ck - 4, y, c, st);
+            px_line(ck - 4, y, ck + 4, y, c, st);
+            px_line(ck + 4, y, ck + 4, 11, c, st);
+            px_dot(ck + 3, 12, c);
+            px_dot(ck + 5, 12, c);
+            continue;
+        }
+        for (j = 0; j < NTRK; j++) {
+            int32_t xs, xa;
+            if (j == k || j >= sys.ntrk || (from >= RIN_T1 && from - RIN_T1 != j))
+                continue;
+            xs = 30 * (int32_t)j + 15 + 2 * (int32_t)k - 3;   /* (each lane leaves a box at its own column) */
+            xa = ck + 2 * (int32_t)j - 3;
+            px_line(xs, 11, xs, y, c, st);
+            px_line(xs, y, xa, y, c, st);
+            px_line(xa, y, xa, 11, c, st);
+            px_dot(xa - 1, 12, c);                       /* the arrow's head, into the box */
+            px_dot(xa + 1, 12, c);
+        }
+    }
+    for (k = 0; k < NTRK && k < sys.ntrk; k++) {         /* the others' mix (AUTO on a TAPE track, OTHR) and AUTO's
+                                                         * own source in words: lines from every box would crowd out
+                                                         * the routes you've set; over any line passing under */
+        uint32_t from = tp[k].recin;
+        const char *wd = from == RIN_AUTO && tp[k].src != SRC_TAPE ? SRC_SHORT[tp[k].src % NSRC]
+                       : from == RIN_AUTO || from == RIN_OTHR ? "OTHERS" : 0;
+        int32_t cx = 30 * (int32_t)k;
+        if (!wd)
+            continue;
+        px_box(cx + 15 - px_text_w(PXF_3, wd) / 2 - 1, 11, px_text_w(PXF_3, wd) + 2, 7, px_bg);
+        px_text_c(cx, 30, 12, PXF_3, wd, (sys.rec >> k) & 1u ? px_ink : px_dim);
+    }
+    b[0] = 'T';                                          /* the routing in words */
+    b[1] = (char)('1' + w);
+    b[2] = 0;
+    if (w >= sys.ntrk)
+        str_cpy(b + 2, " IS OFF (TRACKS)", sizeof b - 2);
+    else if (tp[w].recin == RIN_AUTO && tp[w].src != SRC_TAPE)
+        str_cpy(b + 2, tp[w].src == SRC_SYNTH ? " RECORDS ITS SYNTH" : " RECORDS ITS POLY", sizeof b - 2);
+    else if (tp[w].recin == RIN_AUTO || tp[w].recin == RIN_OTHR)
+        str_cpy(b + 2, " RECORDS THE OTHERS", sizeof b - 2);
+    else if (tp[w].recin == RIN_T1 + w)
+        str_cpy(b + 2, " RECORDS ITSELF", sizeof b - 2);
+    else {
+        str_cpy(b + 2, " RECORDS T", sizeof b - 2);
+        b[str_len(b) + 1] = 0;
+        b[str_len(b)] = (char)('1' + tp[w].recin - RIN_T1);
+    }
+    if (f < 4u)
+        px_tag(1, DLBL - 1, PXF_3, b, px_ink, px_bg);
+    else
+        px_text(2, DLBL, PXF_3, b, px_ink);
+}
+
 /* a message: an inverted box over the panel, its words wrapped at 18 characters */
 static void viz_message(void)
 {
@@ -1057,7 +1215,15 @@ static uint32_t viz_sig(void)
     if (ui.view == VIEW_MIXER) {
         for (t = 0; t < NCH; t++)
             h = (h ^ (uint32_t)(tp[sys.sel].ch[t] + 32768)) * 16777619u;
-        return h + ui.chan * 977u;
+        if (!ui.chan)                                                  /* the memory: who holds how much */
+            for (k = 0; k < MEM_NC; k++)
+                h = (h ^ mem_owner[k]) * 16777619u;
+        return h + ui.chan * 977u + sys.ntrk * 5381u;
+    }
+    if (ui.view == VIEW_ROUTE) {
+        for (t = 0; t < NTRK; t++)
+            h = (h ^ (uint32_t)(tp[t].recin + tp[t].src * 16u)) * 16777619u;
+        return h + sys.rec * 977u + sys.ntrk * 5381u + 0x55u;
     }
     for (k = 0; k < NPK; k++) {                                        /* both pages: page 2 shows in the picture */
         const int16_t *v = ui.kind == FOCUS_SLOT ? tp[sys.sel].mod[ui.slot] : dev_v(sys.sel, ui.dev);
@@ -1101,7 +1267,12 @@ static void draw_viz(void)
     if (ui.msg_t) {
         viz_message();
     } else if (ui.view == VIEW_MIXER) {
-        viz_channel(f);
+        if (ui.chan)
+            viz_channel(f);
+        else
+            viz_memory();
+    } else if (ui.view == VIEW_ROUTE) {
+        viz_route(ui.last < 4u ? ui.last : 0xFFu);
     } else {
         if (ui.kind == FOCUS_SLOT) {
             switch (tp[sys.sel].engine[ui.slot]) {

@@ -52,6 +52,8 @@ static uint32_t focus_btn(void)
     static const uint8_t SLOT_BTN[NSLOT] = {B_LFO, B_ENV, B_SEQ, B_ARP};
     if (ui.view == VIEW_MIXER)
         return ui.chan ? B_EDIT : B_GLO;
+    if (ui.view == VIEW_ROUTE)                          /* (no pad: ALGORITHM is a knob) */
+        return NB;
     if (ui.kind == FOCUS_SLOT)
         return SLOT_BTN[ui.slot];
     return ui.dev == DEV_SRC ? B_HOME : ui.dev <= DEV_RESO ? B_EDIT : B_FX;
@@ -69,7 +71,8 @@ static void ui_leds(void)
         led_pos_init();
         ready = 1;
     }
-    led_put(nl, panel.btn[focus_btn()], 1);
+    if (focus_btn() < NB)
+        led_put(nl, panel.btn[focus_btn()], 1);
     led_put(nl, panel.btn[B_REC], (sys.rec >> sys.sel) & 1u);
     led_put(nl, panel.btn[B_OCTDN], track[sys.sel].octave < 3u);
     led_put(nl, panel.btn[B_OCTUP], track[sys.sel].octave > 3u);
@@ -277,6 +280,8 @@ static void on_knob(uint32_t c, int32_t d)
     v = param_nudge(p, *vp, d);
     if (ui.view == VIEW_MIXER && !ui.chan)
         track[c].level = (uint8_t)v;
+    else if (ui.view == VIEW_ROUTE)
+        tp[c].recin = (uint8_t)v;
     else
         *vp = v;
     ui.hot = (uint8_t)c;
@@ -309,8 +314,8 @@ static void ui_input(void)
         if ((notes >> k) & 1u) {
             if (KEY_BLACK[k] != KEY_NONE) {
                 on_black(KEY_BLACK[k]);
-            } else if (ui.glo_held && KEY_WHITE[k] < NTRK) {
-                sys.sel = KEY_WHITE[k];                  /* GLO + white key 1..4: the track */
+            } else if (ui.glo_held && KEY_WHITE[k] < sys.ntrk) {
+                sys.sel = KEY_WHITE[k];                  /* GLO + white key 1..TRACKS: the track */
                 ui.glo_used = 1;
             }
         }
@@ -331,12 +336,29 @@ static void ui_input(void)
             tp[sys.sel].src = (uint8_t)(((int32_t)tp[sys.sel].src + d % (int32_t)NSRC + (int32_t)NSRC) % (int32_t)NSRC);
             ui.page = 0;
             ui.last = 0xFF;
+        } else if (ui.view == VIEW_MIXER) {             /* on the mixer, SELECT: TRACKS (how many are in use) */
+            chain_tracks((int32_t)sys.ntrk + d);
+            ui.last = 0xFF;
+            if (ui.glo_held)
+                ui.glo_used = 1;
         } else {                                        /* SELECT: the global tempo */
             sys.bpm = (uint16_t)clamp((int32_t)sys.bpm + d, 40, 240);
         }
     }
     if (panel_enc(EN_PRESET))
         ui_message("PROJECTS ARRIVE IN PHASE 8");
-    if (panel_enc(EN_ALGO))
-        ui_message("ROUTING ARRIVES IN PHASE 6");
+    if ((d = panel_enc(EN_ALGO)) != 0) {               /* ALGORITHM: the routing view (REC IN); turned on it, the
+                                                         * focused track's */
+        if (ui.view != VIEW_ROUTE) {
+            ui.view = VIEW_ROUTE;
+            ui.chan = 0;
+            ui.glo_latched = 0;
+            ui.last = 0xFF;
+        } else {
+            tp[sys.sel].recin = (uint8_t)clamp((int32_t)tp[sys.sel].recin + d, 0, (int32_t)NRIN - 1);
+            ui.hot = sys.sel;
+            ui.hot_t = 33;
+            ui.last = sys.sel;
+        }
+    }
 }

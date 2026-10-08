@@ -809,7 +809,18 @@ static void screens_in(const char *pal)
     track[1].mute = 1;                                   /* track 2 muted, track 1 sounding */
     track_rt[0].peak = 9000;
     track_rt[2].peak = 1200;
+    tape_reserve(0, 22, 1);                              /* what the tracks hold: tapes of 4.1, 2.0 and 6.1 s */
+    tape_ctl[0].nblk = 22 * MEM_CB;
+    tape_reserve(1, 11, 1);
+    tape_ctl[1].nblk = 11 * MEM_CB;
+    tape_reserve(3, 33, 1);
+    tape_ctl[3].nblk = 33 * MEM_CB;
     shot(pal, "mixer");
+    host_enc[panel.enc[EN_SELECT]] = -1;                 /* SELECT on the mixer: TRACKS 3 (track 4 parked) */
+    ui_input();
+    shot(pal, "mixer_tracks3");
+    host_enc[panel.enc[EN_SELECT]] = 1;
+    ui_input();
     hold(B_EDIT);                                        /* the channel: LOW +6, HIGH -4, a low-pass, PAN right */
     turn(0, 6);
     turn(1, -4);
@@ -822,6 +833,18 @@ static void screens_in(const char *pal)
     hold(B_GLO);
     shot(pal, "mixer_held");
     let_go(B_GLO);
+    host_enc[panel.enc[EN_ALGO]] = 1;                    /* the routing view: a bounce chain T1 -> T2 -> T3, T4 on itself */
+    ui_input();
+    shot(pal, "route");
+    turn(1, 2);                                          /* T2 records T1 */
+    turn(2, 3);                                          /* T3 records T2 */
+    turn(3, 5);                                          /* T4 records itself */
+    sys.rec = 2u;                                        /* (T2 armed) */
+    tp[0].src = SRC_SYNTH;
+    shot(pal, "route_chain");
+    sys.rec = 0;
+    tp[0].src = SRC_TAPE;
+    press(B_HOME);
     press(B_PLAY);
     press(B_REC);
     shot(pal, "playing");
@@ -2010,7 +2033,19 @@ static void test_controls_more(void)
     check("PRESET turned: the message says when projects arrive", !strcmp(ui.msg, "PROJECTS ARRIVE IN PHASE 8"));
     host_enc[panel.enc[EN_ALGO]] = 1;
     ui_input();
-    check("ALGORITHM turned: the message says when routing arrives", !strcmp(ui.msg, "ROUTING ARRIVES IN PHASE 6"));
+    check("ALGORITHM turned: the routing view (REC IN), nothing changed yet", ui.view == VIEW_ROUTE &&
+          tp[sys.sel].recin == RIN_AUTO);
+    host_enc[panel.enc[EN_ALGO]] = 2;
+    ui_input();
+    check("..turned again: the focused track's REC IN (AUTO -> OTHR -> its own: SELF)", tp[sys.sel].recin == 2 &&
+          !strcmp(N_RIN[sys.sel][tp[sys.sel].recin], "SELF"));
+    turn(2, 3);
+    check("..KNOB 3: track 3's REC IN (T2)", tp[2].recin == 3 && !strcmp(N_RIN[2][3], "T2"));
+    turn(2, 40);
+    check("..to T4 at most", tp[2].recin == NRIN - 1);
+    press(B_HOME);
+    check("..a page pad closes it", ui.view == VIEW_PAGE);
+    tp[sys.sel].recin = tp[2].recin = RIN_AUTO;
 
     hold(B_GLO);                                         /* GLOBAL held, EDIT: the channel page (GLOBAL used) */
     hold(B_EDIT);
@@ -2302,6 +2337,95 @@ static void test_memory(void)
         tp[2].dev[DEV_SRC][TK_REEL] = 0;
         check("..and REC on a blank tape with no chunk free and no tape to take from: refused (-1)",
               tape_prepare(2) == -1 && !tape_ctl[2].rec_ok);
+    }
+
+    {   /* TRACKS: the mixer's SELECT parks the tracks above it */
+        int32_t p3;
+        power_on();
+        sys.playing = 1;
+        render(10, 0);
+        sys.sel = 3;
+        sys.rec = 1u << 3;
+        tape_prepare(3);
+        tap(B_GLO);                                      /* the mixer, latched */
+        host_enc[panel.enc[EN_SELECT]] = -1;
+        ui_input();
+        check("on the mixer, SELECT -1: TRACKS 3; the focus moves off track 4, its REC is let go",
+              sys.ntrk == 3 && sys.sel == 2 && !(sys.rec & 8u) && !tape_ctl[3].rec_ok);
+        host_enc[panel.enc[EN_SELECT]] = -5;
+        ui_input();
+        check("..down to 1 at least", sys.ntrk == 1 && sys.sel == 0);
+        host_enc[panel.enc[EN_SELECT]] = 2;
+        ui_input();
+        check("..and back up: TRACKS 3", sys.ntrk == 3);
+        render(4, 0);
+        p3 = tape_rt[3].pos;
+        render(100, 0);
+        check("a parked track goes silent and isn't rendered (its head waits where it was)",
+              peak_of(track_rt[3].last, CTL) == 0 && tape_rt[3].pos == p3 && track_rt[3].act == 0);
+        hold(B_GLO);
+        key_edge(note_bit_of_white(3) ? (uint32_t)__builtin_ctz(note_bit_of_white(3)) : 0u);
+        check("GLO + white key 4 doesn't pick a parked track", sys.sel != 3);
+        host_enc[panel.enc[EN_SELECT]] = 1;              /* (GLO held: the mixer is up) */
+        ui_input();
+        let_go(B_GLO);
+        render(1, 0);
+        check("TRACKS 4 again: track 4 fades back in (2 ms) from where its head was",
+              track_rt[3].act > 0 && track_rt[3].act < 32767 && sys.ntrk == 4);
+        render(10, 0);
+        check("..and plays on", track_rt[3].act == 32767 && tape_rt[3].pos != p3);
+        sys.playing = 0;
+        render(400, 0);
+    }
+
+    {   /* REC IN: track 3 records track 1 alone, though track 2 plays too */
+        uint32_t k, loud = 0;
+        power_on();
+        tp[1].dev[DEV_SRC][TK_REEL] = 3;                 /* (track 2 plays reel 3 under it, track 4 is silent) */
+        track[3].mute = 1;
+        tp[2].dev[DEV_SRC][TK_REEL] = 0;
+        tp[2].recin = RIN_T1;
+        tape_prepare(2);
+        sys.rec = 1u << 2;
+        sys.playing = 1;
+        render_poll(1378);
+        sys.rec = 0;
+        tape_unprepare(2);
+        render_poll(4);
+        for (k = 0; k < tape_ctl[2].nblk && k < REELS[0].nblk; k++)
+            loud += abs((int)tpk(2, k) - (int)REELS[0].peak[k] * 100 / 127) < 24;
+        snprintf(b, sizeof b, "REC IN T1: track 3's take follows track 1's beat alone (%u of %u blocks)", loud,
+                 (unsigned)tape_ctl[2].nblk);
+        check(b, tape_ctl[2].nblk > 80u && loud > tape_ctl[2].nblk * 3u / 4u);
+        sys.playing = 0;
+        render_poll(400);
+    }
+    {   /* a SYNTH track with REC IN OTHR records the others, not its synth */
+        int32_t pk;
+        power_on();
+        tp[0].src = SRC_SYNTH;
+        tp[0].dev[DEV_SRC][TK_REEL] = 0;
+        tp[0].recin = RIN_OTHR;
+        track[1].mute = track[2].mute = track[3].mute = 1;   /* (the others silent) */
+        tape_prepare(0);
+        sys.rec = 1u;
+        sys.playing = 1;
+        fm1_in.notes = note_bit_of_white(0);             /* the synth plays */
+        render_poll(400);
+        fm1_in.notes = 0;
+        sys.rec = 0;
+        tape_unprepare(0);
+        render_poll(4);
+        {
+            uint32_t k;
+            pk = 0;
+            for (k = 0; k < tape_ctl[0].nblk; k++)
+                pk = (int32_t)tpk(0, k) > pk ? (int32_t)tpk(0, k) : pk;
+        }
+        check("a SYNTH track on REC IN OTHR records the others (silent here), not its own synth", tape_ctl[0].nblk > 0 &&
+              pk == 0);
+        sys.playing = 0;
+        render_poll(400);
     }
 
     {   /* a long sound across reel slots */

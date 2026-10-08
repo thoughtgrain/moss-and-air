@@ -211,10 +211,24 @@ typedef struct {
     int16_t ch[NCH];             /* the channel strip */
     int8_t steps[NSLOT][16];     /* a SEQ slot's step values, 0..100 (set per step from phase 7: slot + key + knob) */
     uint8_t src;                 /* the source engine (SRC_*): the main loop writes it, the ISR follows */
+    uint8_t recin;               /* what REC records onto the tape (RIN_*: the routing view) */
     int16_t syn[NPK];            /* SYNTH's knobs (TAPE's are dev[DEV_SRC]) */
     int16_t pol[NPK];            /* POLY's */
 } track_params_t;
 static track_params_t tp[NTRK];
+
+/* What a track's REC records (the routing view: ALGORITHM, KNOB 1..4 a track each). AUTO is what REC always did:
+ * on a TAPE track the other tracks' mix, on a SYNTH or POLY track its own source (play, then slice it). OTHR: the
+ * others' mix whatever the source; T1..T4: that one track, after its effects (a track's own number reads SELF: it
+ * records itself back onto its tape, DUB setting how much of the old pass stays). */
+enum { RIN_AUTO, RIN_OTHR, RIN_T1 };
+#define NRIN (RIN_T1 + NTRK)
+static const char *const N_RIN[NTRK][NRIN] = {
+    {"AUTO", "OTHR", "SELF", "T2", "T3", "T4"}, {"AUTO", "OTHR", "T1", "SELF", "T3", "T4"},
+    {"AUTO", "OTHR", "T1", "T2", "SELF", "T4"}, {"AUTO", "OTHR", "T1", "T2", "T3", "SELF"}};
+static const pdesc_t RIN_P[NTRK] = {
+    {"T1", 0, NRIN - 1, RIN_AUTO, F_ENUM, N_RIN[0]}, {"T2", 0, NRIN - 1, RIN_AUTO, F_ENUM, N_RIN[1]},
+    {"T3", 0, NRIN - 1, RIN_AUTO, F_ENUM, N_RIN[2]}, {"T4", 0, NRIN - 1, RIN_AUTO, F_ENUM, N_RIN[3]}};
 
 /* device d of track t as the pages see it: the source's knobs are the chosen source's */
 static const pdesc_t *dev_p(uint32_t t, uint32_t d)
@@ -250,6 +264,7 @@ static void param_defaults(void)
         for (k = 0; k < NCH; k++)
             tp[t].ch[k] = CH_P[k].def;
         tp[t].src = SRC_TAPE;
+        tp[t].recin = RIN_AUTO;
         for (k = 0; k < NPK; k++) {
             tp[t].syn[k] = SYN_P[k].def;
             tp[t].pol[k] = pdesc_empty(&POL_P[k]) ? 0 : POL_P[k].def;

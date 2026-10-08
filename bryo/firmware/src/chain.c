@@ -6,9 +6,10 @@
  * Then GRAIN (grain.c: grains of the track's tape, blended by WET), from which the track is stereo. RESONATOR,
  * COLOR and SPACE arrive in the next phases; chain_block() keeps the shape they slot into.
  *
- * What REC records, for now: the other three tracks' mix, from the previous control block (0.7 ms late), so a
- * track can print the others onto its tape. Phase 6's ALGORITHM routing makes that a choice; the track's own
- * chain output joins when the devices exist (its dry tape left out, so nothing doubles).
+ * What REC records is each track's REC IN (param.c RIN_*, the routing view): by default (AUTO) the other three
+ * tracks' mix on a TAPE track and its own source on a SYNTH or POLY track; or the others' mix, one chosen track, or
+ * itself (SELF). A track is heard after its devices, level and mute, from the previous control block (0.7 ms late),
+ * so tracks can record each other in a chain (T1 into T2 into T3...) or round in a loop.
  *
  * Keys: the ISR reads the debounced white keys itself (fm1_in.notes, updated by the 10 kHz scan) once per block,
  * so a slice starts within one block instead of waiting for a UI frame; they play the focused track (sys.sel)
@@ -17,6 +18,8 @@
 
 typedef struct {                     /* ISR only */
     int32_t peak;                    /* |output| peak, decaying (the UI's meter) */
+    int32_t act;                     /* the track switched on (TRACKS), Q15: 2 ms ramps; a parked track at 0 isn't
+                                      * rendered at all (its heads wait where they were) */
     int32_t last[CTL];               /* the last block's output, after level and mute (what REC hears) */
     int32_t src_g[NSRC];             /* each source's share of the track, Q15: 2 ms ramps when the source changes */
 } track_rt_t;
@@ -31,6 +34,7 @@ static void chain_init(void)
         track[t].level = 100;
         track[t].octave = 3;
         track_rt[t].src_g[SRC_TAPE] = 32767;
+        track_rt[t].act = 32767;
     }
     tape_init();
 }
@@ -47,7 +51,7 @@ static void chain_source(uint32_t t, uint32_t keys, const int32_t *rin, int32_t 
         s[i] = 0;
     for (e = NSRC; e-- > 0;) {
         int32_t g0 = rt->src_g[e], g1 = clamp(g0 + (e == cur ? 1 : -1) * 372 * (int32_t)n, 0, 32767);
-        const int32_t *rec = cur == SRC_TAPE ? rin : rin ? s : 0;   /* (for the tape) */
+        const int32_t *rec = cur == SRC_TAPE || tp[t].recin != RIN_AUTO ? rin : rin ? s : 0;   /* (for the tape) */
         if (e != cur && !g0) {                          /* not heard: only the tape, printing */
             if (e == SRC_TAPE && rec)
                 SOURCES[e].render(t, 0, rec, o, n);
@@ -65,31 +69,51 @@ static void chain_block(int32_t *out, uint32_t n)
 {
     int32_t l[CTL], r[CTL], rin[NTRK][CTL];
     uint32_t i, t, u, keys = sys.keys_live ? white_keys(fm1_in.notes) : 0u, sel = sys.sel, zero = 0;
+    uint32_t ntrk = sys.ntrk >= 1u && sys.ntrk <= NTRK ? sys.ntrk : NTRK;
     for (u = 0; u < 27u; u++)                          /* the 0 black key held: every grain cursor frozen */
         if (KEY_BLACK[u] == BK_ZERO)
             zero = (fm1_in.notes >> u) & 1u;
-    for (t = 0; t < NTRK; t++)                         /* what each track's REC hears: the others, last block */
-        if ((sys.rec >> t) & 1u)
+    for (t = 0; t < NTRK; t++)                         /* what each track's REC hears (REC IN), last block */
+        if ((sys.rec >> t) & 1u) {
+            uint32_t from = tp[t].recin;
             for (i = 0; i < n; i++) {
                 int32_t a = 0;
-                for (u = 0; u < NTRK; u++)
-                    if (u != t)
-                        a += track_rt[u].last[i];
+                if (from >= RIN_T1 && from < NRIN)     /* one track (its own: itself) */
+                    a = track_rt[from - RIN_T1].last[i];
+                else                                   /* AUTO, OTHR: the others' mix */
+                    for (u = 0; u < NTRK; u++)
+                        if (u != t)
+                            a += track_rt[u].last[i];
                 rin[t][i] = clamp(a, -32767, 32767);
             }
+        }
     for (i = 0; i < n; i++)
         l[i] = r[i] = 0;
     for (t = 0; t < NTRK; t++) {
         const track_ctl_t *c = &track[t];
         track_rt_t *rt = &track_rt[t];
         int32_t s[CTL], gl[CTL], gr[CTL], g = c->mute ? 0 : (int32_t)LEVEL_Q12[c->level & 127u], pk = rt->peak;
+        int32_t a0 = rt->act, a1 = clamp(a0 + (t < ntrk ? 1 : -1) * 372 * (int32_t)n, 0, 32767);
         uint32_t k = t == sel ? keys : 0u, gk = 0;
+        rt->act = a1;
+        if (!a0 && !a1) {                               /* parked (TRACKS): silent, not rendered */
+            for (i = 0; i < n; i++)
+                rt->last[i] = 0;
+            rt->peak = pk - (pk >> 6);
+            continue;
+        }
         if (k && sys.keys_grain && tp[t].src == SRC_TAPE) {   /* the GRAIN page: the keys move GRAIN's cursor */
             gk = k;
             k = 0;
         }
         chain_source(t, k, (sys.rec >> t) & 1u ? rin[t] : 0, s, n);
         grain_block(t, s, gk, (int)zero, gl, gr, n);    /* from here the track is stereo */
+        if (a0 != 32767 || a1 != 32767)                  /* switching on or off: the 2 ms ramp */
+            for (i = 0; i < n; i++) {
+                int32_t a = a0 + (((a1 - a0) * (int32_t)i) >> CTL_LOG2);
+                gl[i] = (gl[i] >> 3) * (a >> 3) >> 9;
+                gr[i] = (gr[i] >> 3) * (a >> 3) >> 9;
+            }
         for (i = 0; i < n; i++) {
             int32_t vl = (gl[i] * g) >> 12, vr = (gr[i] * g) >> 12, a = vl < 0 ? -vl : vl, b = vr < 0 ? -vr : vr;
             rt->last[i] = (vl + vr) / 2;                /* (what the other tracks' REC hears: mono) */
@@ -112,6 +136,23 @@ static void chain_shed(void)
 {
     chain_shed_count++;
     grain_shed();
+}
+
+/* main loop: TRACKS set to n (the mixer's SELECT). The tracks above it park: they fade out in 2 ms and stop
+ * rendering (the CPU they took is free), REC on them is let go, and their tapes are the first taken when memory runs
+ * short (tape.c tape_steal); nothing is erased, so raising TRACKS again brings back what's still there. */
+static void chain_tracks(int32_t n)
+{
+    uint32_t t;
+    n = clamp(n, 1, (int32_t)NTRK);
+    sys.ntrk = (uint8_t)n;
+    for (t = (uint32_t)n; t < NTRK; t++)
+        if ((sys.rec >> t) & 1u) {
+            sys.rec &= (uint8_t)~(1u << t);
+            tape_unprepare(t);
+        }
+    if (sys.sel >= (uint32_t)n)
+        sys.sel = (uint8_t)(n - 1);
 }
 
 /* main loop, every pass: the memory's bookkeeping (tape.c tape_poll: growing tapes and their ends) */

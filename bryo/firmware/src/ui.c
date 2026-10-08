@@ -22,7 +22,8 @@
 #define UI_MSG_FRAMES 70             /* a message holds the visualization panel ~1 s (~66 frames/s) */
 
 enum { FOCUS_DEV, FOCUS_SLOT };      /* what the strip shows: a device of the track, or a modulator slot */
-enum { VIEW_PAGE, VIEW_MIXER };      /* VIEW_MIXER: GLO, the four track levels on the knobs, the tracks below */
+enum { VIEW_PAGE, VIEW_MIXER, VIEW_ROUTE };   /* VIEW_MIXER: GLO, the four track levels on the knobs, the tracks
+                                               * below; VIEW_ROUTE: ALGORITHM, each track's REC IN on the knobs */
 
 static struct {
     uint8_t kind;                    /* FOCUS_DEV / FOCUS_SLOT */
@@ -81,6 +82,11 @@ static const pdesc_t *ui_page(uint32_t k, int16_t **vp)
         *vp = &lv[k];
         return &LEVEL[k];
     }
+    if (ui.view == VIEW_ROUTE) {
+        lv[k] = tp[k].recin;
+        *vp = &lv[k];
+        return &RIN_P[k];
+    }
     k += 4u * ui.page;
     if (ui.kind == FOCUS_SLOT) {
         *vp = &p->mod[ui.slot][k];
@@ -111,6 +117,8 @@ static void draw_head(void)
                    : pdesc_pages(slot ? ME_P[tp[sys.sel].engine[ui.slot]] : dev_p(sys.sel, ui.dev));
     if (ui.view == VIEW_MIXER)
         str_cpy(ti, ui.chan ? "CHANNEL" : "MIXER", sizeof ti);
+    else if (ui.view == VIEW_ROUTE)
+        str_cpy(ti, "REC IN", sizeof ti);
     else
         str_cpy(ti, slot ? ME_NAME[tp[sys.sel].engine[ui.slot]] : dev_name(sys.sel, ui.dev), sizeof ti);
     if (slot) {
@@ -177,7 +185,7 @@ static void draw_strip(void)
         if (ui.view == VIEW_MIXER && !ui.chan)          /* the faders carry the meters */
             sig = (sig ^ (uint32_t)(meter_w(track_rt[k].peak, 19) | track[k].mute << 8)) * 16777619u;
     }
-    sig += (ui.last < 4u ? ui.last + 1u : 0u) * 7919u + sys.sel * 104729u + ui.view * 31u + ui.page * 263u + ui.chan * 5u + ui.kind * 131u +
+    sig += (ui.last < 4u ? ui.last + 1u : 0u) * 7919u + sys.ntrk * 15485863u + sys.sel * 104729u + ui.view * 31u + ui.page * 263u + ui.chan * 5u + ui.kind * 131u +
            ui.dev * 1031u + (ui.kind == FOCUS_SLOT ? tp[sys.sel].engine[ui.slot] * 65537u : tp[sys.sel].src * 3571u);
     if (!ui.force && sig == ui.sig_strip)
         return;
@@ -192,24 +200,25 @@ static void draw_strip(void)
             px_frame(x + 9, 8, 12, 12, px_dim, 2);
             continue;
         }
-        uint32_t pk = ui.view == VIEW_MIXER ? CH_PK[k]
+        uint32_t pk = ui.view == VIEW_ROUTE ? PK_SRC : ui.view == VIEW_MIXER ? CH_PK[k]
                     : ui.kind == FOCUS_SLOT ? ME_PK[tp[sys.sel].engine[ui.slot]][4u * ui.page + k]
                     : dev_pk(sys.sel, ui.dev)[4u * ui.page + k];
         int lvl = ui.view == VIEW_MIXER && !ui.chan, mute = lvl && track[k].mute;
+        int off = (lvl || ui.view == VIEW_ROUTE) && k >= sys.ntrk;
         char val[12];
         const char *unit;
-        if (lvl && k == sys.sel)                       /* the selected track (its channel is the one below) */
+        if ((lvl || ui.view == VIEW_ROUTE) && k == sys.sel)   /* the selected track (its channel is the one below) */
             px_frame(x, 0, 30, 48, px_ink, 1);
         if (lvl)                                       /* the level set, and the live meter inside it */
-            px_meter_fader(x + 4, 2, param_ratio(d, v), meter_w(track_rt[k].peak, 19), mute ? px_dim : px_ink);
+            px_meter_fader(x + 4, 2, param_ratio(d, v), meter_w(track_rt[k].peak, 19), mute || off ? px_dim : px_ink);
         else
-            px_picto(pk, x + 4, 2, d, v, px_ink);
+            px_picto(pk, x + 4, 2, d, v, off ? px_dim : px_ink);
         if (ui.last == k)
             px_tag(x + (30 - px_text_w(PXF_5, d->label)) / 2 - 1, 26, PXF_5, d->label, px_ink, px_bg);
         else
             px_text_c(x, 30, 27, PXF_5, d->label, px_ink);
-        if (mute) {
-            px_text_c(x, 30, 37, PXF_5, "MUTE", px_ink);
+        if (off || mute) {                             /* parked (TRACKS below it), or muted */
+            px_text_c(x, 30, 37, PXF_5, off ? "OFF" : "MUTE", off ? px_dim : px_ink);
             continue;
         }
         param_format(d, v, val, &unit);
@@ -224,10 +233,15 @@ static void draw_foot(void)
 {
     char a[24], b[16];
     uint32_t sig;
-    if (ui.glo_held)
-        str_cpy(a, "KEYS 1-4: TRACK", sizeof a);
+    if (ui.glo_held) {                                /* "KEYS 1-3: TRACK": as many as TRACKS */
+        str_cpy(a, sys.ntrk > 1u ? "KEYS 1-4: TRACK" : "KEY 1: TRACK", sizeof a);
+        if (sys.ntrk > 1u)
+            a[7] = (char)('0' + sys.ntrk);
+    }
     else if (ui.view == VIEW_MIXER)
-        str_cpy(a, ui.chan ? "KNOBS: CHANNEL" : "HOLD EDIT: CHANNEL", sizeof a);
+        str_cpy(a, ui.chan ? "KNOBS: CHANNEL" : "SELECT:TRACKS EDIT:CH", sizeof a);
+    else if (ui.view == VIEW_ROUTE)
+        str_cpy(a, "KNOBS: REC IN", sizeof a);
     else
         str_cpy(a, tp[sys.sel].src != SRC_TAPE ? "KEYS: NOTES" : "KEYS: SLICES", sizeof a);
     str_cpy(b, "T", sizeof b);                        /* "T2 OCT 3": the track, its keys' octave */
