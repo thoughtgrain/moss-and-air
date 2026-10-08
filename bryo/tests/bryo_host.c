@@ -852,6 +852,7 @@ static void screens_in(const char *pal)
     tape_ctl[1].nblk = 11 * MEM_CB;
     tape_reserve(3, 33, 1);
     tape_ctl[3].nblk = 33 * MEM_CB;
+    sys.cpu_q8 = 107;                                    /* (the load as the audio ISR measures it: 41 %) */
     shot(pal, "mixer");
     hold(B_GLO);                                         /* GLO held + SELECT: TRACKS 3 (track 4 parked) */
     host_enc[panel.enc[EN_SELECT]] = -1;

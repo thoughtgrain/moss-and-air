@@ -1113,10 +1113,10 @@ static void viz_memory(void)
         if (ng && !off) {
             str_cpy(b, "GR ", sizeof b);
             vz_secs(b + 3, vz_chunk_tenths(ng));
-            px_text_c(cx, 30, 19, PXF_3, b, px_ink);
+            px_text_c(cx, 30, 18, PXF_3, b, px_ink);
         }
     }
-    px_line(DX0, 26, DX1, 26, px_dim, 2);              /* the ribbon: free memory dotted under the rest */
+    px_line(DX0, 27, DX1, 27, px_dim, 2);              /* the ribbon: free memory dotted under the rest */
     for (t = 0; t < NTRK; t++) {
         uint32_t nt = mem_count(MEM_TAPE + t), ng = mem_count(MEM_GRAIN + t), w0 = x0;
         uint32_t wt = nt * (uint32_t)DW / MEM_NC, wg = ng * (uint32_t)DW / MEM_NC;
@@ -1125,29 +1125,35 @@ static void viz_memory(void)
         if (ng && !wg)
             wg = 1;
         if (wt)
-            px_box((int32_t)x0, 24, (int32_t)wt, 5, t >= sys.ntrk ? px_dim : px_ink);
+            px_box((int32_t)x0, 25, (int32_t)wt, 5, t >= sys.ntrk ? px_dim : px_ink);
         x0 += wt;
         if (wg)
-            px_box((int32_t)x0, 24, (int32_t)wg, 5, px_dim);
+            px_box((int32_t)x0, 25, (int32_t)wg, 5, px_dim);
         x0 += wg;
         if (x0 - w0 >= 6u) {                             /* its number under it, where it fits */
             b[0] = (char)('1' + t);
             b[1] = 0;
-            px_text_c((int32_t)w0, (int32_t)(x0 - w0), 30, PXF_3, b, px_ink);
+            px_text_c((int32_t)w0, (int32_t)(x0 - w0), 31, PXF_3, b, px_ink);
         }
         if (x0 > w0)
             x0++;                                       /* (a gap between tracks) */
     }
     c = mem_count(MEM_IMPORT);
     if (c)
-        px_box((int32_t)x0, 24, (int32_t)(c * (uint32_t)DW / MEM_NC + 1u), 5, px_dim);
+        px_box((int32_t)x0, 25, (int32_t)(c * (uint32_t)DW / MEM_NC + 1u), 5, px_dim);
     str_cpy(b, "TRACKS ", sizeof b);
     fmt_int(b + 7, sys.ntrk);
     px_tag(1, DLBL - 1, PXF_3, b, px_ink, px_bg);
-    str_cpy(b, "FREE ", sizeof b);
+    str_cpy(b, "FREE ", sizeof b);                     /* the time free, at the ribbon's free end */
     vz_secs(b + 5, vz_chunk_tenths(mem_count(MEM_FREE)));
     str_cpy(b + str_len(b), " SEC", 5);
-    px_text(118 - px_text_w(PXF_3, b), DLBL, PXF_3, b, px_ink);
+    px_box(118 - px_text_w(PXF_3, b) - 2, 30, px_text_w(PXF_3, b) + 3, 7, px_bg);
+    px_text(118 - px_text_w(PXF_3, b), 31, PXF_3, b, px_ink);
+    str_cpy(b, "CPU ", sizeof b);                      /* the audio ISR's load (audio.c), in 5 % steps, lit from 85 %
+                                                        * (where shedding starts) */
+    fmt_int(b + 4, (int32_t)(sys.cpu_q8 * 100u / 256u / 5u * 5u));
+    str_cpy(b + str_len(b), "%", 2);
+    px_text(118 - px_text_w(PXF_3, b), DLBL, PXF_3, b, sys.cpu_q8 * 100u / 256u >= 85u ? px_ink : px_dim);
 }
 
 /* The routing view (ALGORITHM): what each track's REC records. The tracks are boxes under their knobs (filled while
@@ -1273,7 +1279,7 @@ static uint32_t viz_sig(void)
         if (!ui.chan)                                                  /* the memory: who holds how much */
             for (k = 0; k < MEM_NC; k++)
                 h = (h ^ mem_owner[k]) * 16777619u;
-        return h + ui.chan * 977u + sys.ntrk * 5381u;
+        return h + ui.chan * 977u + sys.ntrk * 5381u + (ui.chan ? 0u : sys.cpu_q8 * 100u / 256u / 5u * 7919u);
     }
     if (ui.view == VIEW_ROUTE) {
         for (t = 0; t < NTRK; t++)
