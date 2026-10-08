@@ -85,6 +85,21 @@ static void all_grain(int idx, int16_t v)
         tp[t].dev[DEV_GRAIN][idx] = v;
 }
 
+/* play s seconds with track t's keys going (a phrase of notes, a new one every 0.25 s, held): a SYNTH or POLY track
+ * being played while the rest runs */
+static void play_phrase(uint32_t t, double s)
+{
+    static const uint8_t NOTES[8] = {0, 7, 12, 10, 3, 7, 5, 2};
+    uint32_t k, n = (uint32_t)(s * 4);
+    sys.sel = (uint8_t)t;
+    sys.keys_live = 1;
+    for (k = 0; k < n; k++) {
+        fm1_in.notes = note_bit_of_white(NOTES[k % 8u]) | (k % 4u == 0u ? note_bit_of_white(NOTES[k % 8u] + 4u) : 0u);
+        play(0.25);
+    }
+    fm1_in.notes = 0;
+}
+
 static uint32_t sounding(void)
 {
     uint32_t t, n = 0;
@@ -256,6 +271,72 @@ static double run(int n, char *say, size_t sz)
         play(6);
         snprintf(say, sz, "the mixer: LOW HIGH FILT PAN on all four, the compressor at AMT 60 (taking %.1f dB off)",
                  comp.gr_q8 * 6.02 / 256);
+        return 6;
+    }
+    case 18: {                                           /* realistic: three tracks as I'd play them */
+        int16_t *d;
+        chain_tracks(3);
+        tp[0].src = SRC_SYNTH;                           /* T1: the synth, played, through GRAIN and SPACE */
+        tp[0].dev[DEV_GRAIN][GP_WET] = 60;
+        tp[0].dev[DEV_SPACE][SP_DLY] = 40;
+        tp[0].dev[DEV_SPACE][SP_VERB] = 30;
+        d = tp[1].dev[DEV_COLOR];                        /* T2: a reel, driven, a little low end, darker */
+        d[CP_DRIV] = 40;
+        tp[1].ch[CH_LOW] = 3;
+        tp[1].ch[CH_FILT] = -20;
+        tp[2].dev[DEV_RESO][RP_WET] = 40;                /* T3: a reel ringing the strings */
+        mst[MS_AMT] = 40;
+        play_phrase(0, 6);
+        snprintf(say, sz, "three tracks: a played synth through GRAIN and SPACE, a driven reel, a reel on RESONATOR, "
+                 "the compressor (%u grains)", sounding());
+        return 6;
+    }
+    case 19: case 21: case 22: {                         /* realistic: a four-track groove (21: its busiest moment,
+                                                          * 22: bounced onto track 4 while it plays) */
+        uint32_t t;
+        tp[0].dev[DEV_COLOR][CP_CRSH] = 30;              /* T1 drums: crushed a little */
+        tp[1].dev[DEV_GRAIN][GP_WET] = 50;               /* T2: grains */
+        tp[1].ch[CH_PAN] = -40;
+        tp[2].src = SRC_SYNTH;                           /* T3: a synth bass, filtered */
+        tp[2].ch[CH_FILT] = -30;
+        tp[3].dev[DEV_SPACE][SP_VERB] = 40;              /* T4: in a room */
+        tp[3].ch[CH_PAN] = 40;
+        mst[MS_AMT] = 30;
+        if (n == 21) {                                   /* a build-up: grains denser, strings, every filter */
+            tp[1].dev[DEV_GRAIN][GP_RATE] = 80;
+            tp[3].dev[DEV_RESO][RP_WET] = 50;
+            tp[0].dev[DEV_SPACE][SP_DLY] = 40;
+            for (t = 0; t < NTRK; t++)
+                tp[t].ch[CH_FILT] = (int16_t)(t & 1u ? 35 : -45);
+        }
+        if (n == 22) {                                   /* REC on T4: the others printed onto its tape */
+            tp[3].recin = RIN_OTHR;
+            tape_clear(3);
+            if (tape_prepare(3) > 0)
+                sys.rec |= 8u;
+        }
+        play_phrase(2, 6);
+        snprintf(say, sz, "%s (%u grains, %u strings)", n == 19 ? "a four-track groove: crushed drums, grains, a filtered "
+                 "synth bass, a reverb, the compressor" : n == 21 ? "the groove's busiest moment: denser grains, strings, "
+                 "a delay, every channel filtered" : "the groove, bounced onto track 4 as it plays",
+                 sounding(), reso[0].nch + reso[1].nch + reso[2].nch + reso[3].nch);
+        return 6;
+    }
+    case 20: {                                           /* realistic: an ambient pad on two tracks */
+        chain_tracks(2);
+        tp[0].src = SRC_SYNTH;                           /* T1: a held synth, stretched into a long cloud */
+        tp[0].dev[DEV_GRAIN][GP_WET] = 100;
+        tp[0].dev[DEV_GRAIN][GP_RATE] = 70;
+        tp[0].dev[DEV_GRAIN][GP_SIZE] = 300;
+        tp[0].dev[DEV_SPACE][SP_VERB] = 70;
+        tp[0].dev[DEV_SPACE][SP_DEC] = 80;
+        tp[0].dev[DEV_SPACE][SP_DLY] = 30;
+        tp[1].dev[DEV_RESO][RP_WET] = 50;                /* T2: a reel through the strings, in the room */
+        tp[1].dev[DEV_SPACE][SP_VERB] = 50;
+        mst[MS_AMT] = 20;
+        play_phrase(0, 6);
+        snprintf(say, sz, "an ambient pad on two tracks: a synth stretched by GRAIN into a long room, a reel through "
+                 "the strings (%u grains)", sounding());
         return 6;
     }
     default: {                                           /* a 20 s WAV over TAPE3.WAV while the reels play */
@@ -551,7 +632,7 @@ int main(int argc, char **argv)
         int n;
         wav_cap = 23u * 44100u * 2u;
         wav_buf = malloc(wav_cap * sizeof *wav_buf);
-        for (n = 1; n <= 17; n++) {
+        for (n = 1; n <= 22; n++) {
             char path[512];
             wav_n = wav_clip = 0;
             run(n, say, sizeof say);

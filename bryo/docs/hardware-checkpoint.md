@@ -44,6 +44,21 @@ first six runs cost about 40 more than at the first checkpoint, the two new devi
 | 16 | TRACKS 3, GRAIN WET 100, DRIV 40, SPACE | 2,310 | 54 chunks of SPACE, 11.7 s free |
 | 17 | the mixer: LOW HIGH FILT PAN on all four, the compressor at AMT 60 | 1,699 | 5.7 dB taken off |
 
+Runs 3 to 17 test each part at its limit. How the instrument will actually be played is a different number, so
+runs 18 to 22 are realistic setups (each played for 6 s, a synth track's keys going):
+
+| Run | Setup | Host cost | Against nothing on |
+| --- | --- | ---: | ---: |
+| 18 | three tracks as I'd play them: a played synth through GRAIN and SPACE, a driven reel with a little EQ, a reel through RESONATOR, the compressor | 1,653 | 1.8x |
+| 19 | a four-track groove: crushed drums, a grain track, a filtered synth bass, a reverb, two tracks panned, the compressor | 1,584 | 1.7x |
+| 20 | an ambient pad on two tracks: a synth stretched by dense grains into a long reverb, a reel through the strings | 2,077 | 2.2x |
+| 21 | the groove's busiest moment: denser grains, strings, a delay, every channel filtered | 2,439 | 2.6x |
+| 22 | the groove, bounced onto track 4 as it plays | 1,756 | 1.9x |
+
+The everyday setups sit under the 2,000 target, a dense pad at it, a busy build-up 20 % over; the all-on case
+(run 15, 6.3x) isn't one anybody plays. GRAIN's density is what moves the number most. One reading from the device
+(the CPU with four reels playing, run 1) turns these ratios into percentages.
+
 These are measurements, not listening: the WAVs are there to be heard.
 No sample past full scale and no sudden jump (over 12,000 between neighbouring samples) in any of them. The stress:
 over 20 s, 131,965 audio blocks and 86,110 USB sectors cut into the main loop while RESONATOR's and SPACE's knobs
