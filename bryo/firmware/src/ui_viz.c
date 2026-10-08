@@ -10,8 +10,7 @@
  *   SYNTH      per page: the oscillators' cycles, the filter's response, the envelope, the keys and voices
  *   POLY       per page: the sound with STRT and the keys' range, the envelope, the filter with its TYPE
  *   TAPE       the whole tape's sound, large, lit inside the loop window (STRT, LEN, bracketed) with its 16 slices
- *              ticked under it; the playhead over it (stopped: where playing starts, moved by ROTA); SPD as chevrons
- *              at the top
+ *              ticked under it; the playhead over it (stopped: where playing starts, moved by ROTA)
  *   GRAIN      the sound in TAPE's loop window, lit where grains read it (SIZE, scaled by PITCH), and one solid
  *              block per grain (RATE, placed by PATN) in a stereo lane under it (SPRD, up = left, down = right)
  *   RESONATOR  the response over 8 octaves: peaks on PTCH's partials (harmonics, or a scale's chord tones; a node on
@@ -102,8 +101,9 @@ static void viz_tape(const int16_t *v, uint32_t f)
      * blocks' peaks (each dot column the loudest block under it, so no hit falls between columns): lit inside the
      * loop window (STRT, LEN, bracketed), dim outside, with the 16 slices the white keys play ticked under it. The
      * playhead is where the head is while it runs (a dotted cut through the sound), else where playing starts
-     * (ROTA's point; the end when reversed); SPD as chevrons at the top; REC armed tagged at the top right. */
-    int32_t r0 = 6, r1 = 114, rw = r1 - r0, top = 15, bot = 35, mid = 25, amp = 9, k, x;
+     * (ROTA's point; the end when reversed); REC armed tagged at the top right. SPD's direction and speed are the
+     * strip's pictogram above, so the sound gets the rows they took here. */
+    int32_t r0 = 6, r1 = 114, rw = r1 - r0, top = 10, bot = 35, mid = 23, amp = 12, k, x;
     int32_t x0 = r0 + v[0] * rw / 100, x1 = x0 + v[1] * rw / 100;
     int32_t sp = v[2] * (v[5] ? -1 : 1) / (v[6] ? 2 : 1), gain = db_x1000(v[7]);   /* REV, HALF; GAIN */
     int32_t fw = 1 + v[4] * 8 / 100;                   /* XFAD (drawn wider than to scale, so it shows) */
@@ -149,12 +149,11 @@ static void viz_tape(const int16_t *v, uint32_t f)
     px_text(1, 0, PXF_3, tape_name(sys.sel), px_ink);                /* what it plays */
     if ((sys.rec >> sys.sel) & 1u)
         px_tag(105, 0, PXF_3, "REC", px_ink, px_bg);
-    px_chevrons(60, 4, sp, px_ink);                                    /* SPD (with REV, HALF) */
     vz_label(x0, "IN", f == 0u);
     if (x1 - x0 >= 22 || f == 1u)
         vz_label(x1, "OUT", f == 1u);
     if (f == 3u || f == 2u)
-        vz_label(60, f == 3u ? "DUB" : "SPD", 1);
+        vz_label(60, f == 3u ? "DUB" : "SPD", 1);   /* (SPD's turn still names it: the playhead's side shows REV) */
     if (f >= 4u && f < 12u)
         vz_ktag(78, DLBL - 1, &DEV_P[DEV_SRC][f], v[f]);
 }
