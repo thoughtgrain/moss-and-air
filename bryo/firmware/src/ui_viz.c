@@ -9,10 +9,9 @@
  *
  *   SYNTH      per page: the oscillators' cycles, the filter's response, the envelope, the keys and voices
  *   POLY       per page: the sound with STRT and the keys' range, the envelope, the filter with its TYPE
- *   TAPE       a reel-to-reel, reels close over the middle: the run along the bottom is the whole tape with the
- *              sample on it, lit inside the loop window (STRT, LEN, bracketed); the playhead over it (stopped: where
- *              playing starts, moved by ROTA); between the reels SPD as chevrons and DUB as the layers kept (the old
- *              take under, the new on top)
+ *   TAPE       the whole tape's sound, large, lit inside the loop window (STRT, LEN, bracketed) with its 16 slices
+ *              ticked under it; the playhead over it (stopped: where playing starts, moved by ROTA); SPD as chevrons
+ *              at the top
  *   GRAIN      the sound in TAPE's loop window, lit where grains read it (SIZE, scaled by PITCH), and one solid
  *              block per grain (RATE, placed by PATN) in a stereo lane under it (SPRD, up = left, down = right)
  *   RESONATOR  the response over 8 octaves: peaks on PTCH's partials (harmonics, or a scale's chord tones; a node on
@@ -97,39 +96,35 @@ static void vz_poly(const int32_t *xs, const int32_t *ys, int32_t n, uint16_t c,
 }
 
 /* -------------------------------------------------------------- TAPE --- */
-/* a reel: its flange (dotted), the tape wound on it (solid), the hub and three spokes */
-static void vz_reel(int32_t cx, int32_t cy)
-{
-    int32_t k;
-    px_ring(cx, cy, 10, px_dim, 2);
-    px_ring(cx, cy, 7, px_ink, 1);
-    px_ring(cx, cy, 6, px_ink, 1);
-    px_box(cx - 1, cy - 1, 3, 3, px_ink);
-    for (k = 0; k < 3; k++)
-        px_line(px_px(cx, 2, 8 + k * 21), px_py(cy, 2, 8 + k * 21), px_px(cx, 4, 8 + k * 21), px_py(cy, 4, 8 + k * 21), px_ink, 1);
-}
-
 static void viz_tape(const int16_t *v, uint32_t f)
 {
-    /* A reel-to-reel, the reels close in over the middle the way a deck's are, and under them the tape's run: the
-     * whole of what the track plays (its tape or a reel, named at the top left), its sound drawn on it from the
-     * blocks' peaks: lit inside the loop window (STRT, LEN, bracketed), dim outside. The playhead is where the head
-     * is while it runs (a dotted line through the run), else where playing starts (the end when reversed); between
-     * the reels, SPD as chevrons and DUB as the layers kept; REC armed is tagged at the top right. */
-    int32_t r0 = 6, r1 = 114, rw = r1 - r0, top = 20, bot = 35, mid = 27, k, x;
-    int32_t x0 = r0 + v[0] * rw / 100, x1 = x0 + v[1] * rw / 100, keep = v[3] >= 0 ? 100 : 100 + v[3];
+    /* The whole of what the track plays (its tape or a reel, named at the top left), its sound drawn large from the
+     * blocks' peaks (each dot column the loudest block under it, so no hit falls between columns): lit inside the
+     * loop window (STRT, LEN, bracketed), dim outside, with the 16 slices the white keys play ticked under it. The
+     * playhead is where the head is while it runs (a dotted cut through the sound), else where playing starts
+     * (ROTA's point; the end when reversed); SPD as chevrons at the top; REC armed tagged at the top right. */
+    int32_t r0 = 6, r1 = 114, rw = r1 - r0, top = 15, bot = 35, mid = 25, amp = 9, k, x;
+    int32_t x0 = r0 + v[0] * rw / 100, x1 = x0 + v[1] * rw / 100;
     int32_t sp = v[2] * (v[5] ? -1 : 1) / (v[6] ? 2 : 1), gain = db_x1000(v[7]);   /* REV, HALF; GAIN */
     int32_t fw = 1 + v[4] * 8 / 100;                   /* XFAD (drawn wider than to scale, so it shows) */
+    tape_view_t tv;
+    uint32_t nb;
     if (x1 > r1)
         x1 = r1;
-    vz_reel(36, 9);
-    vz_reel(84, 9);
-    px_line(r0, top, r1, top, px_ink, 1);                             /* the run's edges */
-    px_line(r0, bot, r1, bot, px_ink, 1);
-    for (x = r0 + 1; x < r1; x++) {                                    /* the sample (phase 2: the take) */
-        int32_t a = clamp(tape_peak_at(sys.sel, (x - r0) * 1000 / rw) * 6 / 1000 * gain / 1000, 0, 6);   /* (clips) */
-        px_box(x, mid - a, 1, 2 * a + 1, x >= x0 && x <= x1 ? px_ink : px_dim);
+    tape_view(sys.sel, &tv);
+    nb = tv.len / TAPE_BLK;
+    px_line(r0, mid, r1, mid, px_dim, 2);                            /* the centre line */
+    for (x = r0; x <= r1 && nb; x++) {                                 /* the sample: each column's loudest block */
+        uint32_t b0 = (uint32_t)(x - r0) * nb / (uint32_t)(rw + 1), b1 = (uint32_t)(x - r0 + 1) * nb / (uint32_t)(rw + 1), b, pk = 0;
+        int32_t a;
+        for (b = b0; b <= b1 && b < nb; b++)
+            pk = tv.peak[b] > pk ? tv.peak[b] : pk;
+        a = clamp((int32_t)pk * amp * gain / (255 * 1000), 0, amp);   /* (GAIN: clips at the frame) */
+        if (a)
+            px_box(x, mid - a, 1, 2 * a + 1, x >= x0 && x <= x1 ? px_ink : px_dim);
     }
+    for (k = 1; k < 16; k++)                                           /* the slices, ticked under the window */
+        px_dot(x0 + (x1 - x0) * k / 16, bot + 1, px_dim);
     for (k = 0; k < 2; k++) {                                          /* the brackets, 2 dots wide when turned */
         int32_t bx = k ? x1 : x0, s = k ? -1 : 1, w = f == (uint32_t)k ? 2 : 1;
         px_box(k ? bx - w + 1 : bx, top - 2, w, bot - top + 5, px_ink);
@@ -140,12 +135,12 @@ static void viz_tape(const int16_t *v, uint32_t f)
         px_line(x0 + 1, bot - 1, x0 + fw, top + 1, px_ink, 2);
         px_line(x1 - fw, top + 1, x1 - 1, bot - 1, px_ink, 2);
     }
-    {   /* the playhead: a triangle over the run, where the head is (or where playing starts) */
+    {   /* the playhead: a triangle over the sound, where the head is (or where playing starts) */
         int32_t xr, hd = tape_head(sys.sel), px;
         xr = x0 + (x1 - x0) * v[9] / 100;              /* ROTATE: where playing starts in the window */
         px = hd >= 0 ? r0 + hd * rw / 1000 : sp < 0 ? (v[9] ? xr - 1 : x1 - 3) : (v[9] ? xr : x0 + 3);
         for (k = 0; k < 3; k++)
-            px_box(px - 2 + k, top - 5 + k, 5 - 2 * k, 1, px_ink);   /* (rows 15..17: under the reels' flanges) */
+            px_box(px - 2 + k, top - 5 + k, 5 - 2 * k, 1, px_ink);
         if (hd >= 0) {                                 /* running: a cut through the sound, and its edges */
             px_box(px - 1, top + 1, 3, bot - top - 1, px_bg);
             px_line(px, top + 1, px, bot - 1, px_ink, 2);
@@ -154,11 +149,7 @@ static void viz_tape(const int16_t *v, uint32_t f)
     px_text(1, 0, PXF_3, tape_name(sys.sel), px_ink);                /* what it plays */
     if ((sys.rec >> sys.sel) & 1u)
         px_tag(105, 0, PXF_3, "REC", px_ink, px_bg);
-    px_chevrons(60, 5, sp, px_ink);                                    /* SPD (with REV, HALF), between the reels */
-    for (k = 0; k < 3; k++) {                                          /* DUB: the old take, the new on top */
-        int on = k < 2 ? keep > k * 50 : v[3] < 100;
-        px_line(52 + k * 2, 16 - k * 2, 68 - k * 2, 16 - k * 2, on ? px_ink : px_dim, on ? 1 : 2);
-    }
+    px_chevrons(60, 4, sp, px_ink);                                    /* SPD (with REV, HALF) */
     vz_label(x0, "IN", f == 0u);
     if (x1 - x0 >= 22 || f == 1u)
         vz_label(x1, "OUT", f == 1u);
