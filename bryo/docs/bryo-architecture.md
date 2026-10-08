@@ -155,13 +155,14 @@ Why:
 | COLOR | 0 | 64 B of state a track |
 | Screen canvas | 5,460 (main RAM) | 2 bits a dot (1.6 KB) and two 4-row line buffers (3.8 KB); see "The screen as dots" |
 | GRAIN | 9,728 pool + 2,900 main RAM | 32 grains × 304 B (a 128-sample decoded window each), and each track's buffer bookkeeping; the buffers themselves are shared memory |
-| USB audio in | 16,384 (planned) | ring buffer: 4,096 stereo frames × 4 B (93 ms) for drift and jitter |
+| USB record mode | 12,288 pool + 900 main RAM | the monitor's ring (1,024 stereo frames, 23 ms) and the take's (4,096 mono samples, 186 ms); the take itself is shared memory |
 | SYNTH | 576 | 4 tracks × 3 voices of oscillator and filter state (.bss) |
 | POLY | 8,288 | 4 tracks × 4 voices × a 256-sample block reader (pool), plus 448 B of voice state (.bss) |
 | The drive | 17,340 | the FAT, root and write cache of the USB drive (the 36 KB WAV inbox is gone: a WAV lands in shared memory) |
 
-Measured now: the pool holds 312.0 KB of 336 (32 KB spare, 16 KB of it for USB audio in, build.py keeps 8 KB);
-main RAM 80.9 KB of 96 (COLOR's and SPACE's state added 704 B; their sound memory is shared chunks).
+Measured now (KiB, 32-bit build): the pool holds 316.7 of 336 (19 spare; build.py keeps 8), main RAM's .bss 80.2
+of 96. The USB record mode's two rings first went into main RAM and took it to 92.2, too close to the stack, so
+they live in the pool's room that was kept for USB audio in.
 
 What gives way when memory runs short: chunks come off a cleared tape first, then a parked track's tape (TRACKS),
 then the end of the longest tape. Nothing is set aside per track, so there's no constant to shrink any more.
@@ -256,7 +257,7 @@ audio engine (audio ISR, per 32-sample control block)
   chain.c         one track = source → grain → reso → color → space; the 4 tracks; grain shedding
   source.c        the source_t table; picking a track's source engine
   synth.c         SYNTH: a small subtractive voice (from eng_analog.c)
-  usb_in.c        USB audio in: the OUT endpoint ring buffer and drift correction
+  usbrec.c        the USB record mode: the OUT endpoint's frames, the monitor, the take (usb.c: the endpoint)
 
 control
   mod.c           4 slots per track; engines WAVE, RANDOM, ADSR/FOLLOW, SEQUENCER; depths; sums
@@ -914,6 +915,67 @@ strings) would need a step for SPACE as well (the room at a quarter rate, say), 
 the device's number. The stress run cuts the interrupts in while RESONATOR and SPACE take and give back memory as
 knobs turn, and the books balance (RESONATOR's strings and SPACE's lines are in the check now too).
 
+## USB record mode (2026-10-08)
+
+Recording from the computer is a mode of its own, not a source a track plays through: you go in, record, put the
+take on a track and come out. Nothing else runs meanwhile, which keeps it light and keeps it simple to reason about.
+
+**Going in.** With the transport stopped, hold REC for a second (a hint shows after 0.3 s). REC used to arm on the
+way down; now, stopped, it arms on the way up, so a held REC can mean something else. Arming while stopped has no
+timing to keep (nothing records until PLAY), so nothing is lost. Playing, REC still arms on the way down, because a
+punch-in has to land where you press it; holding it then only says to stop first.
+
+**While it's up.** The transport stops, every track's REC lets go, and the tracks stop rendering: the audio ISR fades
+them out over one block and plays the computer instead. Their GRAIN buffers, RESONATOR strings and SPACE lines go back
+to the shared memory (their polls see `sys.usbrec`), so the take can use it. The FM-1's own USB input, what the
+computer can record from it, sends silence: otherwise whatever the computer plays would come straight back to it.
+
+| Step | REC | HOME | White keys |
+| --- | --- | --- | --- |
+| READY | start the take | leave | - |
+| RECORDING | stop it | stop, throw it away | - |
+| CHOOSE | put it on the picked track (its tape replaced) and leave | throw it away (READY) | 1..TRACKS pick the track (lit) |
+
+The screen keeps to what the step needs: the four tracks as numbered boxes with what each holds, the step's word or
+the take's seconds large, one level bar, and the room left.
+
+**How the sound gets in.** `usb.c` (behind `BRYO_UAC_OUT`, on in Bryo, off in the update loader, whose descriptors
+stay byte for byte) adds a second UAC1 streaming interface: the computer plays into the FM-1, 16-bit stereo at
+44.1 kHz on EP4 OUT, isochronous and adaptive. `uaco_service` takes each 1 ms packet in TIMER5, from `usb_poll` and
+nested in the render as the input's `uac_service` already was. It hands the frames to `usbrec.c`, which writes two
+rings:
+
+- **The take** goes in as mono at 22,050 Hz, the tape's format: two frames, both sides, into one sample, as a WAV
+  over the drive does. The main loop encodes it into ADPCM blocks in chunks of the shared memory it takes as it goes
+  (free ones, or cleared and parked tapes'; never a tape in use). The take is written on the computer's clock, so it
+  never drops or repeats a sample, whatever the DAC's clock does.
+- **The monitor** is the frames as they came. The DAC runs at 44,117.6 Hz against the computer's 44,100, so the
+  audio ISR reads the ring a hair slower than it plays, steered by how full the ring is (within 1 %, about 0.04 % in
+  practice). A dropped or doubled frame every 57 ms would click; this bends the pitch by an amount nobody hears.
+
+A take is at most a tape's 23.6 s, or what memory there is. When either runs out it stops there and moves on to
+CHOOSE with a message. Putting it on a track uses `tape_replace()`, which I pulled out of the drive's WAV import so
+both hand chunks over the same way.
+
+**Tests.** `test_usbrec` holds REC playing (a hint, no mode) and stopped (the mode, with no arm on the let-go). The
+devices give their memory back. A 441 Hz sine from the computer is heard at 440.8 Hz with no jump, the ring holding
+steady against the two clocks. A 3 s take in packets of 44 and 45 frames keeps every frame (357 blocks, none lost),
+asks for a track, lands on track 3 and plays back at 300.0 Hz. With 3 chunks free the take stops at 48 blocks, and
+HOME throws it away and leaves. `usb_sie_test` (UAC in and out) parses Bryo's descriptors as a host would (five
+interfaces, the AC header and its terminals, the stream's endpoint) and runs the endpoint against the emulated
+controller: a packet before the computer picks the stream is dropped, then 20 packets polled twice a frame all
+arrive in order, and a bus reset turns the stream off. The interrupt stress enters and leaves the mode, records and
+places takes (2,720 in 20 s) with packets arriving from the TIMER5 signal, and the memory books balance.
+
+**What only the device can tell.** That the JieLi controller's EP4 OUT works as its register map says (the receive
+DMA address, isochronous mode, the receive count): I have the SDK's register names, not a run. And how computers
+treat a new sound output. macOS may switch to an output it hasn't seen when it's plugged in; if Bryo grabs the Mac's
+sound every time it's connected, the next step is to present the output only while the mode is up (a re-enumeration,
+which would also drop and remount the drive).
+
+**Future work: audio out.** The other way, the FM-1 as the computer's input, has existed since Felucca (EP4 IN, the
+master output at 44.1 kHz). It hasn't been checked against Bryo's chain yet; it's on the hardware run sheet.
+
 ## Memory by usage, TRACKS and REC IN (2026-10-08)
 
 Until now every track had a 36 KB tape whether it used it or not, and the plan reserved a delay and a reverb per
@@ -990,7 +1052,7 @@ Each phase ends in something you can flash and hear or see, and each is its own 
 | --- | --- | --- |
 | 1. Skeleton (**done**, host-verified) | `bryo.c` boots on the kept hardware layer; the old app code is removed; silence plus a test tone; the header and an empty strip; install, UBOOT and calibration still work | it installs from the web installer and returns to stock |
 | 2. TAPE + reels (**done**, host-verified; see "Phase 2, as built") | tapes play factory reels; the loop window, speed, reverse, half speed, FADE; slices on the white keys; REC and overdub (resampling the other tracks); clear and undo | you can load, slice, record and overdub a loop |
-| 3. USB audio in + SYNTH + POLY (SYNTH, POLY and source_t **done**, host-verified; see "SYNTH, as built" and "POLY, as built") | the source_t interface; the UAC OUT endpoint, drift handling, INPUT = USB; the SYNTH source; the POLY source (voices with their own envelope and filter, three HOME pages) | you can record your computer, and play the synth and samples onto a tape |
+| 3. USB audio in + SYNTH + POLY (**done**, host-verified; see "SYNTH, as built", "POLY, as built" and "USB record mode") | the source_t interface; the UAC OUT endpoint, drift handling, a record mode; the SYNTH source; the POLY source (voices with their own envelope and filter, three HOME pages) | you can record your computer, and play the synth and samples onto a tape |
 | 3b. GRAIN (**done**, host-verified; see "GRAIN, as built") | the scheduler, the sounding cap, FREEZE (key 0); the live buffer, SCAN, FDBK | grains run on 4 tracks inside the budget |
 | 3c. Memory by usage (**done**, host-verified; see "Memory by usage, TRACKS and REC IN") | the shared chunks, growing tapes, TRACKS, REC IN, long reels | memory follows what you use |
 | 4. RESONATOR (**done**, host-verified; see "RESONATOR, as built") | strings, chromatic keys, OCT shifts | tuned feedback chords from the keys |

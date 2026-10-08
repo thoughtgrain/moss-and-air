@@ -80,6 +80,20 @@ New files show up after you eject and plug back in; deleting a file on the compu
 The details, and why it works this way, are in [docs/bryo-architecture.md](docs/bryo-architecture.md) under
 "Files over USB".
 
+## Recording from the computer
+
+With the transport stopped, hold REC for a second: the USB record mode. Everything else stops, and the FM-1 plays
+whatever the computer sends it (pick Bryo as the computer's sound output). REC starts a take and REC stops it; then
+press white key 1-4 for the track it goes to, and REC again puts it there and takes you back. HOME goes back a step
+(a take you don't want, or out). A take is up to 23.6 s, or what memory is free.
+
+## If it crashes
+
+A crash shows a red BRYO CRASH screen for 4 s and restarts by itself; a hang restarts it after 8 s (the watchdog).
+Turning it off and on does the same. What's in RAM is gone (the tapes, the knobs, until projects arrive in phase 8);
+the reels saved to flash and the settings stay. If it crashes in the first 30 s twice in a row, it starts in the
+chip's update mode instead of looping, and the web installer puts Bryo or the stock firmware back.
+
 ## Building and testing
 
 The device build needs JieLi's toolchain and SDK, as Felucca's did: see [BUILDING.md](BUILDING.md), then

@@ -4,7 +4,8 @@
 #
 # context   where the row applies: any | power-on | page (any device or slot page) | page:tape | page:grain |
 #           page:resonator | page:color | page:space | page:slot | mixer (GLO's view) | glo-held | slot-held |
-#           slot-held+step (a SEQ slot's pad and a white key held) | project-view | routing-view
+#           slot-held+step (a SEQ slot's pad and a white key held) | project-view | routing-view | usb-record (the
+#           USB record mode: REC held a second)
 # control   BTN_<label> (the 14 buttons) | ENC_<role> (the 7 encoders) | POT_MASTER | WHITE_<n> (1..16, or a
 #           range n-m) | BLACK_<label> (OP1..OP6 PIT GLO MONO POLY ZERO, left to right)
 # gesture   press | tap (down and up within HOLD) | hold | release | turn | hold-turn (turn while the context's
@@ -30,7 +31,11 @@ page	BTN_GLO	hold	the mixer while held; letting go returns to the page	now	-	cha
 page	BTN_SCL	press	nothing (the PRD's SEL; track picking moved under GLO)	unassigned	-	change
 page	BTN_SCL	hold	open the system menu (palette, speaker EQ, LEDs, USB serial, about)	proposed	-	change
 page	BTN_PLAY	press	start / stop the transport: every track's tape plays its loop from the start (STOP fades them out in 2 ms)	now	-	PRD 2.2
-page	BTN_REC	press	arm / disarm the focused track's tape: while playing it records the other tracks' mix (old x DUB + new x GAIN); armed on a reel, the reel is copied onto the tape first (refused if the tape holds a take)	now	-	PRD 2.2
+page	BTN_REC	press	arm / disarm the focused track's tape: while playing it records the other tracks' mix (old x DUB + new x GAIN); armed on a reel, the reel is copied onto the tape first (refused if the tape holds a take). Playing: as REC goes down (a punch-in lands where it's pressed); stopped: as it's let go	now	-	PRD 2.2
+page	BTN_REC	hold	held a second while stopped: the USB record mode (the tracks stop, the output plays the computer); playing: a hint to stop first	now	-	change
+usb-record	BTN_REC	press	READY: start the take; RECORDING: stop it; CHOOSE: put it on the picked track (its tape replaced) and leave	now	-	change
+usb-record	BTN_HOME	press	back a step: RECORDING or CHOOSE: the take thrown away; READY: leave	now	-	change
+usb-record	WHITE_1-4	press	CHOOSE: the track the take goes to (1..TRACKS)	now	-	change
 page	BTN_SAVE	tap	quick-save the active project (now: a message)	planned	8	PRD 2.2
 page	BTN_SAVE	hold	undo the last tape clear (while nothing has been recorded over it)	now	-	change
 page	BTN_OCTDN	press	the white keys an octave down (SYNTH's notes; RESONATOR notes, SEQ step pages later)	now	-	PRD 2.1

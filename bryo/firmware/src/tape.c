@@ -696,6 +696,33 @@ static void tape_poll(void)
     }
 }
 
+/* main loop: track t's tape becomes the n chunks of map (owned by someone else until now: a WAV that arrived over
+ * USB, a take from the USB record mode), nblk blocks of sound; the old tape's chunks go back to the pool, the track
+ * plays its tape (REEL TAPE), REC on it lets go and a cleared take's undo goes. Silent while it swaps. */
+static void tape_replace(uint32_t t, const uint8_t *map, uint32_t n, uint32_t nblk)
+{
+    tape_ctl_t *c = &tape_ctl[t];
+    uint32_t k;
+    c->rec_ok = 0;
+    c->grow = 0;
+    c->empty = 1;                                       /* (silent while it's swapped) */
+    tape_free(t);
+    for (k = 0; k < n; k++) {
+        c->map[k] = map[k];
+        mem_give(map[k], MEM_TAPE + t);
+    }
+    RING_PUBLISH();
+    c->nch = (uint8_t)n;
+    c->nblk = (uint16_t)nblk;
+    tp[t].dev[DEV_SRC][TK_REEL] = 0;
+    sys.rec &= (uint8_t)~(1u << t);
+    if (tape_undo.valid && tape_undo.trk == t)
+        tape_undo.valid = 0;
+    RING_PUBLISH();
+    c->empty = 0;
+    tape_ver[t]++;
+}
+
 /* the POLY key held: clear what track t plays (a reel: the track goes back to its tape, cleared) */
 static void tape_clear(uint32_t t)
 {

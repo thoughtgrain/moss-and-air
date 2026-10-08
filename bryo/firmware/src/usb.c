@@ -19,7 +19,11 @@
  * USB frame from the TIMER5 ISR, nested in the render too (main.c). The
  * update loader leaves both off: MIDI only.
  * BRYO_MSC=1 (Bryo's app) adds a USB Mass Storage function on EP3 instead of the console: the drive (msc.c, the
- * transport; vdisk.c, the disk). The console and the drive share EP3, so a build has one or the other. */
+ * transport; vdisk.c, the disk). The console and the drive share EP3, so a build has one or the other.
+ * BRYO_UAC_OUT=1 (Bryo's app, with FELUCCA_UAC) adds a USB audio output: the computer plays into the FM-1, 16-bit
+ * stereo at 44.1 kHz on an isochronous adaptive OUT endpoint (EP4 OUT, beside the input's EP4 IN). uaco_service
+ * takes each 1 ms packet and hands its frames to the app (uaco_frames: usbrec.c, the record mode), from usb_poll
+ * and nested in the render, as uac_service. Off, the descriptors are byte for byte what they were. */
 #include "../hal/fm1_usb.h"   /* registers; relative, so the loader and the host tests find it too */
 #ifndef FELUCCA_CDC
 #define FELUCCA_CDC 0
@@ -29,6 +33,12 @@
 #endif
 #ifndef BRYO_MSC
 #define BRYO_MSC 0
+#endif
+#ifndef BRYO_UAC_OUT
+#define BRYO_UAC_OUT 0
+#endif
+#if BRYO_UAC_OUT && !FELUCCA_UAC
+#error "BRYO_UAC_OUT needs FELUCCA_UAC (the audio control interface and EP4)"
 #endif
 #if BRYO_MSC && FELUCCA_CDC
 #error "BRYO_MSC and FELUCCA_CDC both use EP3: build one or the other"
@@ -112,6 +122,15 @@ static struct {
     uint32_t fill_lo, fill_hi;                   /* range of fill_min since the stream started */
 } uac;
 #endif
+#if BRYO_UAC_OUT
+/* the computer's sound into the FM-1 (EP4 OUT): each packet's frames go to the app as they arrive */
+static void uaco_frames(const uint8_t *p, uint32_t nframes);   /* the app (usbrec.c): 16-bit L, R little endian */
+static uint8_t ep4rx[UAC_MAXP + 4] __attribute__((aligned(4)));
+static struct {
+    volatile uint8_t alt;        /* the output's streaming interface setting: 1 = the computer plays into us */
+    uint32_t pkts, frames, odd;  /* packets taken, their frames, packets whose length wasn't whole frames */
+} uaco;
+#endif
 
 static struct {
     uint8_t up, config, pend_addr, has_pend_addr, e0_tx, e0_zlp;
@@ -182,7 +201,7 @@ static void midi_out_event(uint32_t pkt)            /* from the audio ISR */
 /* Two functions: audio + MIDI (0 audio control, 1 MIDI streaming, 2 audio streaming with FELUCCA_UAC)
  * and, with FELUCCA_CDC, the CDC-ACM console (communication + data). The endpoints never move:
  * EP1 MIDI, EP2 CDC notify, EP3 CDC data, EP4 audio.
- * bcdDevice: 3.00 MIDI, +0.10 the audio input, +0.01 CDC (+0.02 per FELUCCA_USB_LAYOUT step, so a host
+ * bcdDevice: 3.00 MIDI, +0.10 the audio input, +0.20 the audio output, +0.01 CDC (+0.02 per FELUCCA_USB_LAYOUT step, so a host
  * never reuses what it learnt about another layout).
  * FELUCCA_USB_LAYOUT, how the CDC build presents itself (#67: macOS 13-15 attach Apple's CDC composite
  * driver to a misc / IAD device that has a CDC function, and their kernel audio driver then never
@@ -209,12 +228,31 @@ static void midi_out_event(uint32_t pkt)            /* from the audio ISR */
 
 #define D_CFG(len, nif) 9, 2, (len) & 0xFF, (len) >> 8, (nif), 1, 0, 0x80, 50
 #define D_IAD(first, n, cls, sub, proto) 8, 0x0B, (first), (n), (cls), (sub), (proto), 0
-#if FELUCCA_UAC
+#if BRYO_UAC_OUT
+#define D_AC(a)                                                                                      \
+    9, 4, (a), 0, 0, 1, 1, 0, 0,                                                                     \
+    11, 0x24, 1, 0x00, 0x01, 53, 0, 3, (a) + 1, (a) + 2, (a) + 3,   /* AC header: MIDI + both streams */ \
+    12, 0x24, 2, 1, 0x03, 0x06, 0, 2, 0x03, 0x00, 0, 0,    /* input terminal 1: line, 2 ch (L R) */      \
+    9, 0x24, 3, 2, 0x01, 0x01, 0, 1, 0,                    /* output terminal 2: USB streaming, from 1 */ \
+    12, 0x24, 2, 3, 0x01, 0x01, 0, 2, 0x03, 0x00, 0, 0,    /* input terminal 3: USB streaming, 2 ch */   \
+    9, 0x24, 3, 4, 0x03, 0x06, 0, 3, 0,                    /* output terminal 4: line, from 3 */
+#define D_ASO(s)                                                                                     \
+    9, 4, (s), 0, 0, 1, 2, 0, 0,                           /* the output's streaming, alt 0 */           \
+    9, 4, (s), 1, 1, 1, 2, 0, 0,                           /* alt 1: the computer plays */              \
+    7, 0x24, 1, 3, 1, 0x01, 0x00,                          /* AS general: terminal 3, delay 1, PCM */   \
+    11, 0x24, 2, 1, 2, 2, 16, 1, UAC_RATE & 0xFF, (UAC_RATE >> 8) & 0xFF, UAC_RATE >> 16,           \
+    9, 5, 0x04, 0x09, UAC_MAXP & 0xFF, UAC_MAXP >> 8, 1, 0, 0,   /* EP4 OUT isochronous adaptive, 1 ms */ \
+    7, 0x25, 1, 0x01, 0, 0, 0,                             /* CS endpoint: sampling frequency control */
+#elif FELUCCA_UAC
 #define D_AC(a)                                                                                      \
     9, 4, (a), 0, 0, 1, 1, 0, 0,                                                                     \
     10, 0x24, 1, 0x00, 0x01, 31, 0, 2, (a) + 1, (a) + 2,   /* AC header 1.00: MIDI + audio streaming */ \
     12, 0x24, 2, 1, 0x03, 0x06, 0, 2, 0x03, 0x00, 0, 0,    /* input terminal 1: line, 2 ch (L R) */      \
     9, 0x24, 3, 2, 0x01, 0x01, 0, 1, 0,                    /* output terminal 2: USB streaming, from 1 */
+#else
+#define D_AC(a) 9, 4, (a), 0, 0, 1, 1, 0, 0, 9, 0x24, 1, 0x00, 0x01, 9, 0, 1, (a) + 1,
+#endif
+#if FELUCCA_UAC
 #define D_AS(s)                                                                                      \
     9, 4, (s), 0, 0, 1, 2, 0, 0,                           /* audio streaming, alt 0: no bandwidth */    \
     9, 4, (s), 1, 1, 1, 2, 0, 0,                           /* alt 1: the stream */                      \
@@ -224,7 +262,6 @@ static void midi_out_event(uint32_t pkt)            /* from the audio ISR */
     9, 5, 0x84, 0x05, UAC_MAXP & 0xFF, UAC_MAXP >> 8, 1, 0, 0,   /* EP4 IN isochronous async, 1 ms */   \
     7, 0x25, 1, 0x01, 0, 0, 0,                             /* CS endpoint: sampling frequency control */
 #else
-#define D_AC(a) 9, 4, (a), 0, 0, 1, 1, 0, 0, 9, 0x24, 1, 0x00, 0x01, 9, 0, 1, (a) + 1,
 #define D_AS(s)
 #endif
 #define D_MIDI(m)                                                                                    \
@@ -238,9 +275,12 @@ static void midi_out_event(uint32_t pkt)            /* from the audio ISR */
     5, 0x25, 1, 1, 1,                                                                                \
     9, 5, 0x81, 2, 64, 0, 0, 0, 0,                                                                   \
     5, 0x25, 1, 1, 3,
-#define D_AUDIO(a) D_AC(a) D_MIDI((a) + 1) D_AS((a) + 2)   /* audio + MIDI from interface a */
-#define AUD_NIF (2 + FELUCCA_UAC)
-#define AUD_LEN (92 + 74 * FELUCCA_UAC)
+#if !BRYO_UAC_OUT
+#define D_ASO(s)
+#endif
+#define D_AUDIO(a) D_AC(a) D_MIDI((a) + 1) D_AS((a) + 2) D_ASO((a) + 3)   /* audio + MIDI from interface a */
+#define AUD_NIF (2 + FELUCCA_UAC + BRYO_UAC_OUT)
+#define AUD_LEN (92 + 74 * FELUCCA_UAC + 74 * BRYO_UAC_OUT)
 #define D_CDC(c)                                                                                     \
     D_IAD((c), 2, 2, 2, 1),                                /* IAD: CDC ACM */                           \
     9, 4, (c), 0, 1, 2, 2, 1, 0,                           /* communication */                          \
@@ -253,7 +293,7 @@ static void midi_out_event(uint32_t pkt)            /* from the audio ISR */
     7, 5, 0x03, 2, 64, 0, 0,                               /* EP3 OUT bulk */                           \
     7, 5, 0x83, 2, 64, 0, 0,                               /* EP3 IN bulk */
 #define CDC_LEN 66                                         /* with its IAD */
-#define BCD_LO(cdc) (0x10 * FELUCCA_UAC + ((cdc) ? 0x01 + 2 * FELUCCA_USB_LAYOUT : 0))
+#define BCD_LO(cdc) (0x10 * (FELUCCA_UAC + 2 * BRYO_UAC_OUT) + ((cdc) ? 0x01 + 2 * FELUCCA_USB_LAYOUT : 0))
 #define D_DEV(bcdusb, cls, sub, proto, cdc)                                                          \
     18, 1, (bcdusb) & 0xFF, (bcdusb) >> 8, (cls), (sub), (proto), 64, 0x09, 0x12, FELUCCA_USB_PID & 0xFF, \
     FELUCCA_USB_PID >> 8, BCD_LO(cdc), 0x03, 1, 2, 0, 1
@@ -268,7 +308,7 @@ static void midi_out_event(uint32_t pkt)            /* from the audio ISR */
 #define MSC_LEN 23
 #define CFG_LEN_MSC (9 + AUD_LEN + MSC_LEN)
 static const uint8_t DEV_DESC_MSC[18] = {18, 1, 0x00, 0x02, 0, 0, 0, 64, 0x09, 0x12, FELUCCA_USB_PID & 0xFF,
-                                         FELUCCA_USB_PID >> 8, 0x10 * FELUCCA_UAC + 0x09, 0x03, 1, 2, 0, 1};
+                                         FELUCCA_USB_PID >> 8, 0x10 * (FELUCCA_UAC + 2 * BRYO_UAC_OUT) + 0x09, 0x03, 1, 2, 0, 1};
 static const uint8_t CFG_DESC_MSC[] = {D_CFG(CFG_LEN_MSC, AUD_NIF + 1), D_AUDIO(0) D_MSC(AUD_NIF)};
 typedef char cfg_msc_len_ok[sizeof CFG_DESC_MSC == CFG_LEN_MSC ? 1 : -1];
 static uint8_t usb_msc_on = 1;                             /* the drive is presented (read by the TIMER5 ISR) */
@@ -321,6 +361,7 @@ static uint8_t usb_cdc_on = FELUCCA_CDC_DEFAULT != 0;      /* the console is pre
 #define AUD_IF 0u
 #endif
 #define UAC_AS_IF (AUD_IF + 2u)
+#define UAC_ASO_IF (AUD_IF + 3u)                           /* (BRYO_UAC_OUT) */
 static const uint8_t STR0[4] = {4, 3, 0x09, 0x04};
 /* STR1 manufacturer, STR2 product. The update loader (firmware/loader, FELUCCA_LOADER) keeps upstream's strings byte
  * for byte, so its binary does not change: the installers find it as "Felucca Update". Bryo's app names itself:
@@ -424,6 +465,15 @@ static void uac_ep4_reset(void)                         /* drop a queued packet;
     sie_wr(S_TXCSR2, 0x40);                             /* ISO */
 }
 
+#if BRYO_UAC_OUT
+static void uaco_reset(void)                            /* EP4 OUT: drop what's in it; isochronous mode */
+{
+    sie_wr(S_INDEX, 4);
+    sie_wr(S_RXCSR1, 0x90);                             /* ClrDataTog + FlushFIFO (as EP1's) */
+    sie_wr(S_RXCSR2, 0x40);                             /* ISO */
+}
+#endif
+
 static void uac_stream(uint32_t alt)                    /* SET_INTERFACE, configuration, bus reset */
 {
     uac.go = 0;                                         /* the next render primes the ring again */
@@ -499,6 +549,13 @@ no_cdc:;
     sie_wr(S_INDEX, 4);
     sie_wr(S_TXMAXP, 0xFF);
     uac_ep4_reset();
+#if BRYO_UAC_OUT
+    fm1_usb_ep4_rxbuf(ep4rx);                           /* EP4 OUT's DMA (fm1_usb_attach left it on EP0's buffer) */
+    sie_wr(S_INDEX, 4);
+    sie_wr(S_RXMAXP, 0xFF);
+    uaco_reset();
+    uaco.alt = 0;
+#endif
     fm1_usb_ep_enable(1u << 4);
     uac_stream(0);
 #endif
@@ -624,6 +681,10 @@ static void ep0_service(void)
         if (usb.config != 1u)
             uac_stream(0);
 #endif
+#if BRYO_UAC_OUT
+        if (usb.config != 1u)
+            uaco.alt = 0;
+#endif
         goto ack;
     case 0x8008:
         e0_send(&usb.config, 1, wlength);
@@ -641,6 +702,13 @@ static void ep0_service(void)
             goto ack;
         }
 #endif
+#if BRYO_UAC_OUT
+        if (s[4] == UAC_ASO_IF && wvalue <= 1u && usb.config) {
+            uaco_reset();
+            uaco.alt = (uint8_t)wvalue;
+            goto ack;
+        }
+#endif
         if (wvalue == 0)
             goto ack;
         goto stall;
@@ -653,6 +721,14 @@ static void ep0_service(void)
             return;
         }
 #endif
+#if BRYO_UAC_OUT
+        if (s[4] == UAC_ASO_IF) {
+            static uint8_t alto;
+            alto = uaco.alt;
+            e0_send(&alto, 1, wlength);
+            return;
+        }
+#endif
         e0_send(zero2, 1, wlength);
         return;
     case 0x0201: {                                      /* CLEAR_FEATURE(ENDPOINT_HALT): data toggle reset */
@@ -660,6 +736,10 @@ static void ep0_service(void)
 #if FELUCCA_UAC
         if (wvalue == 0 && s[4] == 0x84u)
             goto ack;                                   /* isochronous: no halt, no toggle */
+#endif
+#if BRYO_UAC_OUT
+        if (wvalue == 0 && s[4] == 0x04u)
+            goto ack;
 #endif
         if (wvalue != 0 || ep > last)
             goto stall;                                 /* not an endpoint we have */
@@ -712,7 +792,7 @@ static void ep0_service(void)
 #endif
 #if FELUCCA_UAC
     case 0x2201:                                        /* SET_CUR, endpoint: sampling frequency */
-        if (s[4] != 0x84u || s[3] != 1u)
+        if ((s[4] != 0x84u && !(BRYO_UAC_OUT && s[4] == 0x04u)) || s[3] != 1u)
             goto stall;
         if (wlength) {
             uac.e0_rx = 1;
@@ -725,7 +805,7 @@ static void ep0_service(void)
     case 0xA282:
     case 0xA283: {
         static const uint8_t RATE[3] = {UAC_RATE & 0xFF, (UAC_RATE >> 8) & 0xFF, UAC_RATE >> 16};
-        if (s[4] != 0x84u || s[3] != 1u)
+        if ((s[4] != 0x84u && !(BRYO_UAC_OUT && s[4] == 0x04u)) || s[3] != 1u)
             goto stall;
         e0_send(RATE, 3, wlength);
         return;
@@ -1177,6 +1257,37 @@ static void uac_service(void)
 }
 #endif
 
+#if BRYO_UAC_OUT
+/* TIMER5 (usb_poll, and nested in the render as uac_service: it touches only EP4, INDEX set on every access): the
+ * packet the computer sent into EP4 OUT, if one waits, to the app. Isochronous: one packet a 1 ms frame, and one
+ * the controller holds; polled at 2 kHz, so a packet waits half a frame at most. Taken whatever the app does with
+ * it (outside the record mode it drops them), so the endpoint never backs up. */
+static void uaco_service(void)
+{
+    uint32_t csr, n;
+    if (!usb.up || !usb.config)
+        return;
+    sie_wr(S_INDEX, 4);
+    csr = sie_rd(S_RXCSR1) | (sie_rd(S_RXCSR2) << 8);
+    if (!(csr & 1u))
+        return;
+    n = sie_rd(S_RXCOUNT1) | (sie_rd(S_RXCOUNT2) << 8);
+    if (n > UAC_MAXP)
+        n = UAC_MAXP;
+    fm1_usb_rx_sync();
+    if (n & 3u)
+        uaco.odd++;
+    if (uaco.alt && n >= 4u) {
+        uaco_frames(ep4rx, n / 4u);
+        uaco.frames += n / 4u;
+    }
+    uaco.pkts++;
+    csr = (csr & ~0x164u) | 0x10u;                      /* (as EP1's: the buffer back to the controller) */
+    sie_wr(S_RXCSR1, csr & 0xFFu);
+    sie_wr(S_RXCSR2, csr >> 8);
+}
+#endif
+
 static void usb_poll(void)                              /* TIMER5 ISR, 2 kHz */
 {
     uint32_t iu, it, ir;
@@ -1248,6 +1359,9 @@ static void usb_poll(void)                              /* TIMER5 ISR, 2 kHz */
         uac.e0_rx = 0;
         uac_stream(0);
 #endif
+#if BRYO_UAC_OUT
+        uaco.alt = 0;
+#endif
         fm1_usb_ep0_buf(ep0buf);
         sie_wr(S_INTRUSBE, 0x07);
         sie_wr(S_INTRTX1E, 0x01);
@@ -1282,6 +1396,9 @@ static void usb_poll(void)                              /* TIMER5 ISR, 2 kHz */
 #endif
 #if FELUCCA_UAC
     uac_service();
+#endif
+#if BRYO_UAC_OUT
+    uaco_service();
 #endif
 }
 

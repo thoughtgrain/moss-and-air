@@ -22,8 +22,10 @@
 #define UI_MSG_FRAMES 70             /* a message holds the visualization panel ~1 s (~66 frames/s) */
 
 enum { FOCUS_DEV, FOCUS_SLOT };      /* what the strip shows: a device of the track, or a modulator slot */
-enum { VIEW_PAGE, VIEW_MIXER, VIEW_ROUTE };   /* VIEW_MIXER: GLO, the four track levels on the knobs, the tracks
-                                               * below; VIEW_ROUTE: ALGORITHM, each track's REC IN on the knobs */
+enum { VIEW_PAGE, VIEW_MIXER, VIEW_ROUTE, VIEW_USBREC };   /* VIEW_MIXER: GLO, the four track levels on the knobs,
+                                                            * the tracks below; VIEW_ROUTE: ALGORITHM, each track's
+                                                            * REC IN on the knobs; VIEW_USBREC: the USB record mode
+                                                            * (REC held), the tracks a take can go to */
 
 static struct {
     uint8_t kind;                    /* FOCUS_DEV / FOCUS_SLOT */
@@ -41,6 +43,9 @@ static struct {
     uint8_t poly_held, save_held;    /* the POLY key (clear the tape) and SAVE (undo) held, waiting for HOLD */
     uint32_t poly_t0, save_t0;
     uint8_t zero_held;               /* the 0 key down: let go before HOLD, a tap (the freeze latches or lets go) */
+    uint8_t rec_held, rec_said;      /* REC down (stopped: its arm waits for the let-go; held a second: USB record),
+                                      * and the hint shown */
+    uint32_t rec_t0;
     uint32_t zero_t0;
     uint8_t chan;                    /* the mixer's channel page: the knobs set the selected track's channel strip */
     uint8_t chan_held, chan_used;    /* EDIT down on the mixer, and a knob turned meanwhile (as GLO's: held momentary,
@@ -55,6 +60,7 @@ static struct {
 } ui;
 
 static void draw_viz(void);           /* ui_viz.c */
+static void viz_usbrec_strip(void);   /* ui_viz.c: the record mode's tracks */
 
 static void ui_message(const char *s)
 {
@@ -121,7 +127,10 @@ static void draw_head(void)
     int slot = ui.kind == FOCUS_SLOT && ui.view == VIEW_PAGE;
     uint32_t pages = ui.view != VIEW_PAGE ? 1u
                    : pdesc_pages(slot ? ME_P[tp[sys.sel].engine[ui.slot]] : dev_p(sys.sel, ui.dev));
-    if (ui.view == VIEW_MIXER)
+    if (ui.view == VIEW_USBREC) {
+        str_cpy(ti, "USB RECORD", sizeof ti);
+        str_cpy(box, "IN", sizeof box);
+    } else if (ui.view == VIEW_MIXER)
         str_cpy(ti, ui.chan ? "CHANNEL" : "MIXER", sizeof ti);
     else if (ui.view == VIEW_ROUTE)
         str_cpy(ti, "REC IN", sizeof ti);
@@ -133,7 +142,7 @@ static void draw_head(void)
     }
     fmt_int(bpm, sys.bpm);
     sig = hash_str(hash_str(hash_str(2166136261u, ti), bpm), box) + pages * 977u + ui.page * 61u + sys.playing * 7u + ((sys.rec >> sys.sel) & 1u) * 131u +
-          ux.theme * 3u;
+          ux.theme * 3u + (ur.state == UR_RECORDING) * 524287u;
     if (!ui.force && sig == ui.sig_head)
         return;
     ui.sig_head = sig;
@@ -168,7 +177,8 @@ static void draw_head(void)
         } else {
             px_box(x, 4, 4, 5, px_bg);
         }
-        if ((sys.rec >> sys.sel) & 1u) {                    /* REC armed: a round dot */
+        if (ui.view == VIEW_USBREC ? ur.state == UR_RECORDING : (sys.rec >> sys.sel) & 1u) {   /* REC armed (the record
+                                                                                             * mode: recording): a dot */
             x -= 7;
             px_box(x + 1, 4, 3, 5, px_bg);
             px_box(x, 5, 5, 3, px_bg);
@@ -184,6 +194,19 @@ static void draw_head(void)
 static void draw_strip(void)
 {
     uint32_t k, sig = 2166136261u + ux.theme * 3u;
+    if (ui.view == VIEW_USBREC) {                       /* the record mode: the tracks a take can go to */
+        sig += ur.state * 7u + (uint32_t)(ur.dest + 1) * 131u + sys.ntrk * 1031u + sys.sel * 7919u;
+        for (k = 0; k < NTRK; k++)
+            sig = (sig ^ (tape_ctl[k].nblk + tape_ctl[k].empty * 65536u)) * 16777619u;
+        if (!ui.force && sig == ui.sig_strip)
+            return;
+        ui.sig_strip = sig;
+        px_colors();
+        px_begin(UI_STRIP_H);
+        viz_usbrec_strip();
+        px_blit(UI_STRIP_Y);
+        return;
+    }
     for (k = 0; k < 4u; k++) {
         int16_t *vp;
         const pdesc_t *d = ui_page(k, &vp);
@@ -239,7 +262,10 @@ static void draw_foot(void)
 {
     char a[28], b[16];
     uint32_t sig;
-    if (ui.glo_held)                                  /* the white keys pick the track; SELECT sets TRACKS */
+    if (ui.view == VIEW_USBREC)                       /* the record mode: what REC and HOME do in this step */
+        str_cpy(a, ur.state == UR_RECORDING ? "REC:STOP HOME:THROW AWAY" : ur.state == UR_CHOOSE ?
+                   "KEYS:TRACK REC:KEEP IT" : "REC:START HOME:LEAVE", sizeof a);
+    else if (ui.glo_held)                             /* the white keys pick the track; SELECT sets TRACKS */
         str_cpy(a, "KEYS:TRK SEL:TRACKS", sizeof a);
     else if (ui.view == VIEW_MIXER)
         str_cpy(a, ui.chan ? "KNOBS: CHANNEL" : "EDIT: CHANNEL", sizeof a);
@@ -253,6 +279,8 @@ static void draw_foot(void)
     fmt_int(b + 1, (int32_t)sys.sel + 1);
     str_cpy(b + str_len(b), " OCT ", 8);
     fmt_int(b + str_len(b), track[sys.sel].octave);
+    if (ui.view == VIEW_USBREC)
+        str_cpy(b, "44.1K", sizeof b);                /* (what the computer sends: 44.1 kHz) */
     sig = hash_str(hash_str(5381u, a), b) + track[sys.sel].mute + ux.theme * 3u;
     if (!ui.force && sig == ui.sig_foot)
         return;
@@ -264,7 +292,7 @@ static void draw_foot(void)
     {
         int32_t x = 119 - px_text_w(PXF_3, b);
         px_text(x, 5, PXF_3, b, px_ink);
-        if (track[sys.sel].mute)                      /* the focused track is muted: say so */
+        if (track[sys.sel].mute && ui.view != VIEW_USBREC)   /* the focused track is muted: say so */
             px_tag(x - 4 - px_text_w(PXF_3, "MUTE"), 4, PXF_3, "MUTE", px_ink, px_bg);
     }
     px_blit(UI_FOOT_Y);

@@ -1239,6 +1239,97 @@ static void viz_route(uint32_t f)
         px_text(2, DLBL, PXF_3, b, px_ink);
 }
 
+/* --------------------------------------------------- USB record mode --- */
+/* The strip: the four tracks a take can go to, each its number in a box, and what its tape holds now (seconds, "-"
+ * empty, OFF parked). Picking one (CHOOSE) fills its box and says REPLACE under it, where SEC was. */
+static void viz_usbrec_strip(void)
+{
+    uint32_t k;
+    char b[12];
+    for (k = 0; k < NTRK; k++) {
+        int32_t x = 30 * (int32_t)k, off = k >= sys.ntrk, pick = ur.state == UR_CHOOSE && ur.dest == (int8_t)k;
+        char n[2] = {(char)('1' + k), 0};
+        uint16_t c = off ? px_dim : px_ink;
+        if (pick) {
+            px_box(x + 7, 2, 16, 20, px_ink);
+            px_text_big(x + 10, 5, 2, n, px_bg);
+        } else {
+            px_frame(x + 7, 2, 16, 20, c, off ? 2 : 1);
+            px_text_big(x + 10, 5, 2, n, c);
+        }
+        if (off) {
+            px_text_c(x, 30, 27, PXF_5, "OFF", px_dim);
+            continue;
+        }
+        if (tape_ctl[k].nblk && !tape_ctl[k].empty) {
+            vz_secs(b, (int32_t)(tape_ctl[k].nblk * TAPE_BLK * 10u / TAPE_SR));
+            px_text_c(x, 30, 27, PXF_5, b, px_ink);
+            if (!pick)
+                px_text_c(x, 30, 36, PXF_3, "SEC", px_dim);
+        } else {
+            px_text_c(x, 30, 27, PXF_5, "-", px_ink);
+        }
+        if (pick)
+            px_text_c(x, 30, 36, PXF_3, "REPLACE", px_ink);
+    }
+}
+
+/* The panel: what the step is, the time large, and one level bar (both sides' peak), plain. READY: the room a take
+ * has, or a note to play something on the computer; RECORDING: the take's seconds of the room; CHOOSE: the take's
+ * length and where it would go. */
+static void viz_usbrec(void)
+{
+    char b[28], t[12];
+    int32_t pk = ur.peak, w;
+    uint32_t room = ur_room() * TAPE_CHS * 10u / TAPE_SR;          /* tenths */
+    ur.peak = pk - (pk >> 2);                                      /* (the bar falls between frames) */
+    if (ur.state == UR_READY) {
+        px_text(DX0, 2, PXF_5B, "READY", px_ink);
+        vz_secs(t, (int32_t)room);
+        str_cpy(b, "ROOM FOR ", sizeof b);
+        str_cpy(b + str_len(b), t, 8);
+        str_cpy(b + str_len(b), " SEC", 5);
+        px_text(DX0, 14, PXF_5, b, px_ink);
+    } else {
+        uint32_t tn = ur.state == UR_RECORDING ? usbrec_tenths() : ur.nblk * TAPE_BLK * 10u / TAPE_SR;
+        vz_secs(t, (int32_t)tn);
+        px_text_big(DX0, 1, 3, t, px_ink);
+        w = DX0 + 18 * (int32_t)str_len(t);
+        if (ur.state == UR_RECORDING) {
+            vz_secs(b + 3, (int32_t)room);
+            b[0] = 'O';
+            b[1] = 'F';
+            b[2] = ' ';
+            px_text(w, 9, PXF_3, "SEC", px_ink);
+            px_text(w, 16, PXF_3, b, px_dim);
+        } else {
+            px_text(w, 16, PXF_3, "SEC", px_ink);
+        }
+    }
+    if (ur.state == UR_CHOOSE) {                                   /* where it goes */
+        if (ur.dest < 0) {
+            str_cpy(b, "PICK: KEYS 1-", sizeof b);
+            fmt_int(b + str_len(b), sys.ntrk);
+        } else {
+            str_cpy(b, "REC: ONTO TRACK ", sizeof b);
+            fmt_int(b + str_len(b), ur.dest + 1);
+        }
+        px_text(DX0, 26, PXF_5, b, px_ink);
+        px_text(DX0, DLBL, PXF_3, "HOME: THROW IT AWAY", px_dim);
+        return;
+    }
+    if (!usbrec_live()) {                                          /* nothing arriving */
+        px_text(DX0, 28, PXF_3, "PLAY SOUND ON THE COMPUTER", px_dim);
+        px_text(DX0, 35, PXF_3, "WITH BRYO AS ITS OUTPUT", px_dim);
+        return;
+    }
+    w = pk * (DW + 1) / 32767;                                     /* the level: one bar, a tick at full scale */
+    px_frame(DX0, 30, DW + 1, 5, px_dim, 2);
+    if (w > 0)
+        px_box(DX0, 31, w > DW ? DW : w, 3, px_ink);
+    px_text(DX0, DLBL, PXF_3, "LEVEL", px_dim);
+}
+
 /* a message: an inverted box over the panel, its words wrapped at 18 characters */
 static void viz_message(void)
 {
@@ -1273,6 +1364,11 @@ static uint32_t viz_sig(void)
                  (ui.last < 4u ? ui.last + 1u : 0u) * 7919u + sys.sel * 104729u + ux.theme * 3u, k, t;
     if (ui.msg_t)
         return hash_str(h ^ 0x5A5Au, ui.msg);
+    if (ui.view == VIEW_USBREC) {                                      /* the step, the time, the level, the room */
+        uint32_t tn = ur.state == UR_RECORDING ? usbrec_tenths() : ur.nblk;
+        return h + ur.state * 31u + tn * 131u + (uint32_t)(ur.dest + 1) * 7u + (uint32_t)usbrec_live() * 65537u +
+               (uint32_t)(ur.peak * 24 / 32767) * 524287u + ur_room() * 8191u + sys.ntrk * 3u;
+    }
     if (ui.view == VIEW_MIXER) {
         for (t = 0; t < NCH; t++)
             h = (h ^ (uint32_t)(tp[sys.sel].ch[t] + 32768)) * 16777619u;
@@ -1330,6 +1426,8 @@ static void draw_viz(void)
     px_begin(VZ_H);
     if (ui.msg_t) {
         viz_message();
+    } else if (ui.view == VIEW_USBREC) {
+        viz_usbrec();
     } else if (ui.view == VIEW_MIXER) {
         if (ui.chan)
             viz_channel(f);

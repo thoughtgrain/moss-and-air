@@ -14,8 +14,9 @@ extern uint32_t _pool_start[], _pool_end[], _rt_start[], _rt_end[], _rt_load[];
  * and counts ms; USB and UART polls wait for the first tick after the render, as they always did,
  * and the time spent nested is handed to the audio ISR so its load figures stay render-only.
  * The USB audio stream cannot wait for the render (one packet per 1 ms frame, a render takes up to
- * ~5 ms): uac_service also runs nested. It touches only EP4 (INDEX is set on every access) and the
- * consumer side of the audio ring, and usb_poll never runs nested, so the two never interleave. */
+ * ~5 ms): uac_service also runs nested, and so does uaco_service (the record mode's stream from the computer,
+ * EP4 OUT, into usbrec.c's rings as their one writer). They touch only EP4 (INDEX is set on every access) and their
+ * side of the audio rings, and usb_poll never runs nested, so they never interleave with it. */
 void fm1_timer5_irq(void)
 {
     static uint32_t sub, owed;
@@ -45,6 +46,10 @@ void fm1_timer5_irq(void)
 #if FELUCCA_UAC
         if (usb_due)
             uac_service();
+#endif
+#if BRYO_UAC_OUT
+        if (usb_due)
+            uaco_service();                     /* (EP4 OUT, as uac_service EP4 IN: one packet a ms either way) */
 #endif
         t5_nested_ticks += fm1_ticks() - t0;
         return;

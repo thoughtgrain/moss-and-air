@@ -76,6 +76,7 @@ static void ui_redraw(void);
 #include "../firmware/src/reso.c"
 #include "../firmware/src/color.c"
 #include "../firmware/src/space.c"
+#include "../firmware/src/usbrec.c"
 #include "../firmware/src/chain.c"
 #include "../firmware/src/icons.c"
 #include "../firmware/src/panel.c"
@@ -125,6 +126,8 @@ static void power_on(void)
     reso_cap = RS_N;
     memset(color, 0, sizeof color);
     memset(space, 0, sizeof space);
+    memset(&ur, 0, sizeof ur);
+    ur_mw = ur_mr = ur_rw = ur_rr = 0;
     memset(gbuf, 0, sizeof gbuf);                        /* (GRAIN's buffers and grains: a fresh start, as the */
     memset(grain, 0, sizeof grain);                      /* device's power-on gives) */
     gr_used = 0;
@@ -608,6 +611,7 @@ static void shot_screen(const char *pal, const char *name)   /* the screen as it
 
 static void turn(uint32_t k, int32_t d) { host_enc[panel.enc[EN_K1 + k]] = d; ui_input(); }
 
+static void ur_feed(uint32_t frames, double hz, double a);   /* (test_usbrec's: the computer playing) */
 static void screens_in(const char *pal)
 {
     uint32_t s;
@@ -903,6 +907,41 @@ static void screens_in(const char *pal)
     ui_message("SAVE: PROJECTS ARRIVE IN PHASE 8");
     shot(pal, "message");
     ui.msg_t = 0;
+    {
+    uint8_t was_rec = sys.rec;                           /* (put back after: the screens below are as they were) */
+    sys.playing = 0;                                     /* the USB record mode: stopped, REC held a second */
+    for (s = 0; s < NTRK; s++)
+        tape_unprepare(s);
+    sys.rec = 0;
+    hold(B_REC);
+    fm1_ms += 1100;
+    ui_input();
+    let_go(B_REC);
+    ui.msg_t = 0;
+    shot(pal, "usbrec");
+    ur_feed(400, 441, 20000);                            /* the computer playing: the level */
+    shot(pal, "usbrec_live");
+    press(B_REC);
+    for (s = 0; s < 28u; s++) {                          /* a take of 2.5 s */
+        ur_feed(3938, 441, 12000);
+        chain_poll();
+    }
+    ur_feed(40, 441, 16000);
+    ui.msg_t = 0;
+    shot(pal, "usbrec_rec");
+    press(B_REC);
+    ui.msg_t = 0;
+    shot(pal, "usbrec_choose");
+    key_edge((uint32_t)__builtin_ctz(note_bit_of_white(1)));
+    shot(pal, "usbrec_pick");
+    press(B_HOME);
+    press(B_HOME);
+    ui.msg_t = 0;
+    sys.playing = 1;
+    sys.rec = was_rec;
+    ui.force = 1;                                        /* (the page drawn again, as it was before the mode) */
+    ui_draw();
+    }
     ui.uboot = 3;
     lcd_fill(0, 0, 240, 240, 0);
     draw_head();
@@ -2741,6 +2780,181 @@ static void test_space(void)
           !space[0].rev.nch && !space[0].pre.nch);
 }
 
+/* the computer playing into the FM-1 (what usb.c's uaco_service hands usbrec.c from each 1 ms packet): frames of a
+ * sine, l at amplitude a, r at half, phase kept across calls */
+static double ur_ph;
+static void ur_feed(uint32_t frames, double hz, double a)
+{
+    uint8_t p[46 * 4];
+    while (frames) {
+        uint32_t n = frames > 45u ? 45u : frames, i;
+        for (i = 0; i < n; i++) {
+            int16_t l = (int16_t)lrint(a * sin(ur_ph)), r = (int16_t)lrint(a * 0.5 * sin(ur_ph));
+            ur_ph += 2 * M_PI * hz / 44100.0;
+            p[4 * i] = (uint8_t)l;
+            p[4 * i + 1] = (uint8_t)((uint16_t)l >> 8);
+            p[4 * i + 2] = (uint8_t)r;
+            p[4 * i + 3] = (uint8_t)((uint16_t)r >> 8);
+        }
+        uaco_frames(p, n);
+        frames -= n;
+    }
+}
+
+/* blocks rendered as the device would: the computer's frames at 44,100 a second against the DAC's 44,117.6, the
+ * main loop between blocks; the left output into buf (or 0) */
+static double ur_due;
+static void ur_play(uint32_t blocks, double hz, double a, int32_t *buf)
+{
+    uint32_t b;
+    for (b = 0; b < blocks; b++) {
+        uint32_t n;
+        ur_due += CTL * 44100.0 / 44117.647;
+        n = (uint32_t)ur_due;
+        ur_due -= n;
+        if (a > 0)
+            ur_feed(n, hz, a);
+        render(1, buf ? buf + b * CTL : 0);
+        chain_poll();
+        fm1_ms += (b & 1u) ? 1u : 0u;
+    }
+}
+
+/* the USB record mode (usbrec.c): REC held a second opens it, the computer is heard, a take records exactly what
+ * arrived, goes onto the track picked, and the mode closes */
+static void test_usbrec(void)
+{
+    enum { NB = 2756 };                                  /* 2 s */
+    static int32_t s[NB * CTL];
+    char b[160];
+    uint32_t i, k, lo = 0xFFFFFFFFu, hi = 0, nb, frames;
+    int32_t jump;
+    double hz;
+    power_on();
+    memset(&ur, 0, sizeof ur);
+    ur_mw = ur_mr = ur_rw = ur_rr = 0;
+    tp[0].dev[DEV_GRAIN][GP_WET] = 100;                  /* (memory the tracks hold: it goes back in the mode) */
+    tp[1].dev[DEV_SPACE][SP_DLY] = 100;
+    chain_poll();
+    check("before: GRAIN's buffer and SPACE's line hold memory", mem_count(MEM_GRAIN) > 0 && mem_count(MEM_SPACE + 1) > 0);
+
+    sys.playing = 1;                                     /* playing: REC arms as it goes down; held, it says why not */
+    hold(B_REC);
+    check("playing: REC arms the moment it goes down (a punch-in where it's pressed)", (sys.rec & 1u) == 1u);
+    fm1_ms += 1100;
+    ui_input();
+    check("..held a second while playing: no record mode, a hint to stop first",
+          ui.view != VIEW_USBREC && !sys.usbrec && !strcmp(ui.msg, "STOP, THEN HOLD REC: USB RECORD"));
+    let_go(B_REC);
+    press(B_REC);
+    check("..REC again lets go of it", sys.rec == 0);
+    sys.playing = 0;
+
+    hold(B_REC);                                         /* stopped: the arm waits for the let-go */
+    check("stopped: REC down arms nothing yet", sys.rec == 0);
+    fm1_ms += 400;
+    ui_input();
+    check("..held 0.4 s: \"KEEP HOLDING REC: USB RECORD\"", !strcmp(ui.msg, "KEEP HOLDING REC: USB RECORD") && !sys.usbrec);
+    fm1_ms += 700;
+    ui_input();
+    let_go(B_REC);
+    check("..held a second: the USB record mode (READY), and REC's let-go arms nothing",
+          ui.view == VIEW_USBREC && sys.usbrec && ur.state == UR_READY && sys.rec == 0 && !sys.playing);
+    chain_poll();
+    check("the tracks' devices give their memory back (GRAIN's buffer, SPACE's line)",
+          !mem_count(MEM_GRAIN) && !mem_count(MEM_SPACE + 1));
+    press(B_PLAY);
+    check("PLAY does nothing in the mode", !sys.playing);
+    render(1, 0);
+    check("one block fades the tracks out, then the ISR plays the computer", ur.isr_in == 1);
+
+    ur_play(NB, 441, 12000, s);                          /* the monitor: 2 s of a sine from the computer */
+    hz = buf_pitch(s, NB * CTL / 2, NB * CTL, 200, 1000);
+    for (i = NB * CTL / 4, jump = 0; i < NB * CTL; i++)
+        jump = abs(s[i] - s[i - 1]) > jump ? abs(s[i] - s[i - 1]) : jump;
+    for (k = 0; k < 2000; k++) {                         /* the ring's fill, the computer's clock against the DAC's */
+        uint32_t f;
+        ur_play(1, 441, 12000, 0);
+        f = ur_mw - ur_mr;
+        lo = f < lo ? f : lo;
+        hi = f > hi ? f : hi;
+    }
+    snprintf(b, sizeof b, "the computer heard: %.1f Hz (441), no step over %d, the ring held at %u..%u frames (aim %u)",
+             hz, jump, lo, hi, UR_MON_AIM);
+    check(b, fabs(hz - 441) < 2 && jump < 1400 && lo + 48u >= UR_MON_AIM && hi <= UR_MON_AIM + 48u);
+    check("..the computer playing: the screen knows (live)", usbrec_live());
+    fm1_ms += 300;
+    usbrec_poll();
+    check("..300 ms with nothing: not live", !usbrec_live());
+
+    press(B_REC);                                        /* a take */
+    check("REC: recording", ur.state == UR_RECORDING && ur.feed);
+    frames = 0;
+    for (k = 0; k < 3u * 1378u; k++) {                   /* 3 s of 300 Hz, in packets of 44 and 45 frames */
+        uint32_t n = (k % 10u) == 9u ? 45u : 44u;
+        ur_feed(n / 2u, 300, 10000);
+        ur_feed(n - n / 2u, 300, 10000);
+        frames += n;
+        render(1, 0);
+        if (k % 4u == 0u)
+            chain_poll();
+    }
+    chain_poll();
+    press(B_REC);
+    nb = (frames / 2u + TAPE_BLK - 1u) / TAPE_BLK;
+    snprintf(b, sizeof b, "REC again: CHOOSE, the take every frame that arrived (%u frames: %u blocks, %u in it), none lost",
+             frames, nb, ur.nblk);
+    check(b, ur.state == UR_CHOOSE && ur.nblk == nb && ur.lost == 0 && ur.dest < 0);
+    press(B_REC);
+    check("..REC before a track is picked: it asks for one", ur.state == UR_CHOOSE &&
+          !strcmp(ui.msg, "PICK A TRACK: WHITE KEYS 1-4"));
+    key_edge(note_bit_of_white(2) ? (uint32_t)__builtin_ctz(note_bit_of_white(2)) : 0u);
+    check("..white key 3: track 3 picked", ur.dest == 2);
+    press(B_REC);
+    snprintf(b, sizeof b, "..REC: track 3's tape is the take (%u blocks), the mode closes, track 3 focused",
+             tape_ctl[2].nblk);
+    check(b, tape_ctl[2].nblk == nb && !tape_ctl[2].empty && ur.state == UR_OFF && !sys.usbrec &&
+          ui.view == VIEW_PAGE && sys.sel == 2 && !mem_count(MEM_IMPORT));
+    render(2, 0);
+    check("..the monitor fades out and the tracks render again", ur.isr_in == 0);
+    for (k = 0; k < NTRK; k++)
+        track[k].mute = k != 2u;
+    sys.playing = 1;
+    render(NB / 4, 0);
+    render(NB / 2, s);
+    sys.playing = 0;
+    hz = buf_pitch(s, 0, NB / 2 * CTL, 100, 1000);
+    snprintf(b, sizeof b, "..and it plays: %.1f Hz (300)", hz);
+    check(b, fabs(hz - 300) < 1.5 && peak_of(s, NB / 2 * CTL) > 1000);
+    for (k = 0; k < NTRK; k++)
+        track[k].mute = 0;
+
+    hold(B_REC);                                         /* memory full: the take stops where it runs out */
+    fm1_ms += 1100;
+    ui_input();
+    let_go(B_REC);
+    chain_poll();
+    while (mem_count(MEM_FREE) > 3u)
+        mem_alloc(MEM_SPARE);
+    press(B_REC);
+    for (k = 0; k < 1378u && ur.state == UR_RECORDING; k++) {
+        ur_feed(44, 300, 10000);
+        render(1, 0);
+        chain_poll();
+    }
+    snprintf(b, sizeof b, "3 chunks free: the take stops at them (%u blocks), CHOOSE, \"MEMORY FULL\"", ur.nblk);
+    check(b, ur.state == UR_CHOOSE && ur.nblk == 3u * MEM_CB && ur.nch == 3u &&
+          !strcmp(ui.msg, "THE TAKE STOPPED: MEMORY FULL"));
+    press(B_HOME);
+    check("HOME: the take thrown away, its chunks back (READY)", ur.state == UR_READY && !ur.nch &&
+          mem_count(MEM_FREE) == 3u);
+    press(B_HOME);
+    check("HOME again: the mode closes", ur.state == UR_OFF && !sys.usbrec && ui.view == VIEW_PAGE);
+    for (i = 0; i < MEM_NC; i++)
+        if (mem_owner[i] == MEM_SPARE)
+            mem_free(i);
+}
+
 /* the tape's edges: an empty user reel, a loop shorter than a block, the seam running backwards */
 static void test_tape_edges(void)
 {
@@ -3474,6 +3688,7 @@ int main(int argc, char **argv)
     test_reso();
     test_color();
     test_space();
+    test_usbrec();
     test_input();
     test_settings();
     palette_set(UI_GREY_INDEX);                          /* (the screens are one ink now, whatever the palette) */

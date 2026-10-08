@@ -88,6 +88,9 @@ Write down the CPU reading for each, and anything you hear.
 | 13 | Power-cycle. Each track's COLOR: DRIV 60, CRSH 40, NOIS 30, TILT 30 (FX, KNOB 1-4); CMOD BOTH (COLOR 2) | every track driven, crushed and noisy | CPU |
 | 14 | Power-cycle. Each track's SPACE 2: DLY 50, VERB 40 | echoes and a room on every track | CPU; does the mixer's memory ribbon show it? |
 | 15 | Runs 12, 13 and 14 together (everything on) | the hardest case there is | CPU; does it crackle, does shedding settle it? |
+| 16 | Plugged into a computer: is there an output named Bryo? Pick it, play something; on the FM-1, stopped, hold REC a second | the USB record mode, the level bar moving, the sound in your headphones | did the computer switch its output to Bryo by itself when plugged in? any clicks in what you hear? |
+| 17 | REC, 10 s of something you know, REC, white key 2, REC | track 2's tape is the take; PLAY plays it | the length on TAPE's page; does it sound like what the computer played (mono, 22 kHz)? |
+| 18 | Record the FM-1 on the computer (Bryo as its input) while it plays | the master output arrives (Felucca's, untested with Bryo) | any dropouts? |
 
 ## What I'll do with the numbers
 

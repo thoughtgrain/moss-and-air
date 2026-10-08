@@ -13,7 +13,10 @@
  *                  latched (tapped again: the levels), as GLO's mixer and the 0 key's freeze
  *   SCL            unassigned (the PRD's SEL; track picking moved under GLO)
  *   PLAY           start / stop
- *   REC            arm the focused track (recording arrives with TAPE, phase 2)
+ *   REC            arm the focused track (playing: as it goes down, so a punch-in lands where it's pressed;
+ *                  stopped: as it's let go). Held a second while stopped: the USB record mode (usbrec.c): REC
+ *                  starts and stops the take, the white keys pick its track, REC again puts it there, HOME goes
+ *                  back a step
  *   OCT- / OCT+    the white keys' octave
  *   KNOB 1..4      the four values on screen; SELECT: the tempo
  *   black OP1..OP4 track mutes
@@ -54,7 +57,7 @@ static uint32_t focus_btn(void)
     static const uint8_t SLOT_BTN[NSLOT] = {B_LFO, B_ENV, B_SEQ, B_ARP};
     if (ui.view == VIEW_MIXER)
         return ui.chan ? B_EDIT : B_GLO;
-    if (ui.view == VIEW_ROUTE)                          /* (no pad: ALGORITHM is a knob) */
+    if (ui.view == VIEW_ROUTE || ui.view == VIEW_USBREC)   /* (no pad: ALGORITHM is a knob; REC held) */
         return NB;
     if (ui.kind == FOCUS_SLOT)
         return SLOT_BTN[ui.slot];
@@ -75,7 +78,10 @@ static void ui_leds(void)
     }
     if (focus_btn() < NB)
         led_put(nl, panel.btn[focus_btn()], 1);
-    led_put(nl, panel.btn[B_REC], (sys.rec >> sys.sel) & 1u);
+    led_put(nl, panel.btn[B_REC], ui.view == VIEW_USBREC ? ur.state == UR_RECORDING : (sys.rec >> sys.sel) & 1u);
+    if (ui.view == VIEW_USBREC && ur.state == UR_CHOOSE)   /* the keys that pick the take's track */
+        for (k = 0; k < 27u; k++)
+            led_put(nl, 14u + k, KEY_WHITE[k] < sys.ntrk);
     led_put(nl, panel.btn[B_OCTDN], track[sys.sel].octave < 3u);
     led_put(nl, panel.btn[B_OCTUP], track[sys.sel].octave > 3u);
     for (k = 0; k < 27u; k++) {
@@ -170,6 +176,33 @@ static void glo_up(void)
     ui.last = 0xFF;
 }
 
+/* REC: arm the focused track (the tape made ready: a reel copied in), or let go of it */
+static void rec_arm(void)
+{
+    if ((sys.rec >> sys.sel) & 1u) {
+        sys.rec &= (uint8_t)~(1u << sys.sel);
+        tape_unprepare(sys.sel);
+    } else {
+        int r = tape_prepare(sys.sel);
+        if (r > 0)
+            sys.rec |= (uint8_t)(1u << sys.sel);
+        else
+            ui_message(r < 0 ? "NO MEMORY FREE TO RECORD" : "TAPE HAS A TAKE: CLEAR IT (HOLD POLY)");
+    }
+}
+
+/* the USB record mode opens (REC held a second, stopped) */
+static void usbrec_open(void)
+{
+    usbrec_enter();
+    ui.view = VIEW_USBREC;
+    ui.chan = 0;
+    ui.chan_latched = 0;
+    ui.glo_latched = 0;
+    ui.glo_held = 0;
+    ui.last = 0xFF;
+}
+
 static void on_button(uint32_t b)
 {
     switch (b) {
@@ -207,17 +240,13 @@ static void on_button(uint32_t b)
     case B_PLAY:
         sys.playing = (uint8_t)!sys.playing;
         break;
-    case B_REC:                                         /* arm: the tape made ready (a reel copied in) */
-        if ((sys.rec >> sys.sel) & 1u) {
-            sys.rec &= (uint8_t)~(1u << sys.sel);
-            tape_unprepare(sys.sel);
-        } else {
-            int r = tape_prepare(sys.sel);
-            if (r > 0)
-                sys.rec |= (uint8_t)(1u << sys.sel);
-            else
-                ui_message(r < 0 ? "NO MEMORY FREE TO RECORD" : "TAPE HAS A TAKE: CLEAR IT (HOLD POLY)");
-        }
+    case B_REC:                                         /* arm: playing, now; stopped, at the let-go (held a second
+                                                         * instead: the USB record mode) */
+        ui.rec_held = 1;
+        ui.rec_said = 0;
+        ui.rec_t0 = fm1_ms;
+        if (sys.playing)
+            rec_arm();
         break;
     case B_SAVE:                                        /* tap: save (phase 8); held: undo the last clear */
         ui.save_held = 1;
@@ -285,6 +314,26 @@ static void hold_keys(void)
             }
         }
     }
+    if (ui.rec_held) {                                  /* REC: a tap arms (stopped), a second's hold the record mode */
+        int held = (int)((fm1_in.buttons >> panel.btn[B_REC]) & 1u);
+        uint32_t ms = (uint32_t)(fm1_ms - ui.rec_t0);
+        if (!held) {
+            ui.rec_held = 0;
+            if (!sys.playing && ms < 1000u)
+                rec_arm();
+            if (ui.rec_said)
+                ui.msg_t = 1;                           /* (the hint ends next frame) */
+        } else if (ms >= 1000u) {
+            ui.rec_held = 0;
+            if (sys.playing)
+                ui_message("STOP, THEN HOLD REC: USB RECORD");
+            else
+                usbrec_open();
+        } else if (ms >= 300u && !ui.rec_said && !sys.playing) {
+            ui.rec_said = 1;
+            ui_message("KEEP HOLDING REC: USB RECORD");
+        }
+    }
     if (ui.save_held) {
         int held = (int)((fm1_in.buttons >> panel.btn[B_SAVE]) & 1u);
         if (!held) {
@@ -321,10 +370,43 @@ static void on_knob(uint32_t c, int32_t d)
         ui.chan_used = 1;
 }
 
+/* the USB record mode's controls (usbrec.c): REC, HOME and the white keys; the rest wait until it closes */
+static void usbrec_input(uint32_t pressed, uint32_t notes)
+{
+    uint32_t id, k;
+    sys.keys_live = 0;
+    sys.keys_grain = sys.keys_reso = 0;
+    for (id = 0; id < NB; id++)
+        if ((pressed >> id) & 1u) {
+            uint32_t b = panel_btn_of(id);
+            if (b == B_REC)
+                usbrec_rec();
+            else if (b == B_HOME)
+                usbrec_back();
+        }
+    for (k = 0; k < 27u; k++)
+        if (((notes >> k) & 1u) && KEY_WHITE[k] != KEY_NONE)
+            usbrec_pick(KEY_WHITE[k]);
+    for (k = 0; k < 4u; k++)                            /* (turns meanwhile are dropped, not saved up) */
+        (void)panel_enc(EN_K1 + k);
+    (void)panel_enc(EN_SELECT);
+    (void)panel_enc(EN_PRESET);
+    (void)panel_enc(EN_ALGO);
+    if (ur.state == UR_OFF) {                           /* it closed: the page it opened from */
+        ui.view = VIEW_PAGE;
+        ui.last = 0xFF;
+        ui.force = 1;
+    }
+}
+
 static void ui_input(void)
 {
     uint32_t released = 0, pressed = fm1_input_edges(&released), notes = fm1_input_note_edges(), id, k;
     int32_t d;
+    if (ui.view == VIEW_USBREC) {
+        usbrec_input(pressed, notes);
+        return;
+    }
     for (id = 0; id < NB; id++)
         if ((pressed >> id) & 1u) {
             uint32_t b = panel_btn_of(id);

@@ -124,6 +124,10 @@ static inline uint32_t gr_rnd(grain_trk_t *G) { return noise32(&G->rng); }
 /* TRACKS in use (sys.ntrk, read safely) */
 static uint32_t gr_ntrk(void) { return sys.ntrk >= 1u && sys.ntrk <= NTRK ? sys.ntrk : NTRK; }
 
+/* track t's devices may hold memory: it's in use (TRACKS) and the USB record mode isn't up (nothing renders then,
+ * and the take can have their memory) */
+static int trk_live(uint32_t t) { return t < gr_ntrk() && !sys.usbrec; }
+
 /* the groups track t owns: its own, and those of parked tracks (group g goes to track g mod TRACKS) */
 static uint32_t gr_groups(uint32_t t)
 {
@@ -571,7 +575,7 @@ static void grain_poll(void)
     uint32_t t, bars = gr_bars(), len = bars * (5292000u / (sys.bpm ? sys.bpm : 120u));
     for (t = 0; t < NTRK; t++) {
         const int16_t *p = tp[t].dev[DEV_GRAIN];
-        int on = t < gr_ntrk() && p[GP_WET] > 0 && p[GP_SCAN] != SCAN_TAPE;
+        int on = trk_live(t) && p[GP_WET] > 0 && p[GP_SCAN] != SCAN_TAPE;
         if (grain_frozen && on && gbuf[t].len)
             continue;
         if (on) {

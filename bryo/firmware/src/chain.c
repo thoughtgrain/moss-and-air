@@ -65,12 +65,19 @@ static void chain_source(uint32_t t, uint32_t keys, const int32_t *rin, int32_t 
     }
 }
 
-/* audio ISR: one control block of the whole instrument, interleaved stereo Q15 into out */
+/* audio ISR: one control block of the whole instrument, interleaved stereo Q15 into out. In the USB record mode
+ * (usbrec.c) the computer's sound instead: the tracks fade out over one block as it opens, and come back once the
+ * monitor has faded out as it closes. */
 static void chain_block(int32_t *out, uint32_t n)
 {
     int32_t l[CTL], r[CTL], rin[NTRK][CTL];
     uint32_t i, t, u, keys = sys.keys_live ? white_keys(fm1_in.notes) : 0u, sel = sys.sel, zero = 0;
     uint32_t ntrk = sys.ntrk >= 1u && sys.ntrk <= NTRK ? sys.ntrk : NTRK;
+    if (ur.isr_in) {                                    /* the record mode: the monitor */
+        usbrec_block(l, r, n);
+        master_block(l, r, out, n);
+        return;
+    }
     for (u = 0; u < 27u; u++)                          /* the 0 black key held, or tapped (latched): GRAIN frozen */
         if (KEY_BLACK[u] == BK_ZERO)
             zero = ((fm1_in.notes >> u) & 1u) | (sys.freeze != 0);
@@ -140,6 +147,14 @@ static void chain_block(int32_t *out, uint32_t n)
     grain_recover();
     reso_recover();
     master_block(l, r, out, n);
+    if (sys.usbrec) {                                   /* the record mode opening: this block fades the tracks out */
+        for (i = 0; i < n; i++) {
+            int32_t g = (int32_t)(n - i) * 32767 / (int32_t)n;
+            out[2u * i] = (out[2u * i] >> 1) * g >> 14;
+            out[2u * i + 1u] = (out[2u * i + 1u] >> 1) * g >> 14;
+        }
+        ur.isr_in = 1;
+    }
 }
 
 /* audio ISR, the half after two overloaded halves: take load away. GRAIN's sounding cap goes first (grain.c), down
@@ -178,6 +193,7 @@ static void chain_poll(void)
     grain_poll();
     reso_poll();
     space_poll();
+    usbrec_poll();
 }
 
 /* all sound off now (an update starting, a panic): the keys stop and the transport stops (the heads fade out) */

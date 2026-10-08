@@ -201,7 +201,7 @@ static void reso_poll(void)
     uint32_t t;
     for (t = 0; t < NTRK; t++) {
         reso_t *R = &reso[t];
-        int on = t < gr_ntrk() && tp[t].dev[DEV_RESO][RP_WET] > 0;
+        int on = trk_live(t) && tp[t].dev[DEV_RESO][RP_WET] > 0;
         while (on && R->nch < RS_N) {
             int32_t c = tape_alloc(MEM_RESO + t, NTRK, 1);
             if (c < 0)

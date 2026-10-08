@@ -11,7 +11,8 @@
  * what the controller would show. No thread, no timing: the same run every time.
  *
  * Linux x86-64 only (the trap flag, ucontext), built -no-pie so the static buffers' addresses fit the 32-bit DMA
- * registers. Elsewhere it says so and passes. Build: cc -no-pie -DT_UAC=0/1 tests/usb_sie_test.c */
+ * registers. Elsewhere it says so and passes. Build: cc -no-pie -DT_UAC=0/1 [-DT_UACO=1] tests/usb_sie_test.c
+ * (T_UACO: the USB audio output too, BRYO_UAC_OUT: the computer's packets into EP4 OUT, to the record mode's hook) */
 #define _GNU_SOURCE
 #include <stdint.h>
 #include <stdio.h>
@@ -29,6 +30,10 @@ __asm__(".macro csync\n.endm\n.macro ssync\n.endm\n");
 #define FELUCCA_OTA 1
 #define FELUCCA_CDC 0
 #define FELUCCA_UAC T_UAC
+#ifndef T_UACO
+#define T_UACO 0
+#endif
+#define BRYO_UAC_OUT T_UACO
 #define BRYO_MSC 1
 static void fm1_delay_ms(uint32_t ms) { (void)ms; }
 #pragma GCC diagnostic ignored "-Wint-to-pointer-cast"
@@ -44,6 +49,18 @@ static void msc_read(uint32_t lba, uint8_t *b) { memcpy(b, disk[lba], 512); }
 static void msc_write(uint32_t lba, const uint8_t *b) { memcpy(disk[lba], b, 512); }
 static void msc_eject(void) { ejected_calls++; }
 static void msc_attached(void) { attached_calls++; }
+#if T_UACO
+/* the record mode's side (usbrec.c): what arrives, in order */
+static uint8_t got4[8192];
+static uint32_t got4_n;
+static void uaco_frames(const uint8_t *p, uint32_t nframes)
+{
+    if (got4_n + nframes * 4u <= sizeof got4) {
+        memcpy(got4 + got4_n, p, nframes * 4u);
+        got4_n += nframes * 4u;
+    }
+}
+#endif
 #include "../firmware/src/usb.c"
 static uint32_t ota_now_ms(void) { return 0; }
 static void ota_idle(void) {}
@@ -279,6 +296,19 @@ static int out3(const uint8_t *p, uint32_t n)
     return 0;
 }
 
+/* one isochronous packet from the computer into EP4 OUT (the record mode's stream): the controller holds one; a
+ * packet arriving while it's still held is lost, as on the wire. 1: delivered */
+#define A_RADR4 0x1183Cul
+static int out4(const uint8_t *p, uint32_t n)
+{
+    if (sie.rxcsr1[4] & 1u)
+        return 0;
+    memcpy((uint8_t *)(uintptr_t)REG(A_RADR4), p, n);
+    sie.rxcount[4] = (uint16_t)n;
+    sie.rxcsr1[4] |= 1u;
+    return 1;
+}
+
 /* a whole bulk-only command over the wire; the CSW status, -1 for a broken CSW */
 static uint32_t tag = 0x2000;
 static int ubot(const uint8_t *cb, uint32_t cblen, uint32_t len, int in, const uint8_t *wd, uint8_t *rd, uint32_t *got)
@@ -322,6 +352,68 @@ static void check(const char *what, int ok)
     fails += !ok;
 }
 
+#if T_UACO
+/* Bryo's configuration descriptor (the drive, the audio input and output, MIDI) parsed as a host does */
+static void check_uaco_desc(void)
+{
+    const uint8_t *c = CFG_DESC_MSC;
+    uint32_t n = sizeof CFG_DESC_MSC, off, nif = 0, eps[8], neps = 0, k, j;
+    int lens = 1, ifs = 1, ac = 0, term = 0, aso = 0, epo = 0, fmt = 0, cur_if = -1, cur_alt = -1, last_if = -1;
+    int ac_left = -1, ac_sum = 0, ac_total = 0, uniq = 1;
+    for (off = 0; off < n; off += c[off]) {
+        const uint8_t *d = c + off;
+        if (d[0] < 2u || off + d[0] > n) {
+            lens = 0;
+            break;
+        }
+        if (ac_left >= 0 && d[1] == 0x24 && cur_if == 0) {
+            ac_sum += d[0];
+        }
+        if (d[1] == 4) {                                 /* interface */
+            cur_if = d[2];
+            cur_alt = d[3];
+            if (cur_alt == 0) {
+                if (cur_if != last_if + 1)
+                    ifs = 0;
+                last_if = cur_if;
+                nif++;
+            }
+        } else if (d[1] == 0x24 && cur_if == 0 && d[2] == 1) {   /* AC header */
+            ac_total = d[5] | d[6] << 8;
+            ac_left = 1;
+            ac_sum += d[0];                              /* (the header counts itself) */
+            ac = d[0] == 11 && d[7] == 3 && d[8] == 1 && d[9] == 2 && d[10] == 3;
+        } else if (d[1] == 0x24 && cur_if == 0 && d[2] == 2 && d[3] == 3) {   /* input terminal 3 */
+            term |= (d[4] | d[5] << 8) == 0x0101 && d[7] == 2;
+        } else if (d[1] == 0x24 && cur_if == 0 && d[2] == 3 && d[3] == 4) {   /* output terminal 4 */
+            term |= (d[7] == 3) << 1;
+        } else if (d[1] == 0x24 && cur_if == 3 && cur_alt == 1 && d[2] == 1) {   /* AS general */
+            aso = d[3] == 3;
+        } else if (d[1] == 0x24 && cur_if == 3 && cur_alt == 1 && d[2] == 2) {   /* type I format */
+            fmt = d[4] == 2 && d[5] == 2 && d[6] == 16 && d[7] == 1 && (d[8] | d[9] << 8 | d[10] << 16) == 44100;
+        } else if (d[1] == 5) {                          /* endpoint */
+            if (neps < 8u)
+                eps[neps++] = d[2];
+            if (cur_if == 3)
+                epo = cur_alt == 1 && d[2] == 0x04 && d[3] == 0x09 && (d[4] | d[5] << 8) == 184 && d[6] == 1;
+        }
+    }
+    for (k = 0; k < neps; k++)
+        for (j = k + 1u; j < neps; j++)
+            uniq &= eps[k] != eps[j];
+    check("Bryo's descriptors: lengths add up to wTotalLength", lens && (uint32_t)(c[2] | c[3] << 8) == n);
+    check("..5 interfaces numbered 0..4 (audio control, MIDI, audio in, audio out, the drive)",
+          ifs && nif == 5u && c[4] == 5u && nif == AUD_NIF + 1u);
+    check("..the AC header lists MIDI and both streams; its length is its own and the terminals'",
+          ac && ac_total == ac_sum && ac_sum == 53);
+    check("..input terminal 3 (USB streaming, 2 ch) feeds output terminal 4", term == 3);
+    check("..the output's stream: terminal 3, 2 ch 16 bit 44.1 kHz, EP4 OUT isochronous adaptive, 184 B, 1 ms",
+          aso && fmt && epo);
+    check("..every endpoint address once (EP1 both ways, EP3 both ways, EP4 in and out)", uniq && neps == 6u);
+    check("..bcdDevice x.39: a host never reuses what it learnt of the layout without the output", DEV_DESC_MSC[12] == 0x39);
+}
+#endif
+
 int main(void)
 {
     uint8_t b[4096], w[2048];
@@ -332,6 +424,9 @@ int main(void)
         printf("usb_sie: can't map the register pages here (needs Linux x86-64, -no-pie): skipped\n");
         return 0;
     }
+#if T_UACO
+    check_uaco_desc();
+#endif
     usb_start();
     check("usb_start: the SIE answers, USB is up, interrupts enabled", usb.up && !usb.timeouts &&
           sie.intrusbe == 0x07 && sie.intrtx1e == 0x01 && sie.accesses > 0);
@@ -360,7 +455,7 @@ int main(void)
     n = control(0x80, 8, 0, 0, 1, b);
     check("GET_CONFIGURATION: 1", n == 1 && b[0] == 1);
 
-    n = control(0xA1, 0xFE, 0, (uint16_t)(3 + T_UAC - 1), 1, b);
+    n = control(0xA1, 0xFE, 0, (uint16_t)AUD_NIF, 1, b);
     check("GET MAX LUN: one byte, 0 (one drive)", n == 1 && b[0] == 0);
 
     {
@@ -400,7 +495,7 @@ int main(void)
         host.in3_n = host.npk = 0;
         out3(cbw, 31);
         poll_n(4);
-        n = control(0x21, 0xFF, 0, (uint16_t)(3 + T_UAC - 1), 0, 0);
+        n = control(0x21, 0xFF, 0, (uint16_t)AUD_NIF, 0, 0);
         check("BULK-ONLY RESET in the middle of a read: acknowledged", n == 0 && host.npk >= 1 && host.npk < 64);
         poll_n(4);
         host.in3_n = host.npk = 0;
@@ -422,6 +517,50 @@ int main(void)
         control(0x00, 9, 1, 0, 0, 0);
         check("..configured again: the medium is back", ubot(TUR, 6, 0, 0, 0, 0, 0) == 0);
     }
+#if T_UACO
+    {   /* the computer playing into the FM-1 (EP4 OUT) */
+        uint8_t pk[184];
+        uint32_t k, sent = 0, ok = 1;
+        check("EP4 OUT: isochronous, its DMA on the stream's buffer",
+              sie.rxcsr2[4] == 0x40 && REG(A_RADR4) == (uint32_t)(uintptr_t)ep4rx);
+        memset(pk, 0x11, sizeof pk);
+        out4(pk, 176);
+        poll_n(2);
+        check("a packet before the computer picks the stream (alt 0): taken and dropped", got4_n == 0 &&
+              !(sie.rxcsr1[4] & 1u) && uaco.pkts == 1);
+        n = control(0x01, 11, 1, UAC_ASO_IF, 0, 0);
+        check("SET_INTERFACE: the output's stream, alt 1", n == 0 && uaco.alt == 1);
+        n = control(0x81, 10, 0, UAC_ASO_IF, 1, b);
+        check("GET_INTERFACE: 1", n == 1 && b[0] == 1);
+        n = control(0xA2, 0x81, 0x0100, 0x04, 3, b);
+        check("GET_CUR sampling frequency on EP4 OUT: 44,100", n == 3 && (b[0] | b[1] << 8 | b[2] << 16) == 44100);
+        n = control(0x02, 1, 0, 0x04, 0, 0);
+        check("CLEAR_FEATURE(HALT) on EP4 OUT: acknowledged (isochronous: nothing to clear)", n == 0);
+        for (k = 0; k < 20u; k++) {                      /* 20 ms: packets of 44 and 45 frames, one a frame */
+            uint32_t f = k % 10u == 9u ? 45u : 44u, j;
+            for (j = 0; j < f * 4u; j++)
+                pk[j] = (uint8_t)(sent + j);
+            ok &= out4(pk, f * 4u);
+            sent += f * 4u;
+            poll_n(2);                                   /* (usb_poll at 2 kHz: two a frame) */
+        }
+        {
+            uint32_t pos = 0, f, j, same = got4_n == sent;
+            for (k = 0; k < 20u && same; k++) {
+                f = k % 10u == 9u ? 45u : 44u;
+                for (j = 0; j < f * 4u; j++)
+                    same &= got4[pos + j] == (uint8_t)(pos + j);
+                pos += f * 4u;
+            }
+            snprintf((char *)w, sizeof w, "20 packets, polled twice a frame: every one taken in order (%u of %u bytes)",
+                     got4_n, sent);
+            check((char *)w, ok && same);
+        }
+        bus_reset();
+        check("a bus reset: the stream is off until the computer picks it again", uaco.alt == 0);
+        control(0x00, 9, 1, 0, 0, 0);
+    }
+#endif
     usb_msc_on = 0;
     n = control(0xA1, 0xFE, 0, 0, 1, b);
     check("the drive not presented: GET MAX LUN stalls", n == -1);

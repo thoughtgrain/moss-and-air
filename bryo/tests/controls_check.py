@@ -14,7 +14,8 @@ import sys
 from pathlib import Path
 
 CONTEXTS = {"any", "power-on", "page", "page:tape", "page:grain", "page:resonator", "page:color", "page:space",
-            "page:slot", "mixer", "glo-held", "slot-held", "slot-held+step", "project-view", "routing-view"}
+            "page:slot", "mixer", "glo-held", "slot-held", "slot-held+step", "project-view", "routing-view",
+            "usb-record"}
 GESTURES = {"press", "tap", "hold", "release", "turn", "hold-turn", "combo"}
 STATUS = {"now", "planned", "proposed", "unassigned"}
 BUTTONS = ["HOME", "EDIT", "FX", "LFO", "ENV", "SEQ", "ARP", "SCL", "GLO", "REC", "PLAY", "SAVE", "OCTDN", "OCTUP"]

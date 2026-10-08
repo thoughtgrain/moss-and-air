@@ -22,6 +22,10 @@
 #ifndef FELUCCA_UAC
 #define FELUCCA_UAC 1            /* USB audio input: the master output, 16-bit stereo 44.1 kHz (usb.c) */
 #endif
+#ifndef BRYO_UAC_OUT
+#define BRYO_UAC_OUT FELUCCA_UAC /* USB audio output: the computer plays into the FM-1, for the USB record mode
+                                  * (usbrec.c); 0: the descriptors as they were */
+#endif
 #ifndef FELUCCA_UAC_TONE
 #define FELUCCA_UAC_TONE 0       /* bench: the USB input sends test triangles instead of the music */
 #endif
@@ -76,6 +80,7 @@ static void ui_redraw(void);
 #include "reso.c"                /* RESONATOR: four tuned strings */
 #include "color.c"               /* COLOR: drive, crush, noise, tilt */
 #include "space.c"               /* SPACE: the delay and the room */
+#include "usbrec.c"              /* the USB record mode: the computer onto a track */
 #include "chain.c"               /* the four tracks, rendered per control block */
 
 /* ------------------------------------------------------------- I/O --- */

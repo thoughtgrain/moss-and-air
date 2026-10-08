@@ -673,26 +673,8 @@ static void vdisk_commit(void)
     uint32_t k, cut = cap.cut;
     if (cap.dest >= 0 && cap.dest < (int8_t)NTRK) {             /* a track's tape: the chunks change hands */
         uint32_t t = (uint32_t)cap.dest;
-        tape_ctl_t *c = &tape_ctl[t];
-        c->rec_ok = 0;
-        c->grow = 0;
-        c->empty = 1;                                            /* (silent while it's swapped) */
-        tape_free(t);
-        for (k = 0; k < capm.nch; k++) {
-            c->map[k] = capm.map[k];
-            mem_give(capm.map[k], MEM_TAPE + t);
-        }
-        RING_PUBLISH();
-        c->nch = capm.nch;
-        c->nblk = (uint16_t)cap.nblk;
+        tape_replace(t, capm.map, capm.nch, cap.nblk);
         capm.nch = 0;
-        tp[t].dev[DEV_SRC][TK_REEL] = 0;
-        sys.rec &= (uint8_t)~(1u << t);
-        if (tape_undo.valid && tape_undo.trk == t)
-            tape_undo.valid = 0;
-        RING_PUBLISH();
-        c->empty = 0;
-        tape_ver[t]++;
         str_cpy(m, "TRACK ", sizeof m);
         fmt_int(m + 6, (int32_t)t + 1);
         str_cpy(m + str_len(m), cut ? "'S TAPE: CUT, MEMORY FULL" : "'S TAPE REPLACED", 26);

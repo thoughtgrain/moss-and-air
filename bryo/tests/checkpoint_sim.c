@@ -278,10 +278,19 @@ static void on_audio(int sig)                            /* the audio interrupt 
     st_blocks++;
 }
 
-static void on_timer5(int sig)                           /* TIMER5's usb_poll: the drive takes a sector */
+static void on_timer5(int sig)                           /* TIMER5's usb_poll: the drive takes a sector, and in the
+                                                          * record mode the computer's packet (EP4 OUT) arrives */
 {
     uint8_t sec[512];
     (void)sig;
+    if (st_usb_on && ur.state != UR_OFF) {
+        static uint8_t pk[45 * 4];
+        static uint32_t n;
+        uint32_t i;
+        for (i = 0; i < sizeof pk; i++)
+            pk[i] = (uint8_t)(n * 7u + i * 13u);
+        uaco_frames(pk, ++n % 10u ? 44u : 45u);
+    }
     if (!st_usb_on || !vd.ready)
         return;
     if (st_pos >= st_len) {                              /* (a WAV done: the next one starts after it's placed) */
@@ -336,6 +345,8 @@ static uint32_t books(void)
     }
     for (k = 0; k < capm.nch; k++)
         SEE(capm.map[k], MEM_IMPORT, "the capture");
+    for (k = 0; k < ur.nch; k++)
+        SEE(ur.map[k], MEM_IMPORT, "the USB take");
     for (k = vd_sp_r; k != vd_sp_w; k++)
         SEE(vd_spare[k % VD_NSPARE], MEM_SPARE, "a spare");
     for (c = 0; c < MEM_NC; c++)
@@ -357,7 +368,7 @@ static int stress(double secs)
     struct sigevent ev;
     struct itimerspec its;
     static uint8_t w[6 * 22050 * 2 + 4096];
-    uint32_t bad = 0, checks = 0, actions = 0, places = 0;
+    uint32_t bad = 0, checks = 0, actions = 0, places = 0, takes = 0;
     double t0;
     struct timespec ts;
     power_on();
@@ -396,6 +407,8 @@ static int stress(double secs)
     for (;;) {
         double now;
         uint32_t a = st_rand(100);
+        if (ur.state != UR_OFF && a < 66)                /* (in the record mode only it and the knobs answer) */
+            a = 66 + st_rand(8);
         clock_gettime(CLOCK_MONOTONIC, &ts);
         now = ts.tv_sec + ts.tv_nsec * 1e-9;
         if (now - t0 > secs)
@@ -432,7 +445,33 @@ static int stress(double secs)
             const pdesc_t *d = &DEV_P[dv][K[k]];
             int32_t x = d->min + (int32_t)st_rand((uint32_t)(d->max - d->min + 1));
             tp[t].dev[dv][K[k]] = (int16_t)(st_rand(3) == 0 ? d->min : x);
-        } else if (a < 66) {                             /* a COLOR knob */
+        } else if (a < 70) {                             /* the USB record mode: in, a take, onto a track, out */
+            if (ur.state == UR_OFF) {
+                if (!sys.usbrec && !ur.isr_in) {
+                    sys.playing = 0;
+                    usbrec_enter();
+                    ui.view = VIEW_USBREC;
+                }
+            } else if (ur.state == UR_READY) {
+                if (st_rand(3))
+                    usbrec_rec();
+                else
+                    usbrec_back();
+            } else if (ur.state == UR_RECORDING) {
+                if (st_rand(4) == 0)
+                    usbrec_rec();
+            } else {
+                usbrec_pick(st_rand(NTRK));
+                if (st_rand(4)) {
+                    takes += ur.dest >= 0;
+                    usbrec_rec();
+                } else {
+                    usbrec_back();
+                }
+            }
+            if (ur.state == UR_OFF)
+                ui.view = VIEW_PAGE;
+        } else if (a < 74) {                             /* a COLOR knob */
             uint32_t t = st_rand(NTRK), k = st_rand(9);
             const pdesc_t *d = &DEV_P[DEV_COLOR][k];
             tp[t].dev[DEV_COLOR][k] = (int16_t)(d->min + (int32_t)st_rand((uint32_t)(d->max - d->min + 1)));
@@ -467,8 +506,8 @@ static int stress(double secs)
     timer_delete(t5);
     bad += books();
     printf("checkpoint: stress %.0f s: %u audio blocks and %u USB sectors cut into the main loop, %u actions, %u "
-           "book checks, %u WAVs placed: %s\n", secs, st_blocks, st_sectors, actions, checks + 1u, places,
-           bad ? "PROBLEMS" : "the books balance");
+           "book checks, %u WAVs placed, %u USB takes put on tracks: %s\n", secs, st_blocks, st_sectors, actions,
+           checks + 1u, places, takes, bad ? "PROBLEMS" : "the books balance");
     return bad != 0;
 }
 

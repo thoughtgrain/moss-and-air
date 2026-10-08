@@ -78,6 +78,8 @@ for u in 0 1; do
     $CC -no-pie -DT_UAC=$u -o "$OUT/usb_sie_test" tests/usb_sie_test.c
     run "usb.c against an emulated controller (UAC $u): enumeration, EP0 requests, the drive over EP3" "$OUT/usb_sie_test"
 done
+$CC -no-pie -DT_UAC=1 -DT_UACO=1 -o "$OUT/usb_sie_test" tests/usb_sie_test.c
+run "usb.c against an emulated controller (UAC in and out, Bryo's): the computer's packets into EP4 OUT" "$OUT/usb_sie_test"
 for v in 1.1.0.1 1.1.1.1 1.1.2.1 1.1.3.1 1.1.0.0 1.1.2.0 1.0.0.1 1.0.1.1 1.0.0.0 0.1.0.1 0.0.0.1; do
     IFS=. read -r t_cdc t_uac t_lay t_on <<EOF
 $v

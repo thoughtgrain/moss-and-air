@@ -169,7 +169,7 @@ static void space_poll(void)
     for (t = 0; t < NTRK; t++) {
         space_t *S = &space[t];
         const int16_t *v = tp[t].dev[DEV_SPACE];
-        int use = t < gr_ntrk();
+        int use = trk_live(t);
         if (use && v[SP_DLY] > 0)
             sp_line_fill(&S->dly, MEM_SPACE + t, SP_DLY16, SP_DLY8);
         else if (S->dly.nch)

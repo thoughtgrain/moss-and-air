@@ -32,6 +32,8 @@ typedef struct {
     uint8_t keys_reso;           /* 1: the RESONATOR page is up: the white keys set its root (TAPE: and pluck) */
     uint8_t ntrk;                /* TRACKS: the tracks in use, 1..NTRK (GLO held + SELECT); the rest are parked */
     uint8_t freeze;              /* the 0 key tapped: GRAIN's freeze latched (held: momentary, as GLO's mixer) */
+    volatile uint8_t usbrec;     /* the USB record mode is up (usbrec.c): the tracks stop, the output plays the
+                                  * computer */
 } sys_t;
 static sys_t sys;
 
