@@ -105,6 +105,7 @@ static void bryo_init(void)
     ui_init();
     sys.sel = 0;
     sys.bpm = 120;
+    sys.ntrk = NTRK;
     sys.master_q12 = 2048;
     sys.keys_live = 1;
 }
@@ -238,6 +239,7 @@ static void fm1_main(void)
         ui_input();
         settings_poll();                              /* queued settings save: only while stopped */
         vdisk_poll();                                 /* the drive: a fresh volume, a dropped WAV to its place */
+        chain_poll();                                 /* the memory: growing tapes, GRAIN's buffers, TRACKS */
         felucca_dbg.stage = 2;
         ui_leds();
         ui_draw();

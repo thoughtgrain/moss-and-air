@@ -15,8 +15,9 @@
  * of data, FAT sectors and directory entries in its own order. So:
  *   - a data sector that starts "RIFF....WAVE" starts a capture; the sectors after it are taken as the rest of the
  *     file as they arrive in order (a fresh volume gives a new file contiguous clusters), and are converted on the
- *     way in: any rate, 8/16/24/32-bit PCM or 32-bit float, any number of channels, to 22,050 Hz mono ADPCM, into an
- *     inbox in RAM (the first 3.3 s; the rest is read and dropped);
+ *     way in: any rate, 8/16/24/32-bit PCM or 32-bit float, any number of channels, to 22,050 Hz mono ADPCM, into
+ *     chunks of the shared memory (mem.c) as it arrives: the free ones, then cleared tapes' and parked tracks',
+ *     never a tape in use. What doesn't fit is read and dropped, and the message says the sound was cut;
  *   - a directory sector that points an entry at the capture's first cluster names it: TAPEn.WAV replaces track
  *     n's tape, USERn.WAV replaces your reel n, any other name goes to the first free user reel, named after the
  *     file (its first four letters and digits). A file that never gets a name in the root (dropped into a folder)
@@ -68,8 +69,6 @@ static struct {
     volatile uint8_t msg;                   /* a capture started (the main loop says so on screen) */
 } vd __attribute__((section(".pool")));
 
-static tape_ram_t vd_inbox __attribute__((section(".pool")));   /* a dropped WAV, encoded */
-
 static struct {                             /* the capture of a dropped WAV */
     uint8_t on, done, named, failed;
     int8_t dest;                            /* 0..3 track n's tape; 4..9 user reel n-4; -1 the first free user reel */
@@ -93,7 +92,26 @@ static struct {                             /* the capture of a dropped WAV */
     int16_t blk[TAPE_BLK];
     uint32_t bn, nblk, pk;
     int32_t pred, idx;
+    uint8_t cut;                            /* memory ran out: the rest was dropped */
+    uint8_t nch;                            /* the chunks it fills (mem.c, owner MEM_IMPORT) */
+    uint8_t map[MEM_NC];
 } cap;
+
+/* the capture's chunks back to the pool */
+static void cap_free(void)
+{
+    while (cap.nch)
+        mem_free(cap.map[--cap.nch]);
+}
+
+/* the capture as a view (vdisk_commit copies or saves it from here) */
+static void cap_view(tape_view_t *v)
+{
+    memset(v, 0, sizeof *v);
+    v->map = cap.map;
+    v->len = cap.nblk * TAPE_BLK;
+    v->ram = 1;
+}
 
 static uint32_t rd16(const uint8_t *p) { return (uint32_t)p[0] | (uint32_t)p[1] << 8; }
 static uint32_t rd32(const uint8_t *p) { return rd16(p) | rd16(p + 2) << 16; }
@@ -123,7 +141,8 @@ static const char VD_README[] =
     "  named TAPE1.WAV .. TAPE4.WAV it replaces that track's tape;\r\n"
     "  named USER1.WAV .. USER6.WAV it replaces that reel;\r\n"
     "  any other name goes to the first free user reel, named after the file.\r\n"
-    "Any WAV works; the FM-1 keeps the first 3.3 seconds, mono, at 22,050 Hz.\r\n"
+    "Any WAV works, mono at 22,050 Hz on the FM-1. A tape keeps as much as its\r\n"
+    "free memory holds; a user reel up to 21 seconds, taking the reels after it.\r\n"
     "Copy one file at a time, onto an empty part of the drive, and eject before\r\n"
     "unplugging. New sounds show up as files after you plug the FM-1 back in.\r\n"
     "Deleting a file here doesn't delete the sound: clear it on the FM-1.\r\n";
@@ -131,6 +150,7 @@ static const char VD_README[] =
 /* the view a file shows (0: README) */
 static int vd_view(const vfile_t *f, tape_view_t *v)
 {
+    memset(v, 0, sizeof *v);
     if (f->kind == VF_TAPE) {
         tape_view(f->idx, v);
         return 1;
@@ -319,19 +339,31 @@ static void vdisk_read(uint32_t lba, uint8_t *b)
 }
 
 /* ------------------------------------------------------------ capture --- */
-static void cap_emit(int32_t x)              /* one sample at 22,050 Hz into the inbox */
+static void cap_emit(int32_t x)              /* one sample at 22,050 Hz into the capture's chunks */
 {
-    if (cap.nblk >= TAPE_NBLK)
+    if (cap.cut)
         return;
     x = clamp(x, -32767, 32767);
     cap.blk[cap.bn++] = (int16_t)x;
     if ((uint32_t)(x < 0 ? -x : x) > cap.pk)
         cap.pk = (uint32_t)(x < 0 ? -x : x);
     if (cap.bn == TAPE_BLK) {
-        vd_inbox.pred[cap.nblk] = (int16_t)cap.pred;
-        vd_inbox.idx[cap.nblk] = (uint8_t)cap.idx;
-        ima_enc_st(cap.blk, &cap.pred, &cap.idx, vd_inbox.data + cap.nblk * (TAPE_BLK / 2u), TAPE_BLK);
-        vd_inbox.peak[cap.nblk] = (uint8_t)(cap.pk >> 7 > 255u ? 255u : cap.pk >> 7);
+        mem_chunk_t *m;
+        uint32_t o = cap.nblk % MEM_CB;
+        if (cap.nblk / MEM_CB >= cap.nch) {            /* a new chunk: a free one, else a cleared or parked tape's */
+            int32_t k = cap.nch < MEM_NC ? tape_alloc(MEM_IMPORT, NTRK, 0) : -1;
+            if (k < 0) {
+                cap.cut = 1;
+                cap.bn = 0;
+                return;
+            }
+            cap.map[cap.nch++] = (uint8_t)k;
+        }
+        m = mem_at(cap.map[cap.nblk / MEM_CB]);
+        m->pred[o] = (int16_t)cap.pred;
+        m->idx[o] = (uint8_t)cap.idx;
+        ima_enc_st(cap.blk, &cap.pred, &cap.idx, m->data[o], TAPE_BLK);
+        m->peak[o] = (uint8_t)(cap.pk >> 7 > 255u ? 255u : cap.pk >> 7);
         cap.nblk++;
         cap.bn = 0;
         cap.pk = 0;
@@ -473,6 +505,7 @@ static void cap_bytes(const uint8_t *b, uint32_t n)
 static void cap_start(uint32_t lba)
 {
     uint32_t i;
+    cap_free();                              /* (a capture still arriving is dropped) */
     for (i = 0; i < sizeof cap; i++)
         ((uint8_t *)&cap)[i] = 0;
     cap.on = 1;
@@ -586,7 +619,8 @@ static void vdisk_poll(void)
         return;
     if (cap.failed || !cap.nblk) {
         cap.on = 0;
-        ui_message("THAT WAV COULDN'T BE READ");
+        cap_free();
+        ui_message(cap.cut ? "NO MEMORY FREE FOR THAT WAV" : "THAT WAV COULDN'T BE READ");
         return;
     }
     if (!cap.named && (uint32_t)(fm1_ms - cap.t_done) < VD_NAME_MS)
@@ -597,48 +631,64 @@ static void vdisk_poll(void)
     vd.busy = 0;
 }
 
-/* the finished capture in the inbox, to its place (main loop, vd.busy) */
+/* the finished capture, to its place (main loop, vd.busy) */
 static void vdisk_commit(void)
 {
     char m[40];
-    int32_t s;
-    if (cap.dest >= 0 && cap.dest < (int8_t)NTRK) {             /* a track's tape */
-        uint32_t t = (uint32_t)cap.dest, i;
-        tape_ctl[t].rec_ok = 0;
-        tape_ctl[t].empty = 1;                                   /* (silent while it's copied) */
-        for (i = 0; i < cap.nblk * (TAPE_BLK / 2u); i++)
-            tape_ram[t].data[i] = vd_inbox.data[i];
-        for (i = 0; i < cap.nblk; i++) {
-            tape_ram[t].pred[i] = vd_inbox.pred[i];
-            tape_ram[t].idx[i] = vd_inbox.idx[i];
-            tape_ram[t].peak[i] = vd_inbox.peak[i];
+    tape_view_t v;
+    int32_t s, saved;
+    uint32_t k, cut = cap.cut;
+    if (cap.dest >= 0 && cap.dest < (int8_t)NTRK) {             /* a track's tape: the chunks change hands */
+        uint32_t t = (uint32_t)cap.dest;
+        tape_ctl_t *c = &tape_ctl[t];
+        c->rec_ok = 0;
+        c->grow = 0;
+        c->empty = 1;                                            /* (silent while it's swapped) */
+        tape_free(t);
+        for (k = 0; k < cap.nch; k++) {
+            c->map[k] = cap.map[k];
+            mem_give(cap.map[k], MEM_TAPE + t);
         }
-        tape_ctl[t].nblk = (uint16_t)cap.nblk;
+        RING_PUBLISH();
+        c->nch = cap.nch;
+        c->nblk = (uint16_t)cap.nblk;
+        cap.nch = 0;
         tp[t].dev[DEV_SRC][TK_REEL] = 0;
         sys.rec &= (uint8_t)~(1u << t);
         if (tape_undo.valid && tape_undo.trk == t)
             tape_undo.valid = 0;
-        tape_ctl[t].empty = 0;
+        RING_PUBLISH();
+        c->empty = 0;
         tape_ver[t]++;
         str_cpy(m, "TRACK ", sizeof m);
         fmt_int(m + 6, (int32_t)t + 1);
-        str_cpy(m + str_len(m), "'S TAPE REPLACED", 18);
+        str_cpy(m + str_len(m), cut ? "'S TAPE: CUT, MEMORY FULL" : "'S TAPE REPLACED", 26);
         ui_message(m);
         return;
     }
-    s = cap.dest >= (int8_t)NTRK ? cap.dest - (int32_t)NTRK : uslot_free();
+    cap_view(&v);
+    s = cap.dest >= (int8_t)NTRK ? cap.dest - (int32_t)NTRK : uslot_free_run(uslot_span(cap.nblk));
+    if (s < 0)
+        s = uslot_free();                                        /* (not enough slots in a row: as much as fits) */
     if (s < 0) {
+        cap_free();
         ui_message("NO FREE REEL: NAME IT USER1-6.WAV");
         return;
     }
     ui_message("SAVING THE REEL");
-    if (uslot_save((uint32_t)s, vd_inbox.data, vd_inbox.pred, vd_inbox.idx, vd_inbox.peak, cap.nblk,
-                   cap.dest >= (int8_t)NTRK ? 0 : cap.name)) {
+    k = cap.nblk;
+    if (cap.dest < (int8_t)NTRK && k > uslot_fit(uslot_run_at((uint32_t)s)))
+        k = uslot_fit(uslot_run_at((uint32_t)s));               /* (a free reel: never over the next one) */
+    saved = uslot_save_view((uint32_t)s, &v, k, cap.dest >= (int8_t)NTRK ? 0 : cap.name);
+    cap_free();
+    if (saved < 0) {
         ui_message("THE FLASH REFUSED THE SAVE");
         return;
     }
     str_cpy(m, "SAVED AS REEL ", sizeof m);
     str_cpy(m + str_len(m), uslot_name[s], 6);
+    if (cut || (uint32_t)saved < cap.nblk)
+        str_cpy(m + str_len(m), " (CUT)", 7);
     ui_message(m);
 }
 

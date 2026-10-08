@@ -67,6 +67,7 @@ static void ui_redraw(void);
 #include "../firmware/src/dsp.c"
 #include "../firmware/src/master.c"
 #include "../firmware/src/param.c"
+#include "../firmware/src/mem.c"
 #include "../firmware/src/tape.c"
 #include "../firmware/src/synth.c"
 #include "../firmware/src/poly.c"
@@ -115,7 +116,7 @@ static void power_on(void)
     memset(track_rt, 0, sizeof track_rt);
     memset(tape_rt, 0, sizeof tape_rt);
     memset(tape_ctl, 0, sizeof tape_ctl);
-    memset(tape_ram, 0, sizeof tape_ram);
+    memset(&cap, 0, sizeof cap);
     memset(&tape_undo, 0, sizeof tape_undo);
     memset(syn, 0, sizeof syn);
     memset(pol, 0, sizeof pol);
@@ -128,8 +129,23 @@ static void power_on(void)
     vdisk_mount();
     ui_init();
     sys.bpm = 120;
+    sys.ntrk = NTRK;
     sys.master_q12 = 2048;
     sys.keys_live = 1;
+}
+
+/* block b of track t's RAM tape: its peak, its data */
+static uint32_t tpk(uint32_t t, uint32_t b)
+{
+    tape_view_t v = {0};
+    v.map = tape_ctl[t].map;
+    return tv_peak(&v, b);
+}
+static const uint8_t *tdata(uint32_t t, uint32_t b)
+{
+    tape_view_t v = {0};
+    v.map = tape_ctl[t].map;
+    return tv_data(&v, b);
 }
 
 /* ---------------------------------------------------------------- audio --- */
@@ -269,8 +285,8 @@ static void test_tape(void)
         render(2, 0);                                    /* (the last block commits) */
         tape_unprepare(1);
         for (k = 0; k < REELS[1].nblk; k++) {           /* the take against what was there and what went in */
-            same += abs((int)tape_ram[1].peak[k] - (int)REELS[0].peak[k % REELS[0].nblk] * 100 / 127) < 24;
-            diff += tape_ram[1].peak[k] != REELS[1].peak[k];
+            same += abs((int)tpk(1, k) - (int)REELS[0].peak[k % REELS[0].nblk] * 100 / 127) < 24;
+            diff += tpk(1, k) != REELS[1].peak[k];
         }
         snprintf(b, sizeof b, "..recording replaces it with track 1's beat (%u of %u blocks changed, %u follow the beat)",
                  diff, (unsigned)REELS[1].nblk, same);
@@ -1068,8 +1084,9 @@ static void test_drive(void)
     vdisk_poll();
     tape_view(1, &v);
     hz = view_hz(&v, &pk);
-    snprintf(b, sizeof b, "TAPE2.WAV overwritten (24-bit 48 kHz, 4 s) replaces track 2's tape, cut to 3.3 s: %.0f Hz", hz);
-    check(b, tape_src(1) == 0 && tape_ctl[1].nblk == TAPE_NBLK && fabs(hz - 220) < 6 && pk > 12000);
+    snprintf(b, sizeof b, "TAPE2.WAV overwritten (24-bit 48 kHz, 4 s) replaces track 2's tape, all 4 s of it: %.0f Hz", hz);
+    check(b, tape_src(1) == 0 && tape_ctl[1].nblk >= 88200u / 256u && tape_ctl[1].nblk <= 88200u / 256u + 1u &&
+          fabs(hz - 220) < 6 && pk > 12000);
 
     n = make_wav(wav, 22050, 1, 32, 3, 11025, 1000.0);   /* float32, into a folder: never named in the root */
     hd_write_file(0, 0, 0, wav, n, 0);
@@ -1821,8 +1838,9 @@ static void test_tape_edges(void)
     tape_view(2, &v);
     check("a track on an empty user reel plays nothing", v.len == 0 && !v.ram && tape_peak_at(2, 500) == 0);
     tape_ctl[2].nblk = 0;
-    check("..REC on it records onto a blank tape at full length", tape_prepare(2) && tape_src(2) == 0 &&
-          tape_ctl[2].nblk == TAPE_NBLK && !tape_ctl[2].empty && tape_ram[2].peak[100] == 0);
+    check("..REC on it records onto a blank tape: none long yet, two chunks ready, growing", tape_prepare(2) == 1 &&
+          tape_src(2) == 0 && tape_ctl[2].nblk == 0 && tape_ctl[2].nch == 2 && tape_ctl[2].grow &&
+          !tape_ctl[2].empty && tpk(2, 20) == 0);
     check("..armed twice: still armed, nothing copied again", tape_prepare(2));
     tape_unprepare(2);
     tape_view(0, &v);
@@ -1892,9 +1910,8 @@ static void test_tape_edges(void)
         sys.rec = 0;
         render(2, 0);
         for (k = 0; k < REELS[1].nblk; k++)
-            same &= tape_ram[1].peak[k] == REELS[1].peak[k];
-        check("DUB +100: REC changes nothing (the loop untouched, bit for bit)", same &&
-              !memcmp(tape_ram[1].data, REELS[1].data, REELS[1].nblk * TAPE_BLK / 2u));
+            same &= tpk(1, k) == REELS[1].peak[k] && !memcmp(tdata(1, k), REELS[1].data + k * (TAPE_BLK / 2u), TAPE_BLK / 2u);
+        check("DUB +100: REC changes nothing (the loop untouched, bit for bit)", same);
         track[0].mute = 1;                               /* silence in */
         tp[1].dev[DEV_SRC][TK_DUB] = -50;
         for (k = 0; k < REELS[1].nblk; k++)
@@ -1904,7 +1921,7 @@ static void test_tape_edges(void)
         sys.rec = 0;
         render(2, 0);
         for (k = 0; k < REELS[1].nblk; k++)
-            after += tape_ram[1].peak[k];
+            after += tpk(1, k);
         snprintf(b, sizeof b, "DUB -50 under silence: the loop at half its level after a pass (%d%%)",
                  (int)(after * 100 / (before ? before : 1)));
         check(b, after * 100 / before >= 40 && after * 100 / before <= 60);
@@ -2144,6 +2161,232 @@ static void test_canvas(void)
           host_screen[108u * 240u] == 0);
 }
 
+/* ------------------------------------------------------------- memory --- */
+/* blocks of audio with the main loop's bookkeeping between them (as main.c runs it) */
+static void render_poll(uint32_t blocks)
+{
+    uint32_t b;
+    for (b = 0; b < blocks; b++) {
+        render(1, 0);
+        chain_poll();
+    }
+}
+
+/* track t's tape holds n chunks of tone (a take: its length n chunks) */
+static void fill_tape(uint32_t t, uint32_t n)
+{
+    uint32_t b;
+    tape_free(t);
+    tape_reserve(t, n, 1);
+    for (b = 0; b < (uint32_t)tape_ctl[t].nch * MEM_CB; b++)
+        tape_chunk(t, b)->peak[b % MEM_CB] = 100;
+    tape_ctl[t].nblk = (uint16_t)(tape_ctl[t].nch * MEM_CB);
+    tape_ctl[t].empty = 0;
+    tp[t].dev[DEV_SRC][TK_REEL] = 0;
+}
+
+static void test_memory(void)
+{
+    char b[120];
+    uint32_t t, n0, len;
+    power_on();
+    check("power-on: every chunk free, no tape holds any", mem_count(MEM_FREE) == MEM_NC && !tape_ctl[0].nch &&
+          !tape_ctl[3].nch);
+
+    {   /* a blank tape grows while REC records it, and REC let go sets its length */
+        for (t = 0; t < NTRK; t++)
+            track[t].mute = t != 0;                      /* (track 1's reel into track 2) */
+        tp[1].dev[DEV_SRC][TK_REEL] = 0;
+        check("REC on track 2's blank tape: ready, growing", tape_prepare(1) == 1 && tape_ctl[1].grow);
+        sys.rec = 1u << 1;
+        sys.playing = 1;
+        render_poll(2756);                               /* 2 s */
+        len = tape_ctl[1].nblk;
+        snprintf(b, sizeof b, "..2 s of recording: the tape is 2 s long (%u blocks), a chunk or two ready past its end",
+                 (unsigned)len);
+        check(b, len >= 170u && len <= 174u && tape_ctl[1].nch * MEM_CB >= len && tape_ctl[1].nch * MEM_CB <= len + 2u * MEM_CB);
+        sys.rec = 0;
+        tape_unprepare(1);
+        render_poll(4);
+        check("..REC let go: it stops growing, its length stays, the chunks past its end go back",
+              !tape_ctl[1].grow && tape_ctl[1].nblk == len && tape_ctl[1].nch == (len + MEM_CB - 1u) / MEM_CB &&
+              mem_count(MEM_FREE) == MEM_NC - tape_ctl[1].nch);
+        {
+            int32_t lo = 1 << 30, hi = -1, k;
+            for (k = 0; k < 2756; k++) {
+                render(1, 0);
+                lo = (tape_rt[1].pos >> 12) < lo ? (tape_rt[1].pos >> 12) : lo;
+                hi = (tape_rt[1].pos >> 12) > hi ? (tape_rt[1].pos >> 12) : hi;
+            }
+            check("..and it loops what it recorded (the head stays inside its length)", lo >= 0 &&
+                  hi < (int32_t)(len * TAPE_BLK) && hi > (int32_t)(len * TAPE_BLK) * 9 / 10);
+        }
+        {
+            uint32_t k, sound = 0;
+            for (k = 0; k < len; k++)
+                sound += tpk(1, k) > 20u;
+            snprintf(b, sizeof b, "..what it recorded is track 1's beat (%u of %u blocks loud)", sound, (unsigned)len);
+            check(b, sound > len / 3u);
+        }
+        sys.playing = 0;
+        render_poll(400);
+        for (t = 0; t < NTRK; t++)
+            track[t].mute = 0;
+    }
+
+    {   /* nothing free: chunks come from a cleared tape first, then a parked track, then the longest tape */
+        power_on();
+        fill_tape(0, 60);
+        fill_tape(2, 30);
+        fill_tape(3, 20);
+        fill_tape(1, 40);                                /* 150 of 152 */
+        tape_clear(2);                                   /* track 3's take cleared (its undo waiting) */
+        n0 = tape_ctl[0].nch;
+        check("tape_steal takes a cleared tape's chunk first (not the longest), and its undo goes",
+              tape_steal(1, 1) && tape_ctl[2].nch == 29 && tape_ctl[0].nch == n0 && !tape_undo.valid);
+        while (tape_ctl[2].nch)
+            tape_steal(1, 1);
+        sys.ntrk = 3;                                    /* TRACKS 3: track 4 parked */
+        check("..then a parked track's (TRACKS 3: track 4)", tape_steal(1, 1) && tape_ctl[3].nch == 19 &&
+              tape_ctl[0].nch == n0);
+        while (tape_ctl[3].nch)
+            tape_steal(1, 1);
+        sys.ntrk = NTRK;
+        check("..then the end of the longest tape, never the one asking", tape_steal(1, 1) &&
+              tape_ctl[0].nch == n0 - 1u && tape_ctl[1].nch == 40 && tape_ctl[0].nblk == (n0 - 1u) * MEM_CB);
+        check("..an import (active 0) never takes from a tape in use", !tape_steal(NTRK, 0));
+        tape_free(1);
+        while (mem_count(MEM_FREE))
+            mem_alloc(MEM_IMPORT);                       /* (nothing free at all; track 2's chunks to someone else) */
+        {   /* track 2 records a blank tape with nothing free: it takes from track 1, the longest */
+            uint32_t a0 = tape_ctl[0].nch;
+            for (t = 0; t < NTRK; t++)
+                track[t].mute = t != 0;
+            tape_ctl[1].empty = 1;
+            check("REC on a blank tape with no chunk free: it takes from the longest tape and grows",
+                  tape_prepare(1) == 1 && tape_ctl[1].nch == 2 && tape_ctl[0].nch < a0);
+            sys.rec = 1u << 1;
+            sys.playing = 1;
+            render_poll(1378 * 3);
+            snprintf(b, sizeof b, "..3 s on: %u blocks, track 1 down from %u chunks to %u", (unsigned)tape_ctl[1].nblk,
+                     (unsigned)a0, (unsigned)tape_ctl[0].nch);
+            check(b, tape_ctl[1].nblk > 250u && tape_ctl[0].nch < a0 - 10u && tape_ctl[0].nblk <= tape_ctl[0].nch * MEM_CB);
+            sys.rec = 0;
+            tape_unprepare(1);
+            sys.playing = 0;
+            render_poll(400);
+            for (t = 0; t < NTRK; t++)
+                track[t].mute = 0;
+        }
+    }
+
+    {   /* a tape that can't grow any more stops at its end and loops */
+        power_on();
+        for (t = 0; t < MEM_NC - 3u; t++)
+            mem_alloc(MEM_IMPORT);                       /* (3 chunks left, nothing to take) */
+        tp[1].dev[DEV_SRC][TK_REEL] = 0;
+        tape_prepare(1);
+        sys.rec = 1u << 1;
+        sys.playing = 1;
+        render_poll(1378 * 2);
+        check("nothing left to take: the tape stops at 3 chunks and loops them, REC still on",
+              !tape_ctl[1].grow && tape_ctl[1].nblk == 3u * MEM_CB && tape_ctl[1].rec_ok &&
+              (tape_rt[1].pos >> 12) < (int32_t)(3u * TAPE_CHS));
+        sys.rec = 0;
+        tape_unprepare(1);
+        sys.playing = 0;
+        render_poll(400);
+        tape_free(1);
+        while (mem_count(MEM_FREE))
+            mem_alloc(MEM_IMPORT);
+        tp[2].dev[DEV_SRC][TK_REEL] = 0;
+        check("..and REC on a blank tape with no chunk free and no tape to take from: refused (-1)",
+              tape_prepare(2) == -1 && !tape_ctl[2].rec_ok);
+    }
+
+    {   /* a long sound across reel slots */
+        tape_view_t v;
+        int32_t pk;
+        double hz;
+        power_on();
+        tape_reserve(0, 44, 1);                          /* 700 blocks of a 440 Hz sine on track 1's tape */
+        {
+            int16_t blk[TAPE_BLK];
+            uint32_t bb, i2;
+            for (bb = 0; bb < 700u; bb++) {
+                mem_chunk_t *m = tape_chunk(0, bb);
+                for (i2 = 0; i2 < TAPE_BLK; i2++)
+                    blk[i2] = (int16_t)(12000.0 * sin(2 * M_PI * 440.0 * (bb * TAPE_BLK + i2) / TAPE_SR));
+                ima_fit(blk, &m->pred[bb % MEM_CB], &m->idx[bb % MEM_CB]);
+                ima_enc(blk, m->pred[bb % MEM_CB], m->idx[bb % MEM_CB], m->data[bb % MEM_CB], TAPE_BLK);
+                m->peak[bb % MEM_CB] = ima_peak(blk, TAPE_BLK);
+            }
+            tape_ctl[0].nblk = 700;
+            tp[0].dev[DEV_SRC][TK_REEL] = 0;
+        }
+        tape_view(0, &v);
+        check("a 700-block (8.1 s) sound saved to user reel 1 spans three slots",
+              uslot_save_view(0, &v, 700, "LONG") == 700 && uslot_valid(0) && uslot_hdr(0)->span == 3 &&
+              uslot_covered(1) && uslot_covered(2) && !uslot_covered(3) && uslot_free() == 3 &&
+              !strcmp(uslot_name[0], "LONG"));
+        tp[1].dev[DEV_SRC][TK_REEL] = (int16_t)(NREEL + 1u);
+        tape_view(1, &v);
+        hz = view_hz(&v, &pk);
+        snprintf(b, sizeof b, "..and plays from flash whole: %u samples, %.1f Hz", (unsigned)v.len, hz);
+        check(b, v.len == 700u * TAPE_BLK && fabs(hz - 440) < 3 && pk > 10000);
+        check("..REC copies it onto a tape in one piece (44 chunks)", tape_prepare(1) == 1 && tape_ctl[1].nblk == 700 &&
+              tape_ctl[1].nch == 44);
+        tape_unprepare(1);
+        check("a one-slot reel keeps the layout reels always had (data at 4 KiB, span 1)",
+              uslot_doff(TAPE_NBLK) == 4096u && uslot_span(TAPE_NBLK) == 1u && uslot_span(TAPE_NBLK + 1u) == 2u);
+        check("..six slots hold 21.5 s at most", uslot_fit(USLOT_N) * TAPE_BLK / 22050u == 21u);
+        tape_view(0, &v);
+        check("a save into a slot a long reel covers breaks the long one (it reads empty, never garbage)",
+              uslot_save(1, REELS[0].data, REELS[0].pred, REELS[0].idx, REELS[0].peak, REELS[0].nblk, "KICK") == 0 &&
+              !uslot_valid(0) && uslot_valid(1));
+        check("..a sound longer than the slots left from where it goes is cut to fit",
+              uslot_save_view(4, &v, 700, "CUT") == (int32_t)uslot_fit(2) && uslot_valid(4) && uslot_hdr(4)->span == 2);
+        memset(host_nor, 0xFF, sizeof host_nor);
+        uslot_names();
+    }
+
+    {   /* a long WAV over USB: a tape as long as memory allows, a reel across slots */
+        static uint8_t wav[10 * 44100 * 2 + 64];
+        uint32_t n;
+        tape_view_t v;
+        int32_t pk;
+        double hz;
+        power_on();
+        vdisk_mount();
+        hd_mount();
+        n = make_wav(wav, 22050, 1, 16, 1, 22050 * 10, 330.0);   /* 10 s */
+        hd_write_file(hd_find("TAPE4   WAV"), 0, 0, wav, n, 1);
+        vdisk_poll();
+        tape_view(3, &v);
+        hz = view_hz(&v, &pk);
+        snprintf(b, sizeof b, "a 10 s WAV over TAPE4.WAV: all of it on track 4's tape (%u blocks), %.0f Hz", (unsigned)tape_ctl[3].nblk, hz);
+        check(b, tape_ctl[3].nblk >= 861u && tape_ctl[3].nblk <= 862u && fabs(hz - 330) < 4 &&
+              mem_count(MEM_TAPE + 3) == tape_ctl[3].nch && !mem_count(MEM_IMPORT));
+        n = make_wav(wav, 22050, 1, 16, 1, 22050 * 6, 550.0);    /* 6 s, any name: a reel across slots */
+        hd_write_file(0, "SIX     WAV", 0, wav, n, 1);
+        vdisk_poll();
+        uslot_view(0, &v);
+        hz = view_hz(&v, &pk);
+        snprintf(b, sizeof b, "a 6 s WAV with any name: user reel SIX across two slots, %.0f Hz, its chunks back", hz);
+        check(b, uslot_valid(0) && uslot_hdr(0)->span == 2 && !strcmp(uslot_name[0], "SIX") && fabs(hz - 550) < 5 &&
+              !mem_count(MEM_IMPORT) && uslot_free() == 2);
+        while (mem_count(MEM_FREE))
+            mem_alloc(MEM_TAPE + 2);                     /* (every chunk held by a tape in use) */
+        n = make_wav(wav, 22050, 1, 16, 1, 22050, 550.0);
+        hd_write_file(0, "MORE    WAV", 0, wav, n, 1);
+        vdisk_poll();
+        check("..no memory free (every chunk in a tape in use): refused, and the message says so",
+              !strcmp(ui.msg, "NO MEMORY FREE FOR THAT WAV") && !mem_count(MEM_IMPORT));
+        memset(host_nor, 0xFF, sizeof host_nor);
+        uslot_names();
+    }
+}
+
 int main(int argc, char **argv)
 {
     out_dir = argc > 1 ? argv[1] : "build/bryo_ui";
@@ -2154,6 +2397,7 @@ int main(int argc, char **argv)
     test_drive();
     test_drive_more();
     test_tape_edges();
+    test_memory();
     test_controls_more();
     test_synth();
     test_poly();

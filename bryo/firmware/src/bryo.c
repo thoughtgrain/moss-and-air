@@ -67,6 +67,7 @@ static void ui_redraw(void);
 #include "dsp.c"                 /* fixed-point helpers */
 #include "master.c"              /* the output stage: DC block, speaker EQ, limiter, USB level */
 #include "param.c"               /* the parameter table: devices and modulator slots per track */
+#include "mem.c"                 /* the chunks every track's sound shares */
 #include "tape.c"                /* TAPE: the ADPCM looper, the factory reels */
 #include "synth.c"               /* SYNTH: a small subtractive voice */
 #include "poly.c"                /* POLY: a sound across the keys */

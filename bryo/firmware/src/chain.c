@@ -114,6 +114,12 @@ static void chain_shed(void)
     grain_shed();
 }
 
+/* main loop, every pass: the memory's bookkeeping (tape.c tape_poll: growing tapes and their ends) */
+static void chain_poll(void)
+{
+    tape_poll();
+}
+
 /* all sound off now (an update starting, a panic): the keys stop and the transport stops (the heads fade out) */
 static void chain_panic(void)
 {

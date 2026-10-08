@@ -82,17 +82,19 @@ static inline uint32_t gr_rnd(grain_trk_t *G) { return noise32(&G->rng); }
 static void gr_decode(grain_t *g, const tape_view_t *v, int16_t *out, int32_t n)
 {
     int32_t pred = g->pred, idx = g->idx, s = g->dpos, len = (int32_t)v->len, i;
-    const uint8_t *d = v->data;
+    const uint8_t *d = s < len ? tv_data(v, (uint32_t)s / TAPE_BLK) : 0;
     for (i = 0; i < n; i++, s++) {
+        uint32_t o = (uint32_t)s % TAPE_BLK;
         if (s >= len) {
             out[i] = 0;
             continue;
         }
-        if (!((uint32_t)s % TAPE_BLK)) {
-            pred = v->pred[(uint32_t)s / TAPE_BLK];
-            idx = v->idx[(uint32_t)s / TAPE_BLK];
+        if (!o) {                                       /* a block's start: its data and its stored state */
+            d = tv_data(v, (uint32_t)s / TAPE_BLK);
+            pred = tv_pred(v, (uint32_t)s / TAPE_BLK);
+            idx = tv_idx(v, (uint32_t)s / TAPE_BLK);
         }
-        out[i] = (int16_t)ima_step(&pred, &idx, (d[(uint32_t)s >> 1] >> (((uint32_t)s & 1u) * 4u)) & 15u);
+        out[i] = (int16_t)ima_step(&pred, &idx, (d[o >> 1] >> ((o & 1u) * 4u)) & 15u);
     }
     g->pred = pred;
     g->idx = idx;

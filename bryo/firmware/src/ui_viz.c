@@ -118,7 +118,7 @@ static void viz_tape(const int16_t *v, uint32_t f)
         uint32_t b0 = (uint32_t)(x - r0) * nb / (uint32_t)(rw + 1), b1 = (uint32_t)(x - r0 + 1) * nb / (uint32_t)(rw + 1), b, pk = 0;
         int32_t a;
         for (b = b0; b <= b1 && b < nb; b++)
-            pk = tv.peak[b] > pk ? tv.peak[b] : pk;
+            pk = tv_peak(&tv, b) > pk ? tv_peak(&tv, b) : pk;
         a = clamp((int32_t)pk * amp * gain / (255 * 1000), 0, amp);   /* (GAIN: clips at the frame) */
         if (a)
             px_box(x, mid - a, 1, 2 * a + 1, x >= x0 && x <= x1 ? px_ink : px_dim);
@@ -223,7 +223,7 @@ static void viz_grain(const int16_t *v, uint32_t f)
                 e = GR_RAMP[at * 128 / (fr ? fr : 1)];
             else if (1000 - at < fr)
                 e = GR_RAMP[(1000 - at) * 128 / (fr ? fr : 1)];
-            h = (2 + clamp((int32_t)tv.peak[blk] * 3, 0, 255) * 5 / 255) * e / 32767;   /* (quiet stretches: still a shape) */
+            h = (2 + clamp((int32_t)tv_peak(&tv, blk) * 3, 0, 255) * 5 / 255) * e / 32767;   /* (quiet stretches: still a shape) */
             px_box(x, yc - h, 1, 2 * h + 1, on ? px_ink : px_dim);
         }
         if (ph >= DX0 && ph <= DX1) {                                  /* the playhead, an arrow its way */
@@ -848,7 +848,7 @@ static void viz_poly(const int16_t *v, uint32_t f)
         tape_view_of(sys.sel, (uint32_t)clamp(v[PL_REEL], 0, (int32_t)(NREEL + USLOT_N)), &vw);
         for (x = DX0; x <= DX1; x++) {                                 /* the sound */
             uint32_t blk = vw.len ? (uint32_t)(x - DX0) * (vw.len / TAPE_BLK) / (uint32_t)(DW + 1) : 0;
-            int32_t a = vw.len ? vw.peak[blk] * 9 / 255 : 0;
+            int32_t a = vw.len ? (int32_t)tv_peak(&vw, blk) * 9 / 255 : 0;
             px_box(x, mid - a, 1, 2 * a + 1, x >= sx ? px_ink : px_dim);
         }
         if (!vw.len)

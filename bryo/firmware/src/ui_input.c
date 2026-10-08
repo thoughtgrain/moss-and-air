@@ -195,10 +195,12 @@ static void on_button(uint32_t b)
         if ((sys.rec >> sys.sel) & 1u) {
             sys.rec &= (uint8_t)~(1u << sys.sel);
             tape_unprepare(sys.sel);
-        } else if (tape_prepare(sys.sel)) {
-            sys.rec |= (uint8_t)(1u << sys.sel);
         } else {
-            ui_message("TAPE HAS A TAKE: CLEAR IT (HOLD POLY)");
+            int r = tape_prepare(sys.sel);
+            if (r > 0)
+                sys.rec |= (uint8_t)(1u << sys.sel);
+            else
+                ui_message(r < 0 ? "NO MEMORY FREE TO RECORD" : "TAPE HAS A TAKE: CLEAR IT (HOLD POLY)");
         }
         break;
     case B_SAVE:                                        /* tap: save (phase 8); held: undo the last clear */
