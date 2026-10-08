@@ -212,6 +212,7 @@ with its mixes. My target for all four tracks, everything on, is **at most 2,000
 | RESONATOR | 60 | 4 strings (measured nearer 240 a track on the host: see "RESONATOR, as built") |
 | COLOR | 30 | drive table, crush, follower plus noise (measured 180 a track with every knob on, 0 at the defaults: see "COLOR, as built") |
 | SPACE | 80 | delay plus reverb at 22.05 kHz (measured 220 a track with both on: see "SPACE, as built") |
+| Mixer | 60 for all | measured 145 a track with LOW, HIGH and FILT all on (0 at their defaults), the pan 10, the compressor 2: see "The mixer, as built" |
 | Modulators | 10 | control rate (every 32 samples), not per sample |
 | **Track total** | **~440** | **× 4 = ~1,760**, plus the mixer and compressor ~60 |
 
@@ -936,6 +937,54 @@ strings) would need a step for SPACE as well (the room at a quarter rate, say), 
 the device's number. The stress run cuts the interrupts in while RESONATOR and SPACE take and give back memory as
 knobs turn, and the books balance (RESONATOR's strings and SPACE's lines are in the check now too).
 
+## The mixer, as built (2026-10-08)
+
+The mixer's knobs did nothing until now: the channel page drew a response no sound followed. `firmware/src/mixer.c`
+makes them heard, in the S-4's order, and adds the master compressor the PRD left without a home.
+
+**Each track's channel** (GLO, then EDIT: LOW HIGH FILT PAN), after the track's devices:
+
+- **LOW and HIGH** are shelves of +-12 dB that turn over (half their gain) at 210 Hz and 1.9 kHz. A shelf is one
+  pole, trapezoidal (Zavalishin's form, which stays true near the top, where a plain one-pole left the high shelf 4
+  dB short at 8 kHz), with its corner moved by the gain so the turnover stays put. The slope is two octaves wide,
+  and the picture now draws it that wide (it drew one).
+- **FILT** is the DJ filter: left a low-pass coming down from 10 kHz to 92 Hz, right a high-pass going up from 40 Hz
+  to 4.5 kHz, 12 dB an octave, no bump. It's POLY's state-variable filter, unrolled with its input held to +-65,535 so
+  its states can't overflow without clamping each one. At its lowest corner it bottoms out near -29 dB instead of
+  falling forever: the filter's precision runs out there, and nobody will hear 1 kHz at -29 dB under 92 Hz.
+- **PAN** comes after the level: equal power across, with both sides at full in the centre, so turning it from the
+  middle only ever lowers one side (a balance: the tracks are stereo already). The picture's bars follow the same
+  law now: full height both sides at the centre.
+
+**The master compressor** (EDIT tapped twice: MASTER) works on the four tracks' sum, before MASTER and the output
+stage's limiter, where the S-4 puts it. AMT is the threshold from 0 down to -30 dB at 4:1, with a 6 dB soft knee and
+the level made up by half of what a full-scale sound loses, so turning it up glues the mix instead of making it
+quieter. ATK closes it in 1 to 100 ms, REL opens it in 20 to 990 ms (990, because 1000 doesn't fit the strip's five
+characters). MIX is parallel compression: for a gain-based compressor it's a blend of the gain toward 1, so it costs
+nothing. It follows the sum's peak once a control block (0.73 ms) and works in octaves (a log2 and an exp2 of 17-entry
+tables) to get the gain, ramped across the next block. The MASTER page draws the in/out curve from the same function
+(`mx_curve`), the threshold as a node, and what it takes off now as a bar with its dB.
+
+**EDIT on the mixer** now steps LEVELS, CHANNEL, MASTER and back, each latched; held from the levels, it's still the
+channel while held.
+
+**At the defaults nothing runs**: a flat channel, a centred pan and AMT 0 leave the sound sample for sample what it
+was, and the tests check that. The default path costs what it did before. The pan's centre came out at 0.9999 from
+the sine table, so it's snapped to exactly full, and the level is applied in the summing loop unless the pan moves.
+
+**Load** (host instructions per sample, `tests/checkpoint_sim.sh` run 17: every channel's LOW, HIGH, FILT and PAN on,
+the compressor at AMT 60): 1,699 against 925 for nothing on, so about 145 a track with all three filters on, 10 for
+the pan, 2 for the compressor. The budget said 60 for the whole mixer; that was the compressor's and the pan's
+share, not three filters a side. Unrolling the filter and keeping its state in locals took it from 210.
+
+**Tests** (`test_mixer`): the defaults are untouched; LOW +12 lifts 60 Hz 10.9 dB and leaves 8 kHz; HIGH -12 cuts
+8 kHz 11.3 dB and leaves 60 Hz; FILT -100 passes 50 Hz and holds 1 kHz under -25 dB; FILT +100 holds 1 kHz under -20 and
+passes 10 kHz; FILT -50 is -3 dB at its corner (970 Hz) and 25 dB down two octaves on; PAN -100, 0, +100 and -50 (the far
+side at 0.54); AMT 100 turns 20 dB in into 5 dB out and lifts the quiet sound 4.4 dB, the meter shows it, MIX 0 gives
+the dry sound back; ATK 1 ms holds a hit down within 0.7 ms against 16 ms at 100; AMT back to 0 glides home and leaves
+the sound untouched; every channel knob at its top with a square past full scale stays bounded. The controls test
+walks EDIT through LEVELS, CHANNEL, MASTER and back, and the stress turns the channel and compressor knobs.
+
 ## USB record mode (2026-10-08)
 
 Recording from the computer is a mode of its own, not a source a track plays through: you go in, record, put the
@@ -1097,7 +1146,7 @@ Each phase ends in something you can flash and hear or see, and each is its own 
 | 3c. Memory by usage (**done**, host-verified; see "Memory by usage, TRACKS and REC IN") | the shared chunks, growing tapes, TRACKS, REC IN, long reels | memory follows what you use |
 | 4. RESONATOR (**done**, host-verified; see "RESONATOR, as built") | strings, chromatic keys, OCT shifts | tuned feedback chords from the keys |
 | 5. COLOR + SPACE (**done**, host-verified; see "COLOR, as built" and "SPACE, as built") | drive, crush, noise; delay and reverb | the full chain on 4 tracks inside the budget (on the host it isn't: everything on all four is 5,842; the device decides) |
-| 6. Mixer + routing (routing **done** early: REC IN) | GLO mixer, filters, compressor | the mixer's DSP |
+| 6. Mixer + routing (**done**, host-verified; routing early as REC IN; see "The mixer, as built") | GLO mixer, filters, compressor | the mixer's DSP |
 | 7. Modulation | the 4 engines, hold-and-turn depth, assigning engines, p-locks | the PRD's §4 workflow end to end |
 | 8. Projects | save and recall with reels; user reel slots in flash and the upload tool; quick SAVE; undo for MONO and POLY | a power cycle brings a session back |
 | 9. Screen (mostly done early: the dot-grid screens) | the modulation arcs on the pictograms, the motion dots, the summed white dot | the PRD's §5 |

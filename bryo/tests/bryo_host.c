@@ -76,6 +76,7 @@ static void ui_redraw(void);
 #include "../firmware/src/reso.c"
 #include "../firmware/src/color.c"
 #include "../firmware/src/space.c"
+#include "../firmware/src/mixer.c"
 #include "../firmware/src/usbrec.c"
 #include "../firmware/src/chain.c"
 #include "../firmware/src/icons.c"
@@ -128,6 +129,9 @@ static void power_on(void)
     memset(space, 0, sizeof space);
     memset(&ur, 0, sizeof ur);
     ur_mw = ur_mr = ur_rw = ur_rr = 0;
+    memset(chan, 0, sizeof chan);
+    comp.env = comp.gr_q8 = 0;
+    comp.g = 4096;
     memset(gbuf, 0, sizeof gbuf);                        /* (GRAIN's buffers and grains: a fresh start, as the */
     memset(grain, 0, sizeof grain);                      /* device's power-on gives) */
     gr_used = 0;
@@ -526,6 +530,13 @@ static void test_input(void)
     check("EDIT tapped on the mixer: the channel page stays (latched, as a tapped GLO; the right hand free for the knobs)",
           ui.chan && ui.chan_latched && ui.view == VIEW_MIXER);
     tap(B_EDIT);
+    check("..tapped again: MASTER, the compressor's page (latched)", ui.chan == CHAN_MASTER && ui.chan_latched &&
+          ui.view == VIEW_MIXER);
+    host_enc[panel.enc[EN_K1]] = 20;
+    ui_input();
+    check("..KNOB 1 sets the master compressor's AMT (0 -> 20), one for all tracks", mst[MS_AMT] == 20);
+    mst[MS_AMT] = 0;
+    tap(B_EDIT);
     check("..tapped again: the levels", !ui.chan && !ui.chan_latched && ui.view == VIEW_MIXER);
     press(B_FX);
     check("a page pad closes the mixer", ui.view == VIEW_PAGE && ui.dev == DEV_COLOR && !ui.glo_latched);
@@ -885,6 +896,16 @@ static void screens_in(const char *pal)
     shot(pal, "mixer_channel");
     let_go(B_EDIT);
     shot(pal, "mixer_eq");
+    tap(B_EDIT);                                         /* EDIT tapped twice: MASTER, the compressor */
+    tap(B_EDIT);
+    turn(0, 60);                                         /* AMT 60, MIX 70, and what it takes off now */
+    turn(3, -30);
+    comp.gr_q8 = 220;
+    shot(pal, "mixer_master");
+    comp.gr_q8 = 0;
+    for (s = 0; s < NMS; s++)
+        mst[s] = MS_P[s].def;
+    tap(B_EDIT);
     tap(B_GLO);
     hold(B_GLO);
     shot(pal, "mixer_held");
@@ -3009,6 +3030,169 @@ static void test_usbrec(void)
             mem_free(i);
 }
 
+/* a sine through track 0's channel strip (and pan): its level after, against before, in dB (the second half) */
+static double ch_db(double hz, double amp)
+{
+    enum { N = 8192 };
+    static int32_t l[N], r[N];
+    uint32_t i;
+    sine_fill(l, r, N, hz, amp);
+    memset(&chan[0], 0, sizeof chan[0]);
+    for (i = 0; i + CTL <= N; i += CTL)
+        mix_channel(0, l + i, r + i, CTL);
+    return 20 * log10(rms_of(l, N / 2, N) / (amp / M_SQRT2));
+}
+
+/* the mixer's sound (mixer.c): each channel strip does what its picture draws, the pan, the master compressor */
+static void test_mixer(void)
+{
+    enum { N = 8192 };
+    static int32_t l[N], r[N], l0[N];
+    int16_t *ch;
+    char b[160];
+    double a, c, d;
+    uint32_t i, k;
+    int32_t k2_dummy;
+    power_on();
+    ch = tp[0].ch;
+    sine_fill(l, r, N, 441, 20000);
+    memcpy(l0, l, sizeof l0);
+    for (i = 0; i + CTL <= N; i += CTL) {
+        mix_channel(0, l + i, r + i, CTL);
+        mix_pan(0, l + i, r + i, 4096, CTL);
+        mix_comp(l + i, r + i, CTL);
+    }
+    check("the mixer at its defaults (channel flat, pan centred, AMT 0): the sound untouched, sample for sample",
+          !memcmp(l, l0, sizeof l0) && !memcmp(r, l0, sizeof l0));
+    ch[CH_LOW] = 12;
+    a = ch_db(60, 8000);
+    c = ch_db(8000, 8000);
+    snprintf(b, sizeof b, "LOW +12: 60 Hz up %.1f dB, 8 kHz %.1f dB", a, c);
+    check(b, a > 10 && a < 12.5 && fabs(c) < 1);
+    ch[CH_LOW] = 0;
+    ch[CH_HIGH] = -12;
+    a = ch_db(60, 8000);
+    c = ch_db(8000, 8000);
+    snprintf(b, sizeof b, "HIGH -12: 8 kHz down %.1f dB, 60 Hz %.1f dB", c, a);
+    check(b, c < -10 && c > -12.5 && fabs(a) < 1);
+    ch[CH_HIGH] = 0;
+    ch[CH_FILT] = -100;
+    a = ch_db(50, 8000);
+    c = ch_db(1000, 8000);
+    snprintf(b, sizeof b, "FILT -100 (low-pass at 92 Hz): 50 Hz %.1f dB, 1 kHz %.1f dB", a, c);
+    check(b, fabs(a) < 2 && c < -25);
+    ch[CH_FILT] = 100;
+    a = ch_db(1000, 8000);
+    c = ch_db(10000, 8000);
+    snprintf(b, sizeof b, "FILT +100 (high-pass at 4.5 kHz): 1 kHz %.1f dB, 10 kHz %.1f dB", a, c);
+    check(b, a < -20 && fabs(c) < 2);
+    ch[CH_FILT] = -50;
+    a = ch_db(200, 8000);
+    c = ch_db(4000, 8000);
+    d = ch_db(970, 8000);
+    snprintf(b, sizeof b, "FILT -50 (corner ~970 Hz): 200 Hz %.1f, at the corner %.1f, 4 kHz %.1f dB (12 dB an octave)",
+             a, d, c);
+    check(b, fabs(a) < 1 && d < -1.5 && d > -4.5 && c < -20 && c > -30);
+    ch[CH_FILT] = 0;
+
+    for (i = 0; i < 3u; i++) {                           /* the pan: -100, 0, +100 */
+        int32_t pan = (int32_t)i * 100 - 100;
+        ch[CH_PAN] = (int16_t)pan;
+        sine_fill(l, r, N, 441, 10000);
+        memset(&chan[0], 0, sizeof chan[0]);
+        mix_pan(0, l, r, 4096, CTL);                           /* (the first block ramps from nothing to the pan) */
+        for (k = CTL; k + CTL <= N; k += CTL)
+            mix_pan(0, l + k, r + k, 4096, CTL);
+        a = rms_of(l, N / 2, N) / (10000 / M_SQRT2);
+        c = rms_of(r, N / 2, N) / (10000 / M_SQRT2);
+        snprintf(b, sizeof b, "PAN %+d: left x%.2f, right x%.2f", pan, a, c);
+        check(b, pan < 0 ? a > 0.99 && c < 0.01 : pan > 0 ? c > 0.99 && a < 0.01 : a > 0.99 && c > 0.99);
+    }
+    ch[CH_PAN] = -50;
+    sine_fill(l, r, N, 441, 10000);
+    memset(&chan[0], 0, sizeof chan[0]);
+    for (k = 0; k + CTL <= N; k += CTL)
+        mix_pan(0, l + k, r + k, 4096, CTL);
+    a = rms_of(l, N / 2, N) / (10000 / M_SQRT2);
+    c = rms_of(r, N / 2, N) / (10000 / M_SQRT2);
+    snprintf(b, sizeof b, "PAN -50: the left at full, the right at x%.2f (sqrt 2 sin 22.5 degrees: 0.54)", c);
+    check(b, a > 0.99 && fabs(c - 0.541) < 0.02);
+    ch[CH_PAN] = 0;
+
+    {   /* the compressor: a quiet and a loud sine, 20 dB apart, before and after */
+        double q, lo;
+        mst[MS_AMT] = 100;                               /* -30 dB, 4:1 */
+        for (i = 0; i < 2u; i++) {
+            double amp = i ? 30000 : 3000;
+            sine_fill(l, r, N, 441, amp);
+            comp.env = 0;
+            comp.g = 4096;
+            for (k = 0; k + CTL <= N; k += CTL)
+                mix_comp(l + k, r + k, CTL);
+            if (i)
+                lo = 20 * log10(rms_of(l, N / 2, N) / (amp / M_SQRT2));
+            else
+                q = 20 * log10(rms_of(l, N / 2, N) / (amp / M_SQRT2));
+        }
+        snprintf(b, sizeof b, "AMT 100: 20 dB apart in, %.1f dB apart out (4:1 above -30 dB); the quiet one lifted "
+                 "%.1f dB", 20 + lo - q, q);
+        check(b, 20 + lo - q < 9 && 20 + lo - q > 4 && q > 4);
+        check("..the meter shows what it takes off", comp.gr_q8 > 256);
+        mst[MS_MIX] = 0;
+        sine_fill(l, r, N, 441, 30000);
+        memcpy(l0, l, sizeof l0);
+        comp.env = 0;
+        comp.g = 4096;
+        for (k = 0; k + CTL <= N; k += CTL)
+            mix_comp(l + k, r + k, CTL);
+        a = 20 * log10(rms_of(l, N / 2, N) / rms_of(l0, N / 2, N));
+        snprintf(b, sizeof b, "MIX 0: the dry sound back (%.2f dB)", a);
+        check(b, fabs(a) < 0.1);
+        mst[MS_MIX] = 100;
+        for (i = 0; i < 2u; i++) {                       /* ATK: a hit, and how soon it's held down */
+            uint32_t at = 0;
+            mst[MS_ATK] = (int16_t)(i ? 100 : 1);
+            memset(l, 0, sizeof l);
+            memset(r, 0, sizeof r);
+            sine_fill(l + 1024, r + 1024, N - 1024, 441, 30000);
+            comp.env = 0;
+            comp.g = mx_curve(0, &k2_dummy);
+            for (k = 0; k + CTL <= N; k += CTL) {
+                mix_comp(l + k, r + k, CTL);
+                if (!at && k > 1024 && comp.gr_q8 > 400)
+                    at = k - 1024;
+            }
+            if (i)
+                d = at / 44.1;
+            else
+                c = at / 44.1;
+        }
+        snprintf(b, sizeof b, "ATK 1 ms against 100 ms: held down 9 dB after %.1f ms against %.1f ms", c, d);
+        check(b, c < 3 && d > 10 && d > 8 * c);
+        mst[MS_ATK] = 10;
+        mst[MS_AMT] = 0;
+        sine_fill(l, r, N, 441, 30000);
+        memcpy(l0, l, sizeof l0);
+        for (k = 0; k + CTL <= N; k += CTL)
+            mix_comp(l + k, r + k, CTL);
+        check("AMT back to 0: the gain glides home, then the sound is untouched again",
+              comp.g == 4096 && !memcmp(l + N / 2, l0 + N / 2, N / 2 * sizeof l[0]));
+    }
+    for (i = 0; i < NCH; i++)                            /* every corner, a square past full scale: bounded */
+        ch[i] = CH_P[i].max;
+    for (k = 0; k < N; k++)
+        l[k] = r[k] = (k / 50) & 1 ? 131071 : -131071;
+    memset(&chan[0], 0, sizeof chan[0]);
+    for (k = 0; k + CTL <= N; k += CTL) {
+        mix_channel(0, l + k, r + k, CTL);
+        mix_pan(0, l + k, r + k, 4096, CTL);
+    }
+    check("every channel knob at its top, a square past full scale: bounded", peak_of(l, N) < 1000000 &&
+          peak_of(r, N) < 1000000);
+    for (i = 0; i < NCH; i++)
+        ch[i] = CH_P[i].def;
+}
+
 /* the tape's edges: an empty user reel, a loop shorter than a block, the seam running backwards */
 static void test_tape_edges(void)
 {
@@ -3743,6 +3927,7 @@ int main(int argc, char **argv)
     test_color();
     test_space();
     test_usbrec();
+    test_mixer();
     test_input();
     test_settings();
     palette_set(UI_GREY_INDEX);                          /* (the screens are one ink now, whatever the palette) */

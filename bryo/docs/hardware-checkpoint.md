@@ -42,6 +42,7 @@ first six runs cost about 40 more than at the first checkpoint, the two new devi
 | 14 | SPACE on all four (DLY 50, VERB 40) | 1,784 | 72 chunks, all 16-bit, 14.5 s free |
 | 15 | everything on all four | 5,842 | 32 grains, 16 strings, 72 chunks of SPACE, 3.3 s free |
 | 16 | TRACKS 3, GRAIN WET 100, DRIV 40, SPACE | 2,310 | 54 chunks of SPACE, 11.7 s free |
+| 17 | the mixer: LOW HIGH FILT PAN on all four, the compressor at AMT 60 | 1,699 | 5.7 dB taken off |
 
 These are measurements, not listening: the WAVs are there to be heard.
 No sample past full scale and no sudden jump (over 12,000 between neighbouring samples) in any of them. The stress:
@@ -91,6 +92,7 @@ Write down the CPU reading for each, and anything you hear.
 | 16 | Plugged into a computer: is there an output named Bryo? Pick it, play something; on the FM-1, stopped, hold REC a second | the USB record mode, the level bar moving, the sound in your headphones | did the computer switch its output to Bryo by itself when plugged in? any clicks in what you hear? |
 | 17 | REC, 10 s of something you know, REC, white key 2, REC | track 2's tape is the take; PLAY plays it | the length on TAPE's page; does it sound like what the computer played (mono, 22 kHz)? |
 | 18 | Record the FM-1 on the computer (Bryo as its input) while it plays | the master output arrives (Felucca's, untested with Bryo) | any dropouts? |
+| 19 | GLO, EDIT: each track's LOW +6, FILT -40, PAN apart; EDIT again: MASTER, AMT 60 | the channels shaped and placed, the mix glued, the meter moving | CPU; does the compressor pump? |
 
 ## What I'll do with the numbers
 

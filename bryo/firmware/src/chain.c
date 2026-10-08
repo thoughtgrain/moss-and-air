@@ -5,7 +5,8 @@
  * white keys play its 16 slices), SYNTH or POLY (the white keys play notes). REC records onto the tape either way.
  * Then GRAIN (grain.c: grains of a live buffer of the source, or of the tape, blended by WET), from which the track
  * is stereo. Then RESONATOR (reso.c: four tuned strings the track rings through), COLOR (color.c: drive, crush,
- * noise, tilt) and SPACE (space.c: the delay and the room).
+ * noise, tilt) and SPACE (space.c: the delay and the room). Then the track's channel strip, its level and its pan
+ * (mixer.c), and the four tracks' sum through the master compressor (mixer.c) to the output stage (master.c).
  *
  * What REC records is each track's REC IN (param.c RIN_*, the routing view): by default (AUTO) the other three
  * tracks' mix on a TAPE track and its own source on a SYNTH or POLY track; or the others' mix, one chosen track, or
@@ -132,6 +133,9 @@ static void chain_block(int32_t *out, uint32_t n)
                 gl[i] = (gl[i] >> 3) * (a >> 3) >> 9;
                 gr[i] = (gr[i] >> 3) * (a >> 3) >> 9;
             }
+        mix_channel(t, gl, gr, n);                      /* the channel strip: LOW HIGH FILT (mixer.c) */
+        if (mix_pan(t, gl, gr, g, n))                   /* the level and the pan (centred: the level below) */
+            g = 4096;
         for (i = 0; i < n; i++) {
             int32_t vl = (gl[i] * g) >> 12, vr = (gr[i] * g) >> 12, a = vl < 0 ? -vl : vl, b = vr < 0 ? -vr : vr;
             rt->last[i] = (vl + vr) / 2;                /* (what the other tracks' REC hears: mono) */
@@ -146,6 +150,7 @@ static void chain_block(int32_t *out, uint32_t n)
     }
     grain_recover();
     reso_recover();
+    mix_comp(l, r, n);                                  /* the master compressor on the sum (mixer.c) */
     master_block(l, r, out, n);
     if (sys.usbrec) {                                   /* the record mode opening: this block fades the tracks out */
         for (i = 0; i < n; i++) {

@@ -1033,7 +1033,7 @@ static void viz_seq(const int16_t *v, uint32_t f)
 
 /* ------------------------------------------------------------- MIXER --- */
 /* the selected track's channel strip (the mixer, both pages: the levels above, this below): its EQ and filter as
- * one response over 8 octaves (ch_resp, ui_px.c: what the mixer DSP will apply), a node on each shelf's corner and
+ * one response over 8 octaves (ch_resp, ui_px.c: what mixer.c applies), a node on each shelf's corner and
  * on the filter's, and the pan as two speakers whose bars show each side's gain */
 static void viz_channel(uint32_t f)
 {
@@ -1057,9 +1057,10 @@ static void viz_channel(uint32_t f)
         int32_t c = ch[CH_FILT] < 0 ? w - (-ch[CH_FILT]) * w * 85 / 10000 : ch[CH_FILT] * w * 85 / 10000;
         vz_node(DX0 + c, clamp(mid - ch_resp(ch, c, w + 1) * 10 / 120, DY0, DY1), 1);
     }
-    /* the pan: L and R, each side's gain as a bar (equal power: cos and sin of the place) */
-    pl = px_cos((ch[CH_PAN] + 100) * 8 / 100) * 22 / 1000;
-    pr = px_sin((ch[CH_PAN] + 100) * 8 / 100) * 22 / 1000;
+    /* the pan: L and R, each side's gain as a bar (mixer.c: equal power, sqrt 2 times cos and sin of the place, at
+     * most full, so the centre has both at full) */
+    pl = clamp(px_cos((ch[CH_PAN] + 100) * 8 / 100) * 22 * 1414 / 1000000, 0, 22);
+    pr = clamp(px_sin((ch[CH_PAN] + 100) * 8 / 100) * 22 * 1414 / 1000000, 0, 22);
     px_text(98, DY0, PXF_3, "L", px_ink);
     px_text(113, DY0, PXF_3, "R", px_ink);
     px_box(98, DY1 - pl, 3, pl, px_ink);
@@ -1074,6 +1075,43 @@ static void viz_channel(uint32_t f)
         char n[3] = {'T', (char)('1' + sys.sel), 0};
         px_tag(1, DLBL - 1, PXF_3, n, px_ink, px_bg);
     }
+}
+
+/* the master compressor (the mixer's MASTER page): in against out from -36 dB to full scale as one line (what
+ * mixer.c mx_curve does to a steady sound; the dim diagonal is unity), a node where the threshold sits, and what
+ * it takes off now as a bar falling from the top on the right, with its dB */
+static void viz_master(uint32_t f)
+{
+    int32_t w = 88, x, py = 0, gr = comp.gr_q8, h;
+    char b[12];
+    px_line(DX0, DY1, DX0 + w, DY1 - w * 36 / 42 * DH / w, px_dim, 2);   /* unity: out = in */
+    for (x = 0; x <= w; x++) {
+        int32_t lv = 15 * 256 - 1531 + x * 1531 / w, g, d, out, y;
+        g = mx_curve(lv, &d);
+        out = lv + mx_log2((uint32_t)g) - 12 * 256;    /* (g is Q12: log2 minus 12 octaves) */
+        y = clamp(DY1 - (out - (15 * 256 - 1531)) * DH / 1787, DY0, DY1);   /* (42 dB of rows: 1787) */
+        if (x)
+            px_line(DX0 + x - 1, py, DX0 + x, y, px_ink, 1);
+        py = y;
+    }
+    if (mst[MS_AMT]) {                                  /* the threshold */
+        int32_t tx = DX0 + w - mst[MS_AMT] * 1276 / 100 * w / 1531, d;
+        int32_t g = mx_curve(15 * 256 - mst[MS_AMT] * 1276 / 100, &d), out;
+        out = 15 * 256 - mst[MS_AMT] * 1276 / 100 + mx_log2((uint32_t)g) - 12 * 256;
+        vz_node(tx, clamp(DY1 - (out - (15 * 256 - 1531)) * DH / 1787, DY0, DY1), f == 0u);
+    }
+    h = clamp(gr * DH / 512, 0, DH);                     /* (12 dB, 2 octaves, the whole height) */
+    px_frame(103, DY0, 7, DH + 1, px_dim, 2);
+    if (h)
+        px_box(104, DY0 + 1, 5, h, px_ink);
+    str_cpy(b, "-", sizeof b);                          /* "-3.2": dB off now */
+    fmt_int(b + 1, gr * 602 / 25600);
+    str_cpy(b + str_len(b), ".", 2);
+    fmt_int(b + str_len(b), gr * 602 / 2560 % 10);
+    px_text_c(97, 20, DLBL, PXF_3, gr ? b : "0", px_ink);
+    vz_label(DX0 + w / 2, "IN : OUT", 0);
+    if (f < 4u)
+        vz_ktag(92, DY0 - 1, &MS_P[f], mst[f]);
 }
 
 /* tenths of a second as "4.2" (the unit goes apart: an S after digits reads as a 5 in these faces) */
@@ -1494,7 +1532,11 @@ static uint32_t viz_sig(void)
         if (!ui.chan)                                                  /* the memory: who holds how much */
             for (k = 0; k < MEM_NC; k++)
                 h = (h ^ mem_owner[k]) * 16777619u;
-        return h + ui.chan * 977u + sys.ntrk * 5381u + (ui.chan ? 0u : sys.cpu_q8 * 100u / 256u / 5u * 7919u);
+        if (ui.chan == CHAN_MASTER)                                    /* the compressor's knobs and what it takes off */
+            for (k = 0; k < NMS; k++)
+                h = (h ^ (uint32_t)(mst[k] + 32768)) * 16777619u;
+        return h + ui.chan * 977u + sys.ntrk * 5381u + (ui.chan ? 0u : sys.cpu_q8 * 100u / 256u / 5u * 7919u) +
+               (ui.chan == CHAN_MASTER ? (uint32_t)comp.gr_q8 * 602u / 2560u * 104729u : 0u);
     }
     if (ui.view == VIEW_ROUTE) {
         for (t = 0; t < NTRK; t++)
@@ -1548,7 +1590,9 @@ static void draw_viz(void)
     } else if (ui.view == VIEW_USBREC) {
         viz_usbrec();
     } else if (ui.view == VIEW_MIXER) {
-        if (ui.chan)
+        if (ui.chan == CHAN_MASTER)
+            viz_master(f);
+        else if (ui.chan)
             viz_channel(f);
         else
             viz_memory();

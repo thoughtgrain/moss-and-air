@@ -21,7 +21,8 @@
 #define UI_FOOT_H 24
 #define UI_MSG_FRAMES 70             /* a message holds the visualization panel ~1 s (~66 frames/s) */
 
-enum { FOCUS_DEV, FOCUS_SLOT };      /* what the strip shows: a device of the track, or a modulator slot */
+enum { FOCUS_DEV, FOCUS_SLOT };
+enum { CHAN_LEVELS, CHAN_STRIP, CHAN_MASTER };   /* ui.chan: the mixer's page */      /* what the strip shows: a device of the track, or a modulator slot */
 enum { VIEW_PAGE, VIEW_MIXER, VIEW_ROUTE, VIEW_USBREC };   /* VIEW_MIXER: GLO, the four track levels on the knobs,
                                                             * the tracks below; VIEW_ROUTE: ALGORITHM, each track's
                                                             * REC IN on the knobs; VIEW_USBREC: the USB record mode
@@ -47,7 +48,8 @@ static struct {
                                       * and the hint shown */
     uint32_t rec_t0;
     uint32_t zero_t0;
-    uint8_t chan;                    /* the mixer's channel page: the knobs set the selected track's channel strip */
+    uint8_t chan;                    /* the mixer's pages past the levels: CHAN_STRIP the selected track's channel strip,
+                                      * CHAN_MASTER the master compressor (EDIT tapped steps through them) */
     uint8_t chan_held, chan_used;    /* EDIT down on the mixer, and a knob turned meanwhile (as GLO's: held momentary,
                                       * tapped latched) */
     uint8_t chan_latched;
@@ -85,6 +87,10 @@ static const pdesc_t *ui_page(uint32_t k, int16_t **vp)
     static const pdesc_t LEVEL[NTRK] = {{"T1", 0, 127, 100, F_NUM}, {"T2", 0, 127, 100, F_NUM},
                                         {"T3", 0, 127, 100, F_NUM}, {"T4", 0, 127, 100, F_NUM}};
     static int16_t lv[NTRK];
+    if (ui.view == VIEW_MIXER && ui.chan == CHAN_MASTER) {   /* the master compressor (one for all tracks) */
+        *vp = &mst[k];
+        return &MS_P[k];
+    }
     if (ui.view == VIEW_MIXER && ui.chan) {
         *vp = &p->ch[k];
         return &CH_P[k];
@@ -131,7 +137,7 @@ static void draw_head(void)
         str_cpy(ti, "USB RECORD", sizeof ti);
         str_cpy(box, "IN", sizeof box);
     } else if (ui.view == VIEW_MIXER)
-        str_cpy(ti, ui.chan ? "CHANNEL" : "MIXER", sizeof ti);
+        str_cpy(ti, ui.chan == CHAN_MASTER ? "MASTER" : ui.chan ? "CHANNEL" : "MIXER", sizeof ti);
     else if (ui.view == VIEW_ROUTE)
         str_cpy(ti, "REC IN", sizeof ti);
     else
@@ -231,7 +237,7 @@ static void draw_strip(void)
             px_frame(x + 9, 8, 12, 12, px_dim, 2);
             continue;
         }
-        uint32_t pk = ui.view == VIEW_ROUTE ? PK_SRC : ui.view == VIEW_MIXER ? CH_PK[k]
+        uint32_t pk = ui.view == VIEW_ROUTE ? PK_SRC : ui.view == VIEW_MIXER ? (ui.chan == CHAN_MASTER ? MS_PK[k] : CH_PK[k])
                     : ui.kind == FOCUS_SLOT ? ME_PK[tp[sys.sel].engine[ui.slot]][4u * ui.page + k]
                     : dev_pk(sys.sel, ui.dev)[4u * ui.page + k];
         int lvl = ui.view == VIEW_MIXER && !ui.chan, mute = lvl && track[k].mute;
@@ -270,7 +276,7 @@ static void draw_foot(void)
     else if (ui.glo_held)                             /* the white keys pick the track; SELECT sets TRACKS */
         str_cpy(a, "KEYS:TRK SEL:TRACKS", sizeof a);
     else if (ui.view == VIEW_MIXER)
-        str_cpy(a, ui.chan ? "KNOBS: CHANNEL" : "EDIT: CHANNEL", sizeof a);
+        str_cpy(a, ui.chan == CHAN_MASTER ? "EDIT: LEVELS" : ui.chan ? "EDIT: MASTER" : "EDIT: CHANNEL", sizeof a);
     else if (ui.view == VIEW_ROUTE)
         str_cpy(a, "KNOBS: REC IN", sizeof a);
     else

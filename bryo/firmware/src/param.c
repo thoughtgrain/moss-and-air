@@ -165,6 +165,14 @@ static const pdesc_t CH_P[NCH] = {
     {"LOW", -12, 12, 0, F_DB}, {"HIGH", -12, 12, 0, F_DB}, {"FILT", -100, 100, 0, F_BIPCT}, {"PAN", -100, 100, 0, F_BIPCT},
 };
 
+/* the master compressor on the four tracks' sum (mixer.c; the mixer's MASTER page, EDIT tapped twice): how hard, how
+ * fast it closes and opens, and the squeezed against the dry. One for the whole instrument. AMT 0: off. */
+enum { MS_AMT, MS_ATK, MS_REL, MS_MIX, NMS };
+static const pdesc_t MS_P[NMS] = {
+    {"AMT", 0, 100, 0, F_PCT}, {"ATK", 1, 100, 10, F_MS}, {"REL", 20, 990, 200, F_MS}, {"MIX", 0, 100, 100, F_PCT},
+};
+static int16_t mst[NMS];
+
 /* The modulator engines (phase 7 runs them; their knobs exist now so a slot's page can be edited), lined up with
  * the Torso S-4's modulators (docs/bryo-architecture.md, "Modulators"). The S-4's WAVE and RANDOM are one LFO
  * here: random is one of its shapes (RND), on the same core, so every shape gets the same rate, placement and
@@ -265,6 +273,8 @@ static void param_engine(uint32_t t, uint32_t s, uint32_t e)
 static void param_defaults(void)
 {
     uint32_t t, d, k, s;
+    for (k = 0; k < NMS; k++)                            /* the master compressor */
+        mst[k] = MS_P[k].def;
     for (t = 0; t < NTRK; t++) {
         for (d = 0; d < NDEV; d++)
             for (k = 0; k < NPK; k++)

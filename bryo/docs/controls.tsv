@@ -75,8 +75,8 @@ mixer	ENC_K3	turn	track 3 level	now	-	change
 mixer	ENC_K4	turn	track 4 level	now	-	change
 mixer	BTN_GLO	tap	close the mixer	now	-	change
 mixer	BTN_HOME	press	close the mixer and focus the source (any page pad does the same for its page)	now	-	change
-mixer	BTN_EDIT	hold	the selected track's channel: KNOB 1-4 set LOW HIGH FILT PAN (heard from phase 6); letting go returns to the levels	now	-	PRD 2.2
-mixer	BTN_EDIT	tap	the channel page latched (as a tapped GLO latches the mixer), so one hand turns the knobs; tapped again: the levels	now	-	change
+mixer	BTN_EDIT	hold	the selected track's channel: KNOB 1-4 set LOW HIGH FILT PAN; letting go returns to the levels	now	-	PRD 2.2
+mixer	BTN_EDIT	tap	steps the pages, each latched (as a tapped GLO latches the mixer): LEVELS, CHANNEL (the selected track's LOW HIGH FILT PAN), MASTER (the compressor: AMT ATK REL MIX), LEVELS	now	-	change
 glo-held	WHITE_1-4	press	focus track 1..4 (the white keys don't play while GLO is held)	now	-	change
 glo-held	ENC_K1-4	turn	the four track levels; letting go of GLO returns to the page	now	-	change
 glo-held	ENC_SELECT	turn	TRACKS 1-4: the tracks in use; the ones above it park (silent, not rendered, their tapes taken first when memory runs short). A pad held + SELECT picks that pad's thing, as HOME + SELECT (the source) and a slot + SELECT (its engine); plain SELECT stays the tempo on every view	now	-	change

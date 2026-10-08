@@ -10,7 +10,8 @@
  *                  TRACKS; let go: back
  *   GLO tapped     the mixer stays up; tap again (or any page pad): back
  *   EDIT on the mixer  the selected track's channel (LOW HIGH FILT PAN) on KNOB 1..4: held, while held; tapped,
- *                  latched (tapped again: the levels), as GLO's mixer and the 0 key's freeze
+ *                  latched, as GLO's mixer and the 0 key's freeze. Tapped again: MASTER (the compressor: AMT ATK
+ *                  REL MIX); again: the levels
  *   SCL            unassigned (the PRD's SEL; track picking moved under GLO)
  *   PLAY           start / stop
  *   REC            arm the focused track (playing: as it goes down, so a punch-in lands where it's pressed;
@@ -211,11 +212,12 @@ static void on_button(uint32_t b)
         break;
     case B_EDIT:                                        /* GRAIN's pages, RESONATOR's; on the mixer: the channel */
         if (ui.view == VIEW_MIXER) {                    /* (held: while held; tapped: latched; tapped again: off) */
-            if (ui.chan && ui.chan_latched) {
-                ui.chan = 0;
+            if (ui.chan == CHAN_MASTER && ui.chan_latched) {   /* LEVELS -> CHANNEL -> MASTER -> LEVELS */
+                ui.chan = CHAN_LEVELS;
                 ui.chan_latched = 0;
             } else {
-                ui.chan = 1;
+                ui.chan = ui.chan == CHAN_STRIP && ui.chan_latched ? CHAN_MASTER : CHAN_STRIP;
+                ui.chan_latched = 0;
                 ui.chan_held = 1;
                 ui.chan_used = 0;
                 ui.chan_t0 = fm1_ms;

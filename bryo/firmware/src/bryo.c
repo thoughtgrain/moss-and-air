@@ -80,6 +80,7 @@ static void ui_redraw(void);
 #include "reso.c"                /* RESONATOR: four tuned strings */
 #include "color.c"               /* COLOR: drive, crush, noise, tilt */
 #include "space.c"               /* SPACE: the delay and the room */
+#include "mixer.c"               /* the mixer's sound: the channel strips, the master compressor */
 #include "usbrec.c"              /* the USB record mode: the computer onto a track */
 #include "chain.c"               /* the four tracks, rendered per control block */
 

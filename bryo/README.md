@@ -26,7 +26,8 @@ them, stretched, held at a spot or delayed (SCAN); the 0 black key held freezes 
 makes sound too: four tuned strings the track rings through (PTCH, SCAL's chord), and on its page the white keys set
 the root and pluck them. COLOR
 (drive, crush, noise that rides the sound, tilt) and SPACE (a delay and a small room, taking memory only while DLY or
-VERB is up) make sound as well. The modulators don't yet; that's phase 7. The knobs carry the Torso S-4's names where they do the same job
+VERB is up) make sound as well. The mixer's channel (LOW, HIGH, FILT, PAN) and a master compressor
+(GLO, then EDIT, EDIT again for MASTER) shape the mix. The modulators don't make sound yet; that's phase 7. The knobs carry the Torso S-4's names where they do the same job
 ([docs/s4-alignment.md](docs/s4-alignment.md)). Phases 1 and 2 are verified on the host only: nothing has been built
 for or run on an FM-1 yet. The plan, with what the hardware allows and the order of the work, is in
 [docs/bryo-architecture.md](docs/bryo-architecture.md).

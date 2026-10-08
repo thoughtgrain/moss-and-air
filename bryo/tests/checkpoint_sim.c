@@ -243,6 +243,21 @@ static double run(int n, char *say, size_t sz)
                  mem_count(MEM_FREE) * 4096.0 / 22050);
         return 6;
     }
+    case 17: {                                           /* the mixer: every channel strip on, the compressor */
+        uint32_t t;
+        for (t = 0; t < NTRK; t++) {
+            tp[t].ch[CH_LOW] = 4;
+            tp[t].ch[CH_HIGH] = -3;
+            tp[t].ch[CH_FILT] = (int16_t)(t & 1u ? 30 : -40);
+            tp[t].ch[CH_PAN] = (int16_t)(t * 60 - 90);
+        }
+        mst[MS_AMT] = 60;
+        mst[MS_MIX] = 80;
+        play(6);
+        snprintf(say, sz, "the mixer: LOW HIGH FILT PAN on all four, the compressor at AMT 60 (taking %.1f dB off)",
+                 comp.gr_q8 * 6.02 / 256);
+        return 6;
+    }
     default: {                                           /* a 20 s WAV over TAPE3.WAV while the reels play */
         static uint8_t w[20 * 22050 * 2 + 4096];
         uint32_t len = make_wav(w, 22050, 1, 16, 1, 22050 * 20, 330.0), k, lba = VD_DATA + 3000u * VD_SPC;
@@ -472,7 +487,15 @@ static int stress(double secs)
             }
             if (ur.state == UR_OFF)
                 ui.view = VIEW_PAGE;
-        } else if (a < 74) {                             /* a COLOR knob */
+        } else if (a < 77) {                             /* the mixer: a channel knob, the compressor */
+            uint32_t t = st_rand(NTRK), k = st_rand(NCH + NMS);
+            const pdesc_t *d = k < NCH ? &CH_P[k] : &MS_P[k - NCH];
+            int16_t x = (int16_t)(d->min + (int32_t)st_rand((uint32_t)(d->max - d->min + 1)));
+            if (k < NCH)
+                tp[t].ch[k] = x;
+            else
+                mst[k - NCH] = x;
+        } else if (a < 81) {                             /* a COLOR knob */
             uint32_t t = st_rand(NTRK), k = st_rand(9);
             const pdesc_t *d = &DEV_P[DEV_COLOR][k];
             tp[t].dev[DEV_COLOR][k] = (int16_t)(d->min + (int32_t)st_rand((uint32_t)(d->max - d->min + 1)));
@@ -528,7 +551,7 @@ int main(int argc, char **argv)
         int n;
         wav_cap = 23u * 44100u * 2u;
         wav_buf = malloc(wav_cap * sizeof *wav_buf);
-        for (n = 1; n <= 16; n++) {
+        for (n = 1; n <= 17; n++) {
             char path[512];
             wav_n = wav_clip = 0;
             run(n, say, sizeof say);

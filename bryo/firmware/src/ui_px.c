@@ -303,14 +303,15 @@ static int32_t px_clip(int32_t x, int32_t g)
     return k * (1000 + g) / (1000 + a) * 1000 / g;
 }
 
-/* The channel strip's response at x of w dots (8 octaves, left to right), in tenths of a dB: LOW and HIGH shelves
- * (+-12 dB, turning over around 2/8 and 6/8 of the width), FILT's low-pass (left of 0: its corner moves left from
+/* The channel strip's response at x of w dots (8 octaves, 40 Hz to 10 kHz, left to right), in tenths of a dB: LOW and
+ * HIGH shelves (+-12 dB, half of it at 30 % and 70 % of the width, 210 Hz and 1.9 kHz, the slope two octaves wide, as
+ * mixer.c's first-order shelves), FILT's low-pass (left of 0: its corner moves left from
  * the top end) or high-pass (right of 0: from the bottom end), 12 dB an octave past the corner. A shelf of only
  * LOW or HIGH is what PK_SHELF_* draw, with the other values left at 0. */
 static int32_t ch_resp(const int16_t *ch, int32_t x, int32_t w)
 {
-    int32_t lo = clamp((w * 30 / 100 - x) * 1000 / (w * 12 / 100 + 1) + 500, 0, 1000);   /* 1000 under the shelf */
-    int32_t hi = clamp((x - w * 70 / 100) * 1000 / (w * 12 / 100 + 1) + 500, 0, 1000);
+    int32_t lo = clamp((w * 30 / 100 - x) * 1000 / (w * 25 / 100 + 1) + 500, 0, 1000);   /* 1000 under the shelf */
+    int32_t hi = clamp((x - w * 70 / 100) * 1000 / (w * 25 / 100 + 1) + 500, 0, 1000);
     int32_t db = ch[CH_LOW] * lo / 100 + ch[CH_HIGH] * hi / 100, f = ch[CH_FILT], c;
     if (f < 0) {
         c = w - (-f) * w * 85 / 10000;                   /* the low-pass corner, from the top down to 15 % */
@@ -965,6 +966,7 @@ static const uint8_t *dev_pk(uint32_t t, uint32_t d)
     return tp[t].src == SRC_SYNTH ? SYN_PK : POL_PK;
 }
 static const uint8_t CH_PK[NCH] = {PK_SHELF_LO, PK_SHELF_HI, PK_FILTER, PK_PAN};
+static const uint8_t MS_PK[NMS] = {PK_KNOB, PK_ATTACK, PK_RELEASE, PK_MIX};   /* the master compressor */
 static const uint8_t ME_PK[NME][NPK] = {
     {PK_KNOB, PK_SHAPE, PK_SKEW, PK_FOLD,            /* LFO: RATE SHPE SKEW FOLD */
      PK_CURVE, PK_SMOOTH, PK_VAR, PK_STEPS,          /*      CURV SMTH VAR LEN */
