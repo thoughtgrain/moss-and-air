@@ -154,7 +154,7 @@ Why:
 | SPACE reverb | 10 chunks a track, while VERB is up | the room (a comb a chunk, the allpasses in a fifth) and the pre-delay's line (5 chunks; 3 at 8 bits) |
 | COLOR | 0 | 64 B of state a track |
 | Screen canvas | 5,460 (main RAM) | 2 bits a dot (1.6 KB) and two 4-row line buffers (3.8 KB); see "The screen as dots" |
-| GRAIN | 9,728 pool + 2,900 main RAM | 32 grains × 304 B (a 128-sample decoded window each), and each track's buffer bookkeeping; the buffers themselves are shared memory |
+| GRAIN | 9,728 pool + 2,900 main RAM | 32 grain slots × 304 B (a 128-sample decoded window each), and each track's buffer bookkeeping; the buffers themselves are shared memory |
 | USB record mode | 12,288 pool + 900 main RAM | the monitor's ring (1,024 stereo frames, 23 ms) and the take's (4,096 mono samples, 186 ms); the take itself is shared memory |
 | SYNTH | 576 | 4 tracks × 3 voices of oscillator and filter state (.bss) |
 | POLY | 8,288 | 4 tracks × 4 voices × a 256-sample block reader (pool), plus 448 B of voice state (.bss) |
@@ -747,12 +747,28 @@ mono (the two sides' average).
 decoder state of the window's block. A forward grain slides its window and decodes each sample once; a backward one
 re-decodes from its block's start at each refill, which is why the window is 128 samples rather than 64.
 
-**32 grains in all, shared by TRACKS.** They're four groups of 8; each track has its own, and a parked track's group
-goes to a track still on, so with 1 or 2 tracks a track sounds up to 16 at once (TRACKS 3: 16, 8, 8). The total never
-passes 32, so the worst case costs what four tracks of 8 did. I started at 16 a track, halved it to 8 when four tracks
-shared the CPU, and this gives the 16 back when fewer do. Shedding lowers every track's allowance, two of each 8 at a
-time down to half; a second without shedding gives one back. A grain due while all its track's allowed grains sound is
-skipped, not stolen, so nothing cuts off mid-grain.
+**A pool of grains, shared by what each track asks** (changed 2026-10-08; it was 32 in four fixed groups of 8, so
+16 a track at most). How many grains may sound at once now follows how many tracks have GRAIN on (WET above 0, in
+use): **32 for one, 24 for two, 16 for three or four**. Several dense clouds at once are the expensive case, and one
+dense cloud the musical one (a freeze, a transition, a pad), so the pool shrinks as more tracks use it and a track
+alone can have all 32.
+
+The pool is shared by need, every control block (`gr_plan`). A track's need is the grains a second times SIZE (what
+overlaps), plus half again and two for the bunching PATN and chance make. A track asking less than an even share of
+what's left gets what it asks, round by round; the rest is split evenly among the tracks that want more. So a dense
+pad (asking 62) beside a sparse grain track at the defaults (asking 3) keeps 21 of 24, and only two dense tracks
+thin each other (12 and 12). Any grain slot serves any track now; the shares keep the total inside the pool.
+
+When a share drops (another track's GRAIN comes on), nothing is cut: the grains sounding finish, and new ones are
+skipped until the track is inside its share, so a cloud thins over one grain's length. A grain's level counts only
+the grains its track may sound (1 / sqrt of the smaller of what overlaps and its share), so a thinned cloud doesn't
+also get quieter. GRAIN's page says "5 OF 12 GRAINS": what sounds and the share now. Shedding shrinks the pool a
+quarter at a time down to half, and a second without it gives an eighth back. TRACKS no longer decides the split,
+except that a parked track's GRAIN isn't on.
+
+What it did to the load (`tests/checkpoint_sim.sh`): dense grains on all four tracks went from 3,304 to 2,318 (16
+grains instead of 32), everything on all four from 5,842 to 4,859; the realistic setups (runs 18 to 22) didn't
+change, as none of them reaches the pool. The case that grew is one track alone at 32 grains: 2,976 (run 23).
 
 **Cost, measured** (instructions per output sample for the whole chain, four tracks, the host's 64-bit build under
 callgrind; a ballpark for the FM-1, not its cycles):
@@ -1142,7 +1158,7 @@ Each phase ends in something you can flash and hear or see, and each is its own 
 | 1. Skeleton (**done**, host-verified) | `bryo.c` boots on the kept hardware layer; the old app code is removed; silence plus a test tone; the header and an empty strip; install, UBOOT and calibration still work | it installs from the web installer and returns to stock |
 | 2. TAPE + reels (**done**, host-verified; see "Phase 2, as built") | tapes play factory reels; the loop window, speed, reverse, half speed, FADE; slices on the white keys; REC and overdub (resampling the other tracks); clear and undo | you can load, slice, record and overdub a loop |
 | 3. USB audio in + SYNTH + POLY (**done**, host-verified; see "SYNTH, as built", "POLY, as built" and "USB record mode") | the source_t interface; the UAC OUT endpoint, drift handling, a record mode; the SYNTH source; the POLY source (voices with their own envelope and filter, three HOME pages) | you can record your computer, and play the synth and samples onto a tape |
-| 3b. GRAIN (**done**, host-verified; see "GRAIN, as built") | the scheduler, the sounding cap, FREEZE (key 0); the live buffer, SCAN, FDBK | grains run on 4 tracks inside the budget |
+| 3b. GRAIN (**done**, host-verified; see "GRAIN, as built") | the scheduler, the shared pool of grains, FREEZE (key 0); the live buffer, SCAN, FDBK | grains run on 4 tracks inside the budget |
 | 3c. Memory by usage (**done**, host-verified; see "Memory by usage, TRACKS and REC IN") | the shared chunks, growing tapes, TRACKS, REC IN, long reels | memory follows what you use |
 | 4. RESONATOR (**done**, host-verified; see "RESONATOR, as built") | strings, chromatic keys, OCT shifts | tuned feedback chords from the keys |
 | 5. COLOR + SPACE (**done**, host-verified; see "COLOR, as built" and "SPACE, as built") | drive, crush, noise; delay and reverb | the full chain on 4 tracks inside the budget (on the host it isn't: everything on all four is 5,842; the device decides) |

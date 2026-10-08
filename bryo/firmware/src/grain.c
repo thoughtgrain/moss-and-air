@@ -37,17 +37,19 @@
  * start of the window's block; a forward grain carries its decoder on (one decode per sample), a reverse grain
  * refills its window backwards. Outside what it reads: silence.
  *
- * Load: 32 grains in all, in four groups of 8. Each track has its group, and a parked track's group goes to a track
- * still on (TRACKS), so with 1 or 2 tracks a track sounds up to 16 at once; the total never passes 32. A grain due
- * while all a track's allowed grains sound is skipped. The audio ISR's shedding (chain_shed) lowers every track's
- * allowance, two of each 8 at a time down to half, and it comes back one a second.
+ * Load: the grains that may sound at once are a pool that follows how many tracks have GRAIN on (WET above 0, in
+ * use): 32 for one, 24 for two, 16 for three or four. It's shared by what each track asks for (gr_plan, every block):
+ * a track's need is the grains a second times SIZE, with room for bunching; a track asking less than an even share
+ * gets what it asks, and the rest is split evenly among the ones that want more. So a dense pad beside a sparse grain
+ * track keeps most of the pool, and only two dense tracks thin each other. A grain due while all a track's share
+ * sounds is skipped (those sounding finish: a share that drops thins a cloud over one grain's length, no cut), and
+ * its level counts only the grains it can sound, so a thinned cloud doesn't also get quieter. The audio ISR's
+ * shedding (chain_shed) shrinks the pool, a quarter at a time down to half, and it comes back an eighth a second.
  *
  * Audio ISR, except grain_poll (the main loop: the buffers' memory). The main loop writes the knobs. */
 
 #define GR_SLOTS 32u                 /* grains in all */
-#define GR_GROUP 8u                  /* a group: a track's own share */
-#define GR_CAP 8u                    /* grains a group sounds at once (shedding lowers it) */
-#define GR_MAXT 16u                  /* grains one track sounds at once, at most */
+#define GR_CAP 8u                    /* the pool's scale: x grain_cap / GR_CAP (shedding lowers grain_cap to 4) */
 #define GR_WIN 128u                  /* a grain's decoded window, samples (a reverse refill re-decodes from its
                                       * block's start: the wider the window, the rarer) */
 #define GR_BUF_MAX (12u * TAPE_SR)   /* a buffer's most, tape samples (12 s) */
@@ -68,7 +70,11 @@ static const int16_t GR_RAMP[129] = {
     32767,
 };
 /* 1 / sqrt(n), Q15: a grain's level when n grains are expected to overlap */
-static const int16_t GR_NORM[17] = {32767, 32767, 23170, 18918, 16384, 14654, 13377, 12385, 11585, 10922, 10362, 9880, 9459, 9088, 8757, 8460, 8192};
+static const int16_t GR_NORM[33] = {32767, 32767, 23170, 18918, 16384, 14654, 13377, 12385, 11585, 10922, 10362, 9880,
+                                     9459, 9088, 8757, 8460, 8192, 7947, 7723, 7517, 7327, 7151, 6986, 6833, 6689,
+                                     6554, 6426, 6306, 6193, 6085, 5983, 5885, 5793};   /* 1 / sqrt n, Q15 */
+/* the pool, by how many tracks have GRAIN on */
+static const uint8_t GR_POOL[NTRK + 1u] = {32, 32, 24, 16, 16};
 /* the scales SCAL holds pitches to (OFF CHR MAJ MIN PEN): the semitones of an octave they keep */
 static const uint16_t GR_SCALE[5] = {0, 0xFFF, 0xAB5, 0x5AD, 0x295};
 
@@ -115,7 +121,8 @@ static grain_t gslot[GR_SLOTS] __attribute__((section(".pool")));
 static uint32_t gr_used;             /* a bit per slot sounding */
 static grain_trk_t grain[NTRK];
 static gr_buf_t gbuf[NTRK];
-static uint32_t grain_cap = GR_CAP;  /* each group's allowance, lowered by chain_shed */
+static uint32_t grain_cap = GR_CAP;  /* the pool's scale, lowered by chain_shed */
+static uint8_t gr_share[NTRK];       /* the grains each track may sound at once now (gr_plan) */
 static volatile uint8_t grain_frozen;   /* the 0 key held (the ISR writes it; the screen tags FROZEN) */
 static uint32_t grain_calm;          /* blocks since the last shed */
 
@@ -128,21 +135,60 @@ static uint32_t gr_ntrk(void) { return sys.ntrk >= 1u && sys.ntrk <= NTRK ? sys.
  * and the take can have their memory) */
 static int trk_live(uint32_t t) { return t < gr_ntrk() && !sys.usbrec; }
 
-/* the groups track t owns: its own, and those of parked tracks (group g goes to track g mod TRACKS) */
-static uint32_t gr_groups(uint32_t t)
+/* the grains a second x 100 at RATE r (1..80, on a square law) */
+static inline int32_t gr_gps100(int32_t r) { return 100 + r * r * 79 / 100; }
+
+/* the grains a track's knobs ask for at once: those a second x SIZE (m), with room for PATN's and chance's
+ * bunching (m + m/2 + 2) */
+static uint32_t gr_need(const int16_t *p)
 {
-    uint32_t g, n = 0, nt = gr_ntrk();
-    for (g = 0; g < NTRK; g++)
-        n += g % nt == t;
-    return n;
+    int32_t m = gr_gps100(p[GP_RATE]) * p[GP_SIZE] / 100000;
+    return (uint32_t)(m + m / 2 + 2);
 }
 
-/* how many grains track t may sound at once now */
-static uint32_t gr_allow(uint32_t t)
+/* the pool shared out by need, into share[]. Those asking less than an even share of what's left get what they ask,
+ * round by round; the rest is split evenly among those that want more. (The ISR's every block, gr_plan; the screen
+ * the same, for itself.) */
+static void gr_plan_into(uint8_t *share)
 {
-    uint32_t a = gr_groups(t) * grain_cap, most = GR_MAXT * grain_cap / GR_CAP;
-    return a > most ? most : a;
+    uint32_t t, on = 0, act = 0, left, need[NTRK], k;
+    uint8_t *gr_share = share;
+    for (t = 0; t < NTRK; t++) {
+        gr_share[t] = 0;
+        if (trk_live(t) && tp[t].dev[DEV_GRAIN][GP_WET] > 0) {
+            act |= 1u << t;
+            on++;
+            need[t] = gr_need(tp[t].dev[DEV_GRAIN]);
+        }
+    }
+    left = GR_POOL[on] * grain_cap / GR_CAP;
+    for (k = 0; k < NTRK && act; k++) {
+        uint32_t n = 0, share, gave = 0;
+        for (t = 0; t < NTRK; t++)
+            n += (act >> t) & 1u;
+        share = left / n;
+        for (t = 0; t < NTRK; t++)
+            if (((act >> t) & 1u) && need[t] <= share) {
+                gr_share[t] = (uint8_t)need[t];
+                left -= need[t];
+                act &= ~(1u << t);
+                gave = 1;
+            }
+        if (!gave) {                                    /* everyone left wants more: an even split */
+            uint32_t i = 0;
+            for (t = 0; t < NTRK; t++)
+                if ((act >> t) & 1u)
+                    gr_share[t] = (uint8_t)(left / n + (i++ < left % n));
+            break;
+        }
+    }
 }
+
+/* audio ISR, each block: the shares the grains start under */
+static void gr_plan(void) { gr_plan_into(gr_share); }
+
+/* how many grains track t may sound at once now */
+static uint32_t gr_allow(uint32_t t) { return gr_share[t]; }
 
 /* the grains sounding on track t (the screen, the tests) */
 static uint32_t grain_count(uint32_t t)
@@ -336,7 +382,7 @@ static int32_t gr_rate(int32_t st16)
 /* the gap before the next grain, output samples: RATE 0..100 -> 1..80 grains a second, in PATN's rhythm */
 static int32_t gr_gap(grain_trk_t *G, const int16_t *p)
 {
-    int32_t r = p[GP_RATE], gps100 = 100 + r * r * 79 / 100, t = 4410000 / gps100;   /* (grains a second x 100) */
+    int32_t gps100 = gr_gps100(p[GP_RATE]), t = 4410000 / gps100;
     switch (p[GP_PATN]) {
     case 0: return t;                                   /* EVEN */
     case 1: return G->n & 1u ? t * 2 / 3 : t * 4 / 3;   /* SWNG: long, short */
@@ -349,12 +395,12 @@ static int32_t gr_gap(grain_trk_t *G, const int16_t *p)
 static void gr_start(uint32_t t, grain_trk_t *G, const int16_t *p, int32_t ls, int32_t ll)
 {
     grain_t *g = 0;
-    uint32_t k, nt = gr_ntrk();
+    uint32_t k;
     int32_t at, sp, rate, gps100, ov, pan;
     if (grain_count(t) >= gr_allow(t))
         return;                                         /* all it may sound are sounding: this one is skipped */
-    for (k = 0; k < GR_SLOTS && !g; k++)                /* a free slot in a group it owns */
-        if (!((gr_used >> k) & 1u) && (k / GR_GROUP) % nt == t)
+    for (k = 0; k < GR_SLOTS && !g; k++)                /* any free slot (the shares keep the total in the pool) */
+        if (!((gr_used >> k) & 1u))
             g = &gslot[k];
     if (!g)
         return;
@@ -374,8 +420,8 @@ static void gr_start(uint32_t t, grain_trk_t *G, const int16_t *p, int32_t ls, i
     g->inc = g->rev ? -rate : rate;
     g->pos = (g->rev ? at + (int32_t)((uint32_t)rate * g->len >> 12) : at) << 12;   /* (backwards: from its end) */
     g->wlo = -1;
-    gps100 = 100 + p[GP_RATE] * p[GP_RATE] * 79 / 100;
-    ov = clamp(gps100 * p[GP_SIZE] / 100000, 1, 16);    /* grains overlapping: a second's grains x SIZE */
+    gps100 = gr_gps100(p[GP_RATE]);                     /* grains overlapping: a second's grains x SIZE, but no */
+    ov = clamp(gps100 * p[GP_SIZE] / 100000, 1, clamp((int32_t)gr_allow(t), 1, 32));   /* more than it may sound */
     pan = p[GP_SPRD] ? (int32_t)(gr_rnd(G) % (uint32_t)(2 * p[GP_SPRD] + 1)) - p[GP_SPRD] : 0;
     g->gl = GR_NORM[ov] * (100 - pan) / 200;            /* (centre: each side half) */
     g->gr = GR_NORM[ov] * (100 + pan) / 200;
@@ -525,7 +571,8 @@ static void grain_block(uint32_t t, const int32_t *dry, uint32_t keys, int froze
     }
 }
 
-/* audio ISR: shedding takes grains first (two of each group's 8, down to 4); a second without it gives one back */
+/* audio ISR: shedding takes grains first (the pool a quarter smaller at a time, down to half); a second without it
+ * gives an eighth back */
 static void grain_shed(void)
 {
     if (grain_cap > 4u)

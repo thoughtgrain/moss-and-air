@@ -136,8 +136,8 @@ static double run(int n, char *say, size_t sz)
         if (n == 6)
             chain_tracks(2);
         play(6);
-        snprintf(say, sz, "%s: %u grains sounding (%u %u %u %u)", n == 3 ? "the cap" : n == 4 ? "the cap, all backwards"
-                 : n == 5 ? "the cap, SCAN TAPE" : "the cap, TRACKS 2", sounding(), grain_count(0), grain_count(1),
+        snprintf(say, sz, "%s: %u grains sounding (%u %u %u %u)", n == 3 ? "dense on all four (the pool: 16)" : n == 4 ? "dense on all four, all backwards"
+                 : n == 5 ? "dense on all four, SCAN TAPE" : "dense, TRACKS 2 (the pool: 24)", sounding(), grain_count(0), grain_count(1),
                  grain_count(2), grain_count(3));
         return 6;
     case 7: {                                            /* a blank tape recorded for 12 s, then looped */
@@ -339,6 +339,13 @@ static double run(int n, char *say, size_t sz)
                  "the strings (%u grains)", sounding());
         return 6;
     }
+    case 23:                                             /* GRAIN dense on one track alone: the whole pool, 32 */
+        tp[0].dev[DEV_GRAIN][GP_WET] = 100;
+        tp[0].dev[DEV_GRAIN][GP_RATE] = 100;
+        tp[0].dev[DEV_GRAIN][GP_SIZE] = 500;
+        play(6);
+        snprintf(say, sz, "GRAIN dense on one track alone, the others plain reels: %u grains sounding", sounding());
+        return 6;
     default: {                                           /* a 20 s WAV over TAPE3.WAV while the reels play */
         static uint8_t w[20 * 22050 * 2 + 4096];
         uint32_t len = make_wav(w, 22050, 1, 16, 1, 22050 * 20, 330.0), k, lba = VD_DATA + 3000u * VD_SPC;
@@ -632,7 +639,7 @@ int main(int argc, char **argv)
         int n;
         wav_cap = 23u * 44100u * 2u;
         wav_buf = malloc(wav_cap * sizeof *wav_buf);
-        for (n = 1; n <= 22; n++) {
+        for (n = 1; n <= 23; n++) {
             char path[512];
             wav_n = wav_clip = 0;
             run(n, say, sizeof say);

@@ -28,21 +28,26 @@ first six runs cost about 40 more than at the first checkpoint, the two new devi
 | --- | --- | ---: | --- |
 | 1 | four reels, GRAIN off | 902 | |
 | 2 | WET 100, the defaults (each buffer recording) | 1,576 | 4 grains sounding, 44 chunks of buffers |
-| 3 | the cap: 8 grains a track | 3,304 | 32 grains (8 8 8 8) |
-| 4 | the cap, all backwards | 4,063 | 32 grains |
-| 5 | the cap, SCAN TAPE | 2,929 | 32 grains |
-| 6 | the cap, TRACKS 2 (16 + 16) | 2,736 | 32 grains (16 16 0 0) |
+| 3 | dense grains on all four (the pool: 16) | 2,318 | 16 grains (4 4 4 4) |
+| 4 | the same, all backwards | 2,698 | 16 grains |
+| 5 | the same, SCAN TAPE | 1,960 | 16 grains |
+| 6 | dense, TRACKS 2 (the pool: 24) | 2,243 | 24 grains (12 12 0 0) |
 | 7 | a blank tape recorded 12 s, then looped | 1,005 | the tape 12.00 s long, 65 chunks |
 | 8 | the freeze tapped on and off | 1,020 | frozen at 3 s, let go at 9 s |
 | 9 | SYNTH played, transport stopped, GRAIN on | 659 | grains sounding after the phrase |
 | 10 | a 20 s WAV over TAPE3.WAV while playing | - | the tape 20.00 s, TRACK 3'S TAPE REPLACED |
 | 11 | RESONATOR WET 60 on all four | 1,847 | 16 strings |
-| 12 | RESONATOR and GRAIN at the cap | 4,228 | 16 strings, 32 grains |
+| 12 | RESONATOR and GRAIN dense | 3,248 | 16 strings, 16 grains |
 | 13 | COLOR on all four (DRIV 60, CRSH 40 BOTH, NOIS 30, TILT 30) | 1,630 | |
 | 14 | SPACE on all four (DLY 50, VERB 40) | 1,784 | 72 chunks, all 16-bit, 14.5 s free |
-| 15 | everything on all four | 5,842 | 32 grains, 16 strings, 72 chunks of SPACE, 3.3 s free |
+| 15 | everything on all four | 4,859 | 16 grains, 16 strings, 72 chunks of SPACE, 3.3 s free |
 | 16 | TRACKS 3, GRAIN WET 100, DRIV 40, SPACE | 2,310 | 54 chunks of SPACE, 11.7 s free |
-| 17 | the mixer: LOW HIGH FILT PAN on all four, the compressor at AMT 60 | 1,699 | 5.7 dB taken off |
+| 17 | the mixer: LOW HIGH FILT PAN on all four, the compressor at AMT 60 | 1,701 | 5.7 dB taken off |
+| 23 | GRAIN dense on one track alone (the pool: 32), the others plain reels | 2,976 | 31 grains |
+
+Runs 3 to 6, 12 and 15 cost less than they did (3,304, 4,063, 2,929, 2,736, 4,228, 5,842) since GRAIN's grains became
+one pool that shrinks as more tracks use it (32 for one track, 24 for two, 16 for three or four, shared by what each
+asks: docs/bryo-architecture.md, "GRAIN, as built"). Run 23 is the case that grew: one track can now sound 32.
 
 Runs 3 to 17 test each part at its limit. How the instrument will actually be played is a different number, so
 runs 18 to 22 are realistic setups (each played for 6 s, a synth track's keys going):
@@ -91,10 +96,10 @@ Write down the CPU reading for each, and anything you hear.
 | --- | --- | --- | --- |
 | 1 | Power on, PLAY. Four factory reels, GRAIN off | the baseline | CPU |
 | 2 | Each track: EDIT for GRAIN, WET 100 (KNOB 1 on GRAIN 2), the rest default | each track records its last bar and grains it | CPU; any click when WET goes up |
-| 3 | Each track: RATE 100, SIZE 500 (GRAIN page 1) | 8 grains a track, the cap: the hardest case | CPU; does it crackle, does it settle? |
+| 3 | Each track: RATE 100, SIZE 500 (GRAIN page 1) | 4 grains a track (four tracks share 16) | CPU; does it crackle, does it settle? |
 | 4 | Same, REV 100 (GRAIN 2) | every grain backwards: the dearest read | CPU |
 | 5 | Same, SCAN TAPE (GRAIN 4, KNOB 1 all the way left) | no buffer to record | CPU |
-| 6 | Hold GLO, turn SELECT down to TRACKS 2 | tracks 3 and 4 fade out; 1 and 2 get 16 grains each | CPU; a click as they go? |
+| 6 | Hold GLO, turn SELECT down to TRACKS 2 | tracks 3 and 4 fade out; 1 and 2 share 24, 12 each | CPU; a click as they go? |
 | 7 | TRACKS 4 again, back to the defaults (or power-cycle). Track 2 on a blank tape: hold the POLY key to clear it, REC, let it record 10 to 15 s, REC again | the tape grows while you record and loops what you recorded | does the loop length match? any gap or click at the loop's seam? |
 | 8 | Tap the 0 key while track 1's GRAIN plays (WET 100) | the buffer freezes into a 1-bar loop, the 0 key's LED lights; tap again to let go | does it loop in time? |
 | 9 | Track 1 to SYNTH (hold HOME, turn SELECT), GRAIN WET 100, transport stopped, play a few notes | what you play is granulated without PLAY | does it sound? |
@@ -104,6 +109,7 @@ Write down the CPU reading for each, and anything you hear.
 | 13 | Power-cycle. Each track's COLOR: DRIV 60, CRSH 40, NOIS 30, TILT 30 (FX, KNOB 1-4); CMOD BOTH (COLOR 2) | every track driven, crushed and noisy | CPU |
 | 14 | Power-cycle. Each track's SPACE 2: DLY 50, VERB 40 | echoes and a room on every track | CPU; does the mixer's memory ribbon show it? |
 | 15 | Runs 12, 13 and 14 together (everything on) | the hardest case there is | CPU; does it crackle, does shedding settle it? |
+| 15b | TRACKS 4 again, GRAIN off on tracks 2-4 (WET 0), track 1 still at RATE 100, SIZE 500 | one track with the whole pool: "31 OF 32 GRAINS" on GRAIN's page | CPU |
 | 16 | Plugged into a computer: is there an output named Bryo? Pick it, play something; on the FM-1, stopped, hold REC a second | the USB record mode, the level bar moving, the sound in your headphones | did the computer switch its output to Bryo by itself when plugged in? any clicks in what you hear? |
 | 17 | REC, 10 s of something you know, REC, white key 2, REC | track 2's tape is the take; PLAY plays it | the length on TAPE's page; does it sound like what the computer played (mono, 22 kHz)? |
 | 18 | Record the FM-1 on the computer (Bryo as its input) while it plays | the master output arrives (Felucca's, untested with Bryo) | any dropouts? |
@@ -113,7 +119,7 @@ Write down the CPU reading for each, and anything you hear.
 
 - **Run 3 under about 70 %:** GRAIN fits as it is; then run 15 decides the rest (below).
 - **Run 3 between 70 and 85 %:** I'll take the cheap savings first. The buffer recording can skip decoding when
-  FDBK is 0 (about 100 a track on the host), and the grain cap's default can drop to 6.
+  FDBK is 0 (about 100 a track on the host), and the pools can shrink (32 / 24 / 16 are a table: GR_POOL).
 - **Run 3 over 85 %, or crackling:** the cap has to come down before anything else gets built, and I'll measure
   where the cycles go with the debug build's console (`BRYO_MSC=0`: `cpu_pct` there is the same number).
 - **Run 15 over 85 %:** grains and strings shed first as they do now; if that isn't enough, SPACE needs a shedding

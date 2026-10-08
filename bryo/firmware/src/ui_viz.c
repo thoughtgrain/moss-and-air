@@ -317,8 +317,14 @@ labels:
     if (!v[GP_WET])
         str_cpy(b, "WET 0: OFF", sizeof b);
     else {
-        fmt_int(b, n);
-        str_cpy(b + str_len(b), n == 1 ? " GRAIN" : " GRAINS", 8);
+        fmt_int(b, n);                                                 /* "5 OF 12 GRAINS": its share now */
+        str_cpy(b + str_len(b), " OF ", 5);
+        {
+            uint8_t sh[NTRK];                                          /* (worked out here as the ISR does: right */
+            gr_plan_into(sh);                                          /*  before the first block has run too) */
+            fmt_int(b + str_len(b), sh[sys.sel]);
+        }
+        str_cpy(b + str_len(b), " GRAINS", 8);
     }
     if (f == 1u || f == 4u)
         px_tag(1, DLBL - 1, PXF_3, b, px_ink, px_bg);
@@ -1563,7 +1569,9 @@ static uint32_t viz_sig(void)
     if (ui.kind == FOCUS_DEV && ui.dev == DEV_GRAIN) {                 /* GRAIN: its cursor, FROZEN, the grains */
         const grain_trk_t *G = &grain[sys.sel];
         const gr_buf_t *B = &gbuf[sys.sel];
-        h = (h ^ (uint32_t)((G->cur >> 12) / 256 * 2 + grain_frozen)) * 16777619u;
+        uint8_t sh[NTRK];
+        gr_plan_into(sh);                                              /* (its share: other tracks move it too) */
+        h = (h ^ (uint32_t)((G->cur >> 12) / 256 * 2 + grain_frozen + sh[sys.sel] * 4096u)) * 16777619u;
         h = (h ^ (uint32_t)(B->len + B->bars * 7u + (uint32_t)B->w / 1024u * 131u)) * 16777619u;
         for (k = 0; k < GR_SLOTS; k++)
             if (((gr_used >> k) & 1u) && gslot[k].trk == sys.sel)

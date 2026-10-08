@@ -1885,17 +1885,17 @@ static void test_grain(void)
         maxc = grain_count(0) > maxc ? grain_count(0) : maxc;
     }
     render(NB, s);
-    check("RATE 100, SIZE 500: grains up to the cap of 8, never more, under full scale",
-          maxc == GR_CAP && peak_of(s, NB * CTL) <= 32767);
+    check("RATE 100, SIZE 500, GRAIN on this track alone: up to the whole pool of 32, never more, under full scale",
+          maxc == 32u && peak_of(s, NB * CTL) <= 32767);
     grain_shed();
     for (i = 0, maxc = 0; i < 1300u; i++) {
         render(1, 0);
         maxc = grain_count(0) > maxc ? grain_count(0) : maxc;
     }
-    check("shedding lowers the cap (8 -> 6): the grains follow it down", grain_cap == 6u && maxc <= 8u &&
-          grain_count(0) <= 6u);
+    check("shedding shrinks the pool a quarter (32 -> 24): the grains follow it down", grain_cap == 6u &&
+          gr_allow(0) == 24u && grain_count(0) <= 24u);
     render(200, 0);
-    check("..and a second without shedding gives one back", grain_cap == 7u);
+    check("..and a second without shedding gives an eighth back (28)", grain_cap == 7u && gr_allow(0) == 28u);
     grain_cap = GR_CAP;
     p[1] = 40;
     p[0] = 80;
@@ -2186,8 +2186,9 @@ static void test_grain_buffer(void)
         render_poll(1378 * 2);
     }
 
-    {   /* fewer tracks: a track sounds more grains; never more than 32 in all */
-        uint32_t mx = 0;
+    {   /* the pool follows how many tracks have GRAIN on (32, 24, 16), shared by what each asks */
+        uint32_t mx = 0, t2;
+        int16_t *q = tp[1].dev[DEV_GRAIN];
         p[GP_RATE] = 100;
         p[GP_SIZE] = 500;
         render_poll(1378);
@@ -2195,19 +2196,46 @@ static void test_grain_buffer(void)
             render_poll(1);
             mx = grain_count(0) > mx ? grain_count(0) : mx;
         }
-        check("4 tracks: track 1 sounds up to 8 grains", mx == 8u);
-        chain_tracks(2);
+        snprintf(b, sizeof b, "GRAIN on one track, dense (RATE 100, SIZE 500): the whole pool, %u at once (32)", mx);
+        check(b, mx == 32u && gr_allow(0) == 32u);
+        q[GP_WET] = 100;                                 /* track 2 on, sparse (the defaults: about 1 at once) */
+        render_poll(1);
+        snprintf(b, sizeof b, "..a second track on, sparse: a pool of 24, it gets the %u it asks, the dense one the other %u",
+                 gr_allow(1), gr_allow(0));
+        check(b, gr_allow(1) == 3u && gr_allow(0) == 21u);
         for (i = 0, mx = 0; i < 1378; i++) {
             render_poll(1);
             mx = grain_count(0) > mx ? grain_count(0) : mx;
         }
-        snprintf(b, sizeof b, "TRACKS 2: track 1 up to 16 (%u), the slots of parked track 3's group with it", mx);
-        check(b, mx == 16u && gr_allow(0) == 16u && gr_allow(1) == 16u);
-        chain_tracks(3);
-        check("TRACKS 3: 16, 8, 8 (32 in all)", gr_allow(0) == 16u && gr_allow(1) == 8u && gr_allow(2) == 8u);
+        snprintf(b, sizeof b, "..the dense one thins to its share (%u at most), no grain cut: those sounding finished", mx);
+        check(b, mx <= 32u && grain_count(0) <= 21u);
+        q[GP_RATE] = 100;                                /* both dense: an even split */
+        q[GP_SIZE] = 500;
+        render_poll(1);
+        check("..both dense: 12 and 12", gr_allow(0) == 12u && gr_allow(1) == 12u);
+        tp[2].dev[DEV_GRAIN][GP_WET] = 100;              /* four on: a pool of 16; track 4 sparse, the rest dense */
+        tp[2].dev[DEV_GRAIN][GP_RATE] = 100;
+        tp[2].dev[DEV_GRAIN][GP_SIZE] = 500;
+        tp[3].dev[DEV_GRAIN][GP_WET] = 100;
+        render_poll(1);
+        for (t2 = 0, mx = 0; t2 < NTRK; t2++)
+            mx += gr_allow(t2);
+        snprintf(b, sizeof b, "..four on, one sparse: a pool of 16: %u %u %u, and the sparse one its %u", gr_allow(0),
+                 gr_allow(1), gr_allow(2), gr_allow(3));
+        check(b, mx == 16u && gr_allow(3) == 3u && gr_allow(0) == 5u && gr_allow(1) == 4u && gr_allow(2) == 4u);
+        chain_tracks(2);
+        render_poll(1);
+        check("TRACKS 2 (tracks 3 and 4 parked): two on, 24 between them, 12 and 12", gr_allow(0) == 12u &&
+              gr_allow(1) == 12u && gr_allow(2) == 0u && gr_allow(3) == 0u);
         chain_tracks(4);
+        for (t2 = 1; t2 < NTRK; t2++) {
+            tp[t2].dev[DEV_GRAIN][GP_WET] = 0;
+            tp[t2].dev[DEV_GRAIN][GP_RATE] = 40;
+            tp[t2].dev[DEV_GRAIN][GP_SIZE] = 80;
+        }
         p[GP_RATE] = 40;
         p[GP_SIZE] = 80;
+        render_poll(1378);
     }
 
     {   /* nothing free: a buffer takes from the end of the longest tape */
@@ -3730,8 +3758,8 @@ static void test_memory(void)
             render_poll(1);
             t2 = grain_count(0) > t2 ? grain_count(0) : t2;
         }
-        check("TRACKS 1 with every track's grains sounding: the parked ones' slots free, track 1 sounds 16",
-              grain_count(1) == 0 && grain_count(2) == 0 && grain_count(3) == 0 && t2 == 16u);
+        check("TRACKS 1 with every track's grains sounding: the parked ones' slots free, track 1 sounds the whole 32",
+              grain_count(1) == 0 && grain_count(2) == 0 && grain_count(3) == 0 && t2 == 32u);
         sys.playing = 0;
         chain_tracks(4);
         render_poll(400);

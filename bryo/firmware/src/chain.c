@@ -79,6 +79,7 @@ static void chain_block(int32_t *out, uint32_t n)
         master_block(l, r, out, n);
         return;
     }
+    gr_plan();                                         /* the grains each track may sound this block (grain.c) */
     for (u = 0; u < 27u; u++)                          /* the 0 black key held, or tapped (latched): GRAIN frozen */
         if (KEY_BLACK[u] == BK_ZERO)
             zero = ((fm1_in.notes >> u) & 1u) | (sys.freeze != 0);
