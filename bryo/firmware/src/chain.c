@@ -98,6 +98,7 @@ static void chain_block(int32_t *out, uint32_t n)
         uint32_t k = t == sel ? keys : 0u, gk = 0;
         rt->act = a1;
         if (!a0 && !a1) {                               /* parked (TRACKS): silent, not rendered */
+            grain_kill(t);                              /* (its grain slots go to the tracks still on) */
             for (i = 0; i < n; i++)
                 rt->last[i] = 0;
             rt->peak = pk - (pk >> 6);

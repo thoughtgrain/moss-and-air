@@ -97,8 +97,14 @@ static uint32_t uslot_crc(const uslot_hdr_t *h, const uint8_t *arr, const uint8_
     return ~k ^ rf_crc32(data, (uint32_t)h->nblk * (TAPE_BLK / 2u));
 }
 
+static uint8_t uslot_ok[USLOT_N];          /* each slot's uslot_check, kept: uslot_names after every change */
+
+/* slot s holds a sound, as last checked (the audio ISR asks every block, through tape_view: a long reel's CRC is
+ * too slow to run there, so it runs once, in uslot_names) */
+static int uslot_valid(uint32_t s) { return s < USLOT_N && uslot_ok[s]; }
+
 /* slot s starts a sound: its header is whole, it fits the slots after it, and its CRC matches */
-static int uslot_valid(uint32_t s)
+static int uslot_check(uint32_t s)
 {
     const uslot_hdr_t *h;
     uint32_t off = USLOT_BASE + s * USLOT_SIZE, span;
@@ -146,6 +152,8 @@ static int uslot_view(uint32_t s, tape_view_t *v)
 static void uslot_names(void)
 {
     uint32_t s;
+    for (s = 0; s < USLOT_N; s++)
+        uslot_ok[s] = (uint8_t)uslot_check(s);
     for (s = 0; s < USLOT_N; s++) {
         const uslot_hdr_t *h = uslot_hdr(s);
         if (uslot_valid(s)) {

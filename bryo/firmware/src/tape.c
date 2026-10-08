@@ -66,6 +66,7 @@ typedef struct {                     /* main loop writes the list, ISR reads it 
     volatile uint8_t grow;           /* a blank tape being recorded: it grows behind the head (the ISR ends it) */
     volatile uint8_t nch;            /* chunks in the list */
     volatile uint16_t nblk;          /* the RAM tape's length in blocks (0: never used); the ISR's while growing */
+    volatile uint8_t gen;            /* bumped when the list is let go or replaced: a block staged before is dropped */
     uint8_t map[MEM_NC];             /* the chunks, in order */
 } tape_ctl_t;
 static tape_ctl_t tape_ctl[NTRK];
@@ -114,6 +115,7 @@ typedef struct {                     /* ISR only */
     uint8_t running;                 /* the head moves */
     uint8_t was_playing;
     uint8_t grew;                    /* the head has started on a growing tape */
+    uint8_t wgen;                    /* the list's gen when the staged block was read */
     uint32_t keys_prev;
 } tape_rt_t;
 static tape_rt_t tape_rt[NTRK] __attribute__((section(".pool")));
@@ -339,8 +341,8 @@ static void tape_commit(uint32_t t)
     if (!rt->wstaged)
         return;
     rt->wstaged = 0;
-    if (tape_ctl[t].empty || b / MEM_CB >= tape_ctl[t].nch)   /* cleared meanwhile, or its chunk taken: drop it */
-        return;
+    if (tape_ctl[t].empty || b / MEM_CB >= tape_ctl[t].nch || rt->wgen != tape_ctl[t].gen)
+        return;                                        /* cleared meanwhile, its chunk taken, another tape: drop it */
     c = tape_chunk(t, b);
     ima_fit(rt->stage, &c->pred[b % MEM_CB], &c->idx[b % MEM_CB]);
     ima_enc(rt->stage, c->pred[b % MEM_CB], c->idx[b % MEM_CB], c->data[b % MEM_CB], TAPE_BLK);
@@ -371,6 +373,7 @@ static void tape_write(uint32_t t, int32_t i, int32_t in, int32_t keep)
         tape_commit(t);
         ima_dec(c->data[b % MEM_CB], c->pred[b % MEM_CB], c->idx[b % MEM_CB], rt->stage, TAPE_BLK);
         rt->wblk = (uint16_t)b;
+        rt->wgen = tape_ctl[t].gen;
         rt->wstaged = 1;
     }
     rt->stage[(uint32_t)i % TAPE_BLK] = (int16_t)clamp(rt->stage[(uint32_t)i % TAPE_BLK] * keep / 100 + in, -32767, 32767);
@@ -448,7 +451,7 @@ static void tape_block(uint32_t t, uint32_t keys, const int32_t *rec_in, int32_t
         }
     }
     rt->keys_prev = keys;
-    tape_dub(tp[t].dev[DEV_SRC][TK_DUB], &keep, &inl);
+    tape_dub(grow ? -100 : tp[t].dev[DEV_SRC][TK_DUB], &keep, &inl);   /* (a blank tape: nothing to keep) */
     gain = gain * inl / 100;
     if (!inl)
         rec = 0;                                       /* DUB +100: nothing comes in, so nothing is re-encoded */
@@ -557,6 +560,7 @@ static void tape_drop_chunk(uint32_t t)
 /* every chunk of track t's tape back to the pool */
 static void tape_free(uint32_t t)
 {
+    tape_ctl[t].gen++;                                 /* (a block the ISR staged on it is dropped, not committed) */
     tape_ctl[t].nblk = 0;
     while (tape_ctl[t].nch)
         tape_drop_chunk(t);
@@ -683,7 +687,7 @@ static void tape_poll(void)
     for (t = 0; t < NTRK; t++) {
         tape_ctl_t *c = &tape_ctl[t];
         if (c->grow) {
-            if ((uint32_t)c->nch * MEM_CB < c->nblk + MEM_CB)
+            if ((uint32_t)c->nch * MEM_CB < c->nblk + 2u * MEM_CB)   /* (two chunks, 372 ms, ready ahead) */
                 tape_reserve(t, c->nch + 1u, 1);
         } else if (!c->rec_ok && !c->empty) {
             while (c->nch && (uint32_t)(c->nch - 1u) * MEM_CB >= c->nblk)

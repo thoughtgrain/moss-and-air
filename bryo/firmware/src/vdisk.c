@@ -93,22 +93,47 @@ static struct {                             /* the capture of a dropped WAV */
     uint32_t bn, nblk, pk;
     int32_t pred, idx;
     uint8_t cut;                            /* memory ran out: the rest was dropped */
-    uint8_t nch;                            /* the chunks it fills (mem.c, owner MEM_IMPORT) */
-    uint8_t map[MEM_NC];
 } cap;
 
-/* the capture's chunks back to the pool */
+/* The capture's memory. A WAV arrives in usb_poll (TIMER5, which can cut into the main loop at any instruction), and
+ * only the main loop may allocate (mem.c), so the main loop keeps two chunks set aside (vd_spare: one writer each
+ * side, the main loop filling, the capture taking) and the capture takes from those as it goes. Its own list outlives
+ * a capture dropped half way (the next one writes over it), so the interrupt never frees anything either: the main
+ * loop does, with the drive held busy. */
+#define VD_NSPARE 4u
+static struct {
+    uint8_t nch;                            /* the chunks the capture fills (owner MEM_IMPORT) */
+    uint8_t map[MEM_NC];
+} capm;
+static uint8_t vd_spare[VD_NSPARE];
+static volatile uint32_t vd_sp_w, vd_sp_r; /* filled by the main loop, taken by the capture */
+
+/* main loop: two chunks set aside for a WAV while the drive is up (free ones, or cleared and parked tapes': never a
+ * tape in use) */
+static void vd_spare_fill(void)
+{
+    while (vd.ready && vd_sp_w - vd_sp_r < 2u) {
+        int32_t k = tape_alloc(MEM_SPARE, NTRK, 0);
+        if (k < 0)
+            break;
+        vd_spare[vd_sp_w % VD_NSPARE] = (uint8_t)k;
+        RING_PUBLISH();
+        vd_sp_w++;
+    }
+}
+
+/* main loop, the drive busy: the capture's chunks back to the pool */
 static void cap_free(void)
 {
-    while (cap.nch)
-        mem_free(cap.map[--cap.nch]);
+    while (capm.nch)
+        mem_free(capm.map[--capm.nch]);
 }
 
 /* the capture as a view (vdisk_commit copies or saves it from here) */
 static void cap_view(tape_view_t *v)
 {
     memset(v, 0, sizeof *v);
-    v->map = cap.map;
+    v->map = capm.map;
     v->len = cap.nblk * TAPE_BLK;
     v->ram = 1;
 }
@@ -350,16 +375,19 @@ static void cap_emit(int32_t x)              /* one sample at 22,050 Hz into the
     if (cap.bn == TAPE_BLK) {
         mem_chunk_t *m;
         uint32_t o = cap.nblk % MEM_CB;
-        if (cap.nblk / MEM_CB >= cap.nch) {            /* a new chunk: a free one, else a cleared or parked tape's */
-            int32_t k = cap.nch < TAPE_MAXCH ? tape_alloc(MEM_IMPORT, NTRK, 0) : -1;   /* (a tape's most) */
-            if (k < 0) {
+        if (cap.nblk / MEM_CB >= capm.nch) {           /* a new chunk: one the main loop set aside */
+            uint32_t k;
+            if (capm.nch >= TAPE_MAXCH || vd_sp_r == vd_sp_w) {   /* (a tape's most; or none ready: cut here) */
                 cap.cut = 1;
                 cap.bn = 0;
                 return;
             }
-            cap.map[cap.nch++] = (uint8_t)k;
+            k = vd_spare[vd_sp_r % VD_NSPARE];
+            vd_sp_r++;
+            mem_give(k, MEM_IMPORT);
+            capm.map[capm.nch++] = (uint8_t)k;
         }
-        m = mem_at(cap.map[cap.nblk / MEM_CB]);
+        m = mem_at(capm.map[cap.nblk / MEM_CB]);
         m->pred[o] = (int16_t)cap.pred;
         m->idx[o] = (uint8_t)cap.idx;
         ima_enc_st(cap.blk, &cap.pred, &cap.idx, m->data[o], TAPE_BLK);
@@ -502,10 +530,10 @@ static void cap_bytes(const uint8_t *b, uint32_t n)
     }
 }
 
-static void cap_start(uint32_t lba)
+static void cap_start(uint32_t lba)          /* (usb_poll: TIMER5. A capture still arriving is dropped; its chunks
+                                              * stay listed in capm and the new one writes over them) */
 {
     uint32_t i;
-    cap_free();                              /* (a capture still arriving is dropped) */
     for (i = 0; i < sizeof cap; i++)
         ((uint8_t *)&cap)[i] = 0;
     cap.on = 1;
@@ -575,7 +603,9 @@ static void vdisk_write(uint32_t lba, const uint8_t *b)
             cap_name();
         return;
     }
-    if (!memcmp(b, "RIFF", 4) && !memcmp(b + 8, "WAVE", 4) && !(cap.on && !cap.done && lba == cap.next)) {
+    if (vd.busy) {                           /* (the main loop is placing a capture: no new one meanwhile) */
+        cap.next = 0;
+    } else if (!memcmp(b, "RIFF", 4) && !memcmp(b + 8, "WAVE", 4) && !(cap.on && !cap.done && lba == cap.next)) {
         cap_start(lba);                      /* a WAV begins here (one still arriving is dropped) */
     }
     if (cap.on && !cap.done && lba != cap.next && cap.next > VD_DATA && !((cap.next - VD_DATA) % VD_SPC) &&
@@ -615,11 +645,14 @@ static void vdisk_poll(void)
         vd.msg = 0;
         ui_message("RECEIVING A WAV OVER USB");
     }
+    vd_spare_fill();
     if (!cap.on || !cap.done)
         return;
     if (cap.failed || !cap.nblk) {
+        vd.busy = 1;
         cap.on = 0;
         cap_free();
+        vd.busy = 0;
         ui_message(cap.cut ? "NO MEMORY FREE FOR THAT WAV" : "THAT WAV COULDN'T BE READ");
         return;
     }
@@ -645,14 +678,14 @@ static void vdisk_commit(void)
         c->grow = 0;
         c->empty = 1;                                            /* (silent while it's swapped) */
         tape_free(t);
-        for (k = 0; k < cap.nch; k++) {
-            c->map[k] = cap.map[k];
-            mem_give(cap.map[k], MEM_TAPE + t);
+        for (k = 0; k < capm.nch; k++) {
+            c->map[k] = capm.map[k];
+            mem_give(capm.map[k], MEM_TAPE + t);
         }
         RING_PUBLISH();
-        c->nch = cap.nch;
+        c->nch = capm.nch;
         c->nblk = (uint16_t)cap.nblk;
-        cap.nch = 0;
+        capm.nch = 0;
         tp[t].dev[DEV_SRC][TK_REEL] = 0;
         sys.rec &= (uint8_t)~(1u << t);
         if (tape_undo.valid && tape_undo.trk == t)

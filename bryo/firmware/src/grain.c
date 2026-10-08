@@ -403,8 +403,8 @@ static void grain_block(uint32_t t, const int32_t *dry, uint32_t keys, int froze
     for (i = 0; i < (int32_t)n; i++)                     /* the dry share, centred */
         l[i] = r[i] = dry[i] * (100 - wet) / 100;
     if (scan != SCAN_TAPE && B->len && B->nch) {        /* the buffer: the bar line at the transport's start */
-        if (B->w >= (int32_t)B->len)
-            B->w = 0;
+        if (B->w >= (int32_t)B->len)                    /* (shrunk under it: the same place in the bars) */
+            B->w %= (int32_t)B->len;
         if (playing && !B->was_playing) {
             gr_bcommit(B);
             B->w = 0;

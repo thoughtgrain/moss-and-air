@@ -789,6 +789,13 @@ tape grows behind it, the main loop keeping a chunk ready ahead (`tape_poll`). L
 length. A reel copied in takes exactly the chunks it needs. A track that never records holds nothing. One tape holds
 23.6 s at most (127 chunks): the head's position is kept in 1/4096ths of a sample in 32 bits, which runs out at 23.8 s.
 
+**A WAV over USB never allocates.** It arrives in `usb_poll`, which runs in the TIMER5 interrupt and can cut into
+the main loop halfway through handing a chunk out. So while the drive is up the main loop keeps two chunks set aside
+(free ones, or a cleared or parked tape's), and the capture takes from those through a ring with one writer on each
+side, the main loop topping it up between USB packets. A capture dropped halfway keeps its chunks for the next one
+to write over, and only the main loop frees them, with the drive held busy. Those two chunks (372 ms) are the price
+of the drive being plugged in.
+
 **When nothing is free**, chunks come off the end of a tape, in this order: a cleared tape (its undo goes), a parked
 track's tape (the longest), then the longest tape of all, never the one asking and never one that's growing. A WAV
 arriving over USB only takes free chunks, cleared and parked tapes, never a tape in use; what doesn't fit is cut and
@@ -814,6 +821,16 @@ tracks (solid while that REC is armed) and names the defaults, with the routing 
 **Reels across slots.** The six user reel slots are 40 KiB each. A sound up to 3.3 s fits one, laid out exactly as
 reels always were (so old reels still read). A longer one runs into the slots after it, its data in one piece, up to
 21.5 s across all six; its header says how many it spans. The slots it covers read as empty but aren't free.
+Whether a slot holds a sound is checked (header, CRC) once, at power-on and after every save, and kept: the audio
+ISR asks every block, and a long reel's CRC takes longer than a block.
+
+**What the review round found** (a reviewer agent read the new code against the single-core model, and I checked
+each finding): a tape over 127 chunks overflowed its Q12 head (now capped at 23.6 s); the WAV capture allocated
+from the TIMER5 interrupt (now the spares above); a parked track's grains held their slots forever, since a parked
+track isn't rendered (they're let go when it parks); every block the ISR re-ran a user reel's flash CRC (now
+cached); a block staged on a tape whose list was replaced could be written into the new one (a generation count
+drops it). Smaller: a growing tape keeps two chunks ready ahead instead of one, a blank tape ignores DUB (there's
+nothing to keep), and a GRAIN buffer shrunk under its write head keeps the head's place in the bars.
 
 **Tests** (`test_memory`): a blank tape grows while REC records it and stops at its length, looping what it recorded;
 stealing takes a cleared tape first, then a parked track's, then the longest, never from a tape in use for an import;

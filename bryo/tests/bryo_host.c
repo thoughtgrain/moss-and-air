@@ -117,6 +117,12 @@ static void power_on(void)
     memset(tape_rt, 0, sizeof tape_rt);
     memset(tape_ctl, 0, sizeof tape_ctl);
     memset(&cap, 0, sizeof cap);
+    memset(&capm, 0, sizeof capm);
+    memset(gbuf, 0, sizeof gbuf);                        /* (GRAIN's buffers and grains: a fresh start, as the */
+    memset(grain, 0, sizeof grain);                      /* device's power-on gives) */
+    gr_used = 0;
+    sys.freeze = 0;
+    vd_sp_w = vd_sp_r = 0;
     memset(&tape_undo, 0, sizeof tape_undo);
     memset(syn, 0, sizeof syn);
     memset(pol, 0, sizeof pol);
@@ -1010,6 +1016,7 @@ static void hd_write_file(uint8_t *e, const char *short83, const char *lfn, cons
             if (w < n)
                 memcpy(sec, data + w, n - w < 512 ? n - w : 512);
             vdisk_write(hd_data + (cl[i] - 2) * hd_spc + s, sec);
+            vd_spare_fill();                             /* (the main loop runs between USB packets) */
         }
         hd_fat_set(cl[i], i + 1 < need ? cl[i + 1] : 0xFFF);
     }
@@ -1183,6 +1190,7 @@ static void test_drive(void)
                 if (w < n)
                     memcpy(sec, wav + w, n - w < 512 ? n - w : 512);
                 vdisk_write(hd_data + (cl[j] - 2) * hd_spc + c, sec);
+                vd_spare_fill();
             }
         for (j = 0; j < 64 && hd_root[32 * j]; j++)
             ;
@@ -2510,9 +2518,10 @@ static void test_memory(void)
         sys.playing = 1;
         render_poll(2756);                               /* 2 s */
         len = tape_ctl[1].nblk;
-        snprintf(b, sizeof b, "..2 s of recording: the tape is 2 s long (%u blocks), a chunk or two ready past its end",
+        snprintf(b, sizeof b, "..2 s of recording: the tape is 2 s long (%u blocks), two chunks ready past its end",
                  (unsigned)len);
-        check(b, len >= 170u && len <= 174u && tape_ctl[1].nch * MEM_CB >= len && tape_ctl[1].nch * MEM_CB <= len + 2u * MEM_CB);
+        check(b, len >= 170u && len <= 174u && tape_ctl[1].nch * MEM_CB >= len + 2u * MEM_CB &&
+              tape_ctl[1].nch * MEM_CB < len + 3u * MEM_CB);
         sys.rec = 0;
         tape_unprepare(1);
         render_poll(4);
@@ -2662,6 +2671,44 @@ static void test_memory(void)
         render(400, 0);
     }
 
+    {   /* a parked track's grains give their slots up (it isn't rendered, so they'd never end) */
+        uint32_t k, t2;
+        power_on();
+        sys.playing = 1;
+        for (t2 = 0; t2 < NTRK; t2++) {
+            tp[t2].dev[DEV_GRAIN][GP_WET] = 100;
+            tp[t2].dev[DEV_GRAIN][GP_RATE] = 100;
+            tp[t2].dev[DEV_GRAIN][GP_SIZE] = 500;
+        }
+        render_poll(1378 * 2);
+        chain_tracks(1);
+        render_poll(200);
+        for (k = 0, t2 = 0; k < 1378u; k++) {
+            render_poll(1);
+            t2 = grain_count(0) > t2 ? grain_count(0) : t2;
+        }
+        check("TRACKS 1 with every track's grains sounding: the parked ones' slots free, track 1 sounds 16",
+              grain_count(1) == 0 && grain_count(2) == 0 && grain_count(3) == 0 && t2 == 16u);
+        sys.playing = 0;
+        chain_tracks(4);
+        render_poll(400);
+    }
+    {   /* a block staged on a tape whose list has been let go is dropped, not written into the next one */
+        uint32_t v0;
+        power_on();
+        tape_reserve(2, 2, 1);
+        tape_ctl[2].nblk = 20;
+        tape_rt[2].wblk = 3;
+        tape_rt[2].wstaged = 1;
+        tape_rt[2].wgen = tape_ctl[2].gen;
+        tape_free(2);                                    /* (a WAV over TAPE3.WAV swaps the list in) */
+        tape_reserve(2, 2, 1);
+        tape_ctl[2].nblk = 20;
+        v0 = tape_ver[2];
+        tape_commit(2);
+        check("a block staged before the tape's list was replaced is dropped", !tape_rt[2].wstaged && tape_ver[2] == v0);
+    }
+
     {   /* REC IN: track 3 records track 1 alone, though track 2 plays too */
         uint32_t k, loud = 0;
         power_on();
@@ -2758,6 +2805,27 @@ static void test_memory(void)
         uslot_names();
     }
 
+    {   /* the capture only takes chunks the main loop set aside (it runs in usb_poll, TIMER5, which can cut into the
+         * main loop while that's allocating): with the main loop held up, a WAV is cut where the spares run out */
+        static uint8_t wav[5 * 22050 * 2 + 4096];
+        uint32_t n, k;
+        power_on();
+        vdisk_mount();
+        hd_mount();
+        vd_spare_fill();
+        check("the drive up: two chunks set aside for a WAV", vd_sp_w - vd_sp_r == 2u && mem_count(MEM_SPARE) == 2u);
+        n = make_wav(wav, 22050, 1, 16, 1, 22050 * 5, 330.0);
+        for (k = 0; k < (n + 511u) / 512u; k++) {        /* (the sectors straight in, no main loop between them) */
+            uint8_t sec[512];
+            memset(sec, 0, sizeof sec);
+            memcpy(sec, wav + k * 512u, n - k * 512u < 512u ? n - k * 512u : 512u);
+            vdisk_write(VD_DATA + 40000u + k, sec);
+        }
+        check("..a 5 s WAV with no main loop between its sectors: cut at the two spares (32 blocks), nothing allocated "
+              "from the interrupt", cap.cut && cap.nblk == 32u && capm.nch == 2u && mem_count(MEM_IMPORT) == 2u &&
+              mem_count(MEM_FREE) == MEM_NC - 2u);
+    }
+
     {   /* a long WAV over USB: a tape as long as memory allows, a reel across slots */
         static uint8_t wav[10 * 44100 * 2 + 64];
         uint32_t n;
@@ -2784,7 +2852,8 @@ static void test_memory(void)
         check(b, uslot_valid(0) && uslot_hdr(0)->span == 2 && !strcmp(uslot_name[0], "SIX") && fabs(hz - 550) < 5 &&
               !mem_count(MEM_IMPORT) && uslot_free() == 2);
         while (mem_count(MEM_FREE))
-            mem_alloc(MEM_TAPE + 2);                     /* (every chunk held by a tape in use) */
+            mem_alloc(MEM_TAPE + 2);                     /* (every chunk held by a tape in use, */
+        vd_sp_r = vd_sp_w;                               /* and none set aside) */
         n = make_wav(wav, 22050, 1, 16, 1, 22050, 550.0);
         hd_write_file(0, "MORE    WAV", 0, wav, n, 1);
         vdisk_poll();
