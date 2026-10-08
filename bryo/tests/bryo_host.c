@@ -922,8 +922,8 @@ static void screens_in(const char *pal)
     ur_feed(400, 441, 20000);                            /* the computer playing: the level */
     shot(pal, "usbrec_live");
     press(B_REC);
-    for (s = 0; s < 28u; s++) {                          /* a take of 2.5 s */
-        ur_feed(3938, 441, 12000);
+    for (s = 0; s < 28u; s++) {                          /* a take of 2.5 s, a phrase that swells and falls */
+        ur_feed(3938, 441, 2000.0 + 12000.0 * sin(M_PI * s / 27.0) * (s % 7u < 5u ? 1.0 : 0.3));
         chain_poll();
     }
     ur_feed(40, 441, 16000);
@@ -934,6 +934,14 @@ static void screens_in(const char *pal)
     shot(pal, "usbrec_choose");
     key_edge((uint32_t)__builtin_ctz(note_bit_of_white(1)));
     shot(pal, "usbrec_pick");
+    for (s = 0; s < 5u; s++)                             /* trimmed: the kept part in ink, the rest dim */
+        usbrec_knob(UK_STRT, 2);
+    for (s = 0; s < 8u; s++)
+        usbrec_knob(UK_LEN, -2);
+    usbrec_knob(UK_GAIN, 40);
+    usbrec_knob(UK_FADE, 6);
+    ui.last = UK_LEN;
+    shot(pal, "usbrec_trim");
     press(B_HOME);
     press(B_HOME);
     ui.msg_t = 0;
@@ -2910,11 +2918,57 @@ static void test_usbrec(void)
           !strcmp(ui.msg, "PICK A TRACK: WHITE KEYS 1-4"));
     key_edge(note_bit_of_white(2) ? (uint32_t)__builtin_ctz(note_bit_of_white(2)) : 0u);
     check("..white key 3: track 3 picked", ur.dest == 2);
+    check("CHOOSE starts with the whole take: START 0, LENGTH all of it, GAIN 0 dB, FADE 10 ms",
+          ur.kv[UK_STRT] == 0 && ur.kv[UK_LEN] == (int16_t)nb && ur.kv[UK_GAIN] == 0 &&
+          ur.kv[UK_FADE] * UR_FADE_MS == 10);
+    render(NB / 2, s);                                   /* the preview: the take, looping */
+    hz = buf_pitch(s, 0, NB / 2 * CTL, 100, 1000);
+    snprintf(b, sizeof b, "..you hear the take looping (%.1f Hz, 300), not the computer", hz);
+    check(b, fabs(hz - 300) < 1.5 && peak_of(s, NB / 2 * CTL) > 2000);
+    {
+        uint32_t keep0 = ur_free_after(), k2;
+        for (k2 = 0; k2 < 4u; k2++)
+            usbrec_knob(UK_STRT, 4);                     /* turned fast: 16 blocks a detent; 4 x 4 x 16 = 256 */
+        for (k2 = 0; k2 < 213u; k2++)
+            usbrec_knob(UK_STRT, -1);                    /* slowly, a block a detent: back to 43 */
+        for (k2 = 0; k2 < 30u; k2++)
+            usbrec_knob(UK_LEN, -4);                     /* fast to the least (1 block), then slowly to 86 (1.0 s) */
+        for (k2 = 0; k2 < 85u; k2++)
+            usbrec_knob(UK_LEN, 1);
+        snprintf(b, sizeof b, "KNOB 1-2: START 43 blocks (0.50 s), LENGTH 86 (1.00 s): %d, %d; %u chunks kept, more left "
+                 "for the other tracks", ur.kv[UK_STRT], ur.kv[UK_LEN], ur_keep_chunks());
+        check(b, ur.kv[UK_STRT] == 43 && ur.kv[UK_LEN] == 86 && ur_keep_chunks() == 6u && ur_free_after() > keep0 &&
+              ur.pv_s == 43u * TAPE_BLK && ur.pv_e == 129u * TAPE_BLK);
+        usbrec_knob(UK_GAIN, 40);
+        snprintf(b, sizeof b, "KNOB 3 past +24 dB: NORM, the loudest point to full scale (x%.2f; the mono take peaks "
+                 "at 7,500)", ur.pv_g / 4096.0);
+        check(b, ur.kv[UK_GAIN] == UR_NORM && fabs(ur.pv_g / 4096.0 - 32767.0 / 7500) < 0.1);
+        usbrec_knob(UK_GAIN, -31);
+        usbrec_knob(UK_FADE, 18);
+        check("..GAIN -6 dB (x0.5), FADE 100 ms", ur.kv[UK_GAIN] == -6 && ur.pv_g == 2048 &&
+              ur.pv_f == 100u * (TAPE_SR / 1000u));
+    }
     press(B_REC);
-    snprintf(b, sizeof b, "..REC: track 3's tape is the take (%u blocks), the mode closes, track 3 focused",
-             tape_ctl[2].nblk);
-    check(b, tape_ctl[2].nblk == nb && !tape_ctl[2].empty && ur.state == UR_OFF && !sys.usbrec &&
-          ui.view == VIEW_PAGE && sys.sel == 2 && !mem_count(MEM_IMPORT));
+    snprintf(b, sizeof b, "..REC: track 3's tape is the trimmed take (%u blocks), the mode closes, track 3 focused, the "
+             "rest of the take back in the pool", tape_ctl[2].nblk);
+    check(b, tape_ctl[2].nblk == 86u && tape_ctl[2].nch == 6u && !tape_ctl[2].empty && ur.state == UR_OFF &&
+          !sys.usbrec && ui.view == VIEW_PAGE && sys.sel == 2 && !mem_count(MEM_IMPORT));
+    {
+        tape_view_t v;
+        tape_rd_t rd;
+        int32_t first = 0, mid = 0, last = 0;
+        memset(&rd, 0, sizeof rd);
+        tape_view(2, &v);
+        for (i = 0; i < 220u; i++)                       /* the first 10 ms of the fade in */
+            first = abs(tape_at(&v, &rd, (int32_t)i)) > first ? abs(tape_at(&v, &rd, (int32_t)i)) : first;
+        for (i = 6000u; i < 12000u; i++)
+            mid = abs(tape_at(&v, &rd, (int32_t)i)) > mid ? abs(tape_at(&v, &rd, (int32_t)i)) : mid;
+        for (i = 86u * TAPE_BLK - 220u; i < 86u * TAPE_BLK; i++)
+            last = abs(tape_at(&v, &rd, (int32_t)i)) > last ? abs(tape_at(&v, &rd, (int32_t)i)) : last;
+        snprintf(b, sizeof b, "..kept as shaped: faded in (%d in the first 10 ms) and out (%d), at half (%d; was 7,500)",
+                 first, last, mid);
+        check(b, first < 1000 && last < 1000 && mid > 3400 && mid < 4100);
+    }
     render(2, 0);
     check("..the monitor fades out and the tracks render again", ur.isr_in == 0);
     for (k = 0; k < NTRK; k++)
@@ -2925,7 +2979,7 @@ static void test_usbrec(void)
     sys.playing = 0;
     hz = buf_pitch(s, 0, NB / 2 * CTL, 100, 1000);
     snprintf(b, sizeof b, "..and it plays: %.1f Hz (300)", hz);
-    check(b, fabs(hz - 300) < 1.5 && peak_of(s, NB / 2 * CTL) > 1000);
+    check(b, fabs(hz - 300) < 1.5 && peak_of(s, NB / 2 * CTL) > 500);
     for (k = 0; k < NTRK; k++)
         track[k].mute = 0;
 

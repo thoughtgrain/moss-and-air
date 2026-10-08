@@ -387,11 +387,19 @@ static void usbrec_input(uint32_t pressed, uint32_t notes)
     for (k = 0; k < 27u; k++)
         if (((notes >> k) & 1u) && KEY_WHITE[k] != KEY_NONE)
             usbrec_pick(KEY_WHITE[k]);
-    for (k = 0; k < 4u; k++)                            /* (turns meanwhile are dropped, not saved up) */
-        (void)panel_enc(EN_K1 + k);
+    for (k = 0; k < 4u; k++) {                          /* CHOOSE: the take's START LEN GAIN FADE (otherwise turns
+                                                         * are dropped, not saved up) */
+        int32_t d = panel_enc(EN_K1 + k);
+        if (d && ur.state == UR_CHOOSE) {
+            usbrec_knob(k, d);
+            ui.last = (uint8_t)k;
+        }
+    }
     (void)panel_enc(EN_SELECT);
     (void)panel_enc(EN_PRESET);
     (void)panel_enc(EN_ALGO);
+    if (ur.state != UR_CHOOSE)
+        ui.last = 0xFF;
     if (ur.state == UR_OFF) {                           /* it closed: the page it opened from */
         ui.view = VIEW_PAGE;
         ui.last = 0xFF;

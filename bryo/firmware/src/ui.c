@@ -195,7 +195,9 @@ static void draw_strip(void)
 {
     uint32_t k, sig = 2166136261u + ux.theme * 3u;
     if (ui.view == VIEW_USBREC) {                       /* the record mode: the tracks a take can go to */
-        sig += ur.state * 7u + (uint32_t)(ur.dest + 1) * 131u + sys.ntrk * 1031u + sys.sel * 7919u;
+        sig += ur.state * 7u + (uint32_t)(ur.dest + 1) * 131u + sys.ntrk * 1031u + sys.sel * 7919u + ui.last * 3u;
+        for (k = 0; k < 4u; k++)
+            sig = (sig ^ (uint32_t)(ur.kv[k] + 32768)) * 16777619u;
         for (k = 0; k < NTRK; k++)
             sig = (sig ^ (tape_ctl[k].nblk + tape_ctl[k].empty * 65536u)) * 16777619u;
         if (!ui.force && sig == ui.sig_strip)
@@ -263,8 +265,8 @@ static void draw_foot(void)
     char a[28], b[16];
     uint32_t sig;
     if (ui.view == VIEW_USBREC)                       /* the record mode: what REC and HOME do in this step */
-        str_cpy(a, ur.state == UR_RECORDING ? "REC:STOP HOME:THROW AWAY" : ur.state == UR_CHOOSE ?
-                   "KEYS:TRACK REC:KEEP IT" : "REC:START HOME:LEAVE", sizeof a);
+        str_cpy(a, ur.state == UR_RECORDING || ur.state == UR_CHOOSE ? (ur.state == UR_CHOOSE ? "REC:KEEP HOME:THROW AWAY"
+                   : "REC:STOP HOME:THROW AWAY") : "REC:START HOME:LEAVE", sizeof a);
     else if (ui.glo_held)                             /* the white keys pick the track; SELECT sets TRACKS */
         str_cpy(a, "KEYS:TRK SEL:TRACKS", sizeof a);
     else if (ui.view == VIEW_MIXER)

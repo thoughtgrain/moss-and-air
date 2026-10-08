@@ -83,9 +83,11 @@ The details, and why it works this way, are in [docs/bryo-architecture.md](docs/
 ## Recording from the computer
 
 With the transport stopped, hold REC for a second: the USB record mode. Everything else stops, and the FM-1 plays
-whatever the computer sends it (pick Bryo as the computer's sound output). REC starts a take and REC stops it; then
-press white key 1-4 for the track it goes to, and REC again puts it there and takes you back. HOME goes back a step
-(a take you don't want, or out). A take is up to 23.6 s, or what memory is free.
+whatever the computer sends it (pick Bryo as the computer's sound output). REC starts a take and REC stops it. Then the
+take loops while KNOB 1-4 trim it (START, LENGTH), set its level (GAIN, or NORM past +24 dB) and fade its ends
+(FADE); the screen shows how much memory it takes and how much the other tracks would have left. White key 1-4 picks
+the track, and REC keeps it there and takes you back. HOME goes back a step (a take you don't want, or out). A take
+is up to 23.6 s, or what memory is free.
 
 ## If it crashes
 

@@ -1242,10 +1242,63 @@ static void viz_route(uint32_t f)
 /* --------------------------------------------------- USB record mode --- */
 /* The strip: the four tracks a take can go to, each its number in a box, and what its tape holds now (seconds, "-"
  * empty, OFF parked). Picking one (CHOOSE) fills its box and says REPLACE under it, where SEC was. */
+/* seconds of n blocks, two decimals ("12.34") */
+static void ur_secs2(char *b, uint32_t n)
+{
+    uint32_t cs = n * TAPE_BLK * 100u / TAPE_SR;
+    fmt_int(b, (int32_t)(cs / 100u));
+    str_cpy(b + str_len(b), ".", 2);
+    b[str_len(b) + 1] = 0;
+    b[str_len(b)] = (char)('0' + cs / 10u % 10u);
+    b[str_len(b) + 1] = 0;
+    b[str_len(b)] = (char)('0' + cs % 10u);
+}
+
+/* CHOOSE's knobs: START and LENGTH (seconds), GAIN (dB, NORM), FADE (ms), each with its pictogram */
+static void viz_usbrec_knobs(void)
+{
+    static const char *const NAME[4] = {"STRT", "LEN", "GAIN", "FADE"};
+    static const uint8_t PK[4] = {PK_START, PK_LENGTH, PK_FADER, PK_FADE};
+    uint32_t k;
+    for (k = 0; k < 4u; k++) {
+        pdesc_t d = {NAME[k], 0, 1, 0, F_NUM, 0};
+        int32_t x = 30 * (int32_t)k, v = ur.kv[k];
+        char b[12];
+        if (k <= UK_LEN) {
+            d.max = (int16_t)(ur.nblk ? ur.nblk : 1u);
+            ur_secs2(b, (uint32_t)v);
+        } else if (k == UK_GAIN) {
+            d.min = -24;
+            d.max = UR_NORM;
+            if (v == UR_NORM) {
+                str_cpy(b, "NORM", sizeof b);
+            } else {
+                str_cpy(b, v > 0 ? "+" : "", sizeof b);
+                fmt_int(b + str_len(b), v);
+                str_cpy(b + str_len(b), "DB", 3);
+            }
+        } else {
+            d.max = 100;
+            fmt_int(b, v * UR_FADE_MS);
+            str_cpy(b + str_len(b), "MS", 3);
+        }
+        px_picto(PK[k], x + 4, 2, &d, v, px_ink);
+        if (ui.last == k)
+            px_tag(x + (30 - px_text_w(PXF_5, NAME[k])) / 2 - 1, 26, PXF_5, NAME[k], px_ink, px_bg);
+        else
+            px_text_c(x, 30, 27, PXF_5, NAME[k], px_ink);
+        px_text_c(x, 30, 37, PXF_5, b, px_ink);
+    }
+}
+
 static void viz_usbrec_strip(void)
 {
     uint32_t k;
     char b[12];
+    if (ur.state == UR_CHOOSE) {
+        viz_usbrec_knobs();
+        return;
+    }
     for (k = 0; k < NTRK; k++) {
         int32_t x = 30 * (int32_t)k, off = k >= sys.ntrk, pick = ur.state == UR_CHOOSE && ur.dest == (int8_t)k;
         char n[2] = {(char)('1' + k), 0};
@@ -1274,15 +1327,89 @@ static void viz_usbrec_strip(void)
     }
 }
 
+/* the memory as one ribbon at row y: the other tracks' tapes dim (not the one the take replaces), the take in ink
+ * (what would be kept), what's left a dotted line */
+static void ur_ribbon(int32_t y, uint32_t take)
+{
+    uint32_t t, x = DX0;
+    for (t = 0; t < NTRK; t++) {
+        uint32_t n = (ur.state == UR_CHOOSE && ur.dest == (int8_t)t) ? 0u : tape_ctl[t].nch, w = n * (uint32_t)DW / MEM_NC;
+        if (n && !w)
+            w = 1;
+        if (w) {
+            px_box((int32_t)x, y, (int32_t)w, 3, px_dim);
+            x += w + 1u;
+        }
+    }
+    if (take) {
+        uint32_t w = take * (uint32_t)DW / MEM_NC + 1u;
+        px_box((int32_t)x, y - 1, (int32_t)w, 5, px_ink);
+        x += w + 1u;
+    }
+    if ((int32_t)x < DX1)
+        px_line((int32_t)x, y + 1, DX1, y + 1, px_dim, 2);
+}
+
+/* CHOOSE: the take's outline (the kept part in ink, the rest dim, the cut points and where the loop plays), the
+ * ribbon, what's kept and what's left, and where it goes */
+static void viz_usbrec_choose(void)
+{
+    uint32_t n = ur.nblk ? ur.nblk : 1u, s = (uint32_t)ur.kv[UK_STRT], e = s + (uint32_t)ur.kv[UK_LEN], c, py = 0;
+    int32_t x;
+    char b[32], t[12];
+    for (x = 0; x <= DW; x++) {                                    /* the outline: one line, no fill */
+        uint32_t b0 = (uint32_t)x * n / (DW + 1u), b1 = ((uint32_t)x + 1u) * n / (DW + 1u), pk = 0, y;
+        if (b1 <= b0)
+            b1 = b0 + 1u;
+        for (c = b0; c < b1 && c < ur.nblk; c++) {
+            uint32_t p = ur_chunk(c)->peak[c % MEM_CB];
+            pk = p > pk ? p : pk;
+        }
+        y = 16u - (pk > 255u ? 255u : pk) * 15u / 255u;
+        if (x)
+            px_line(DX0 + x - 1, (int32_t)py, DX0 + x, (int32_t)y, b0 >= s && b0 < e ? px_ink : px_dim, b0 >= s && b0 < e ? 1 : 2);
+        py = y;
+    }
+    px_line(DX0 + (int32_t)(s * (DW + 1u) / n), 1, DX0 + (int32_t)(s * (DW + 1u) / n), 17, px_ink, 1);
+    px_line(DX0 + (int32_t)(e * (DW + 1u) / n) - 1, 1, DX0 + (int32_t)(e * (DW + 1u) / n) - 1, 17, px_ink, 1);
+    x = DX0 + (int32_t)((ur.pp >> 12) / TAPE_BLK * (DW + 1u) / n);   /* where the loop plays */
+    px_box(x, 18, 1, 2, px_ink);
+    ur_ribbon(23, ur_keep_chunks());
+    ur_secs2(t, (uint32_t)ur.kv[UK_LEN]);
+    str_cpy(b, "KEEP ", sizeof b);
+    str_cpy(b + str_len(b), t, 8);
+    px_text(DX0, 28, PXF_5, b, px_ink);
+    vz_secs(b, vz_chunk_tenths(ur_free_after()));                 /* what the other tracks would still have */
+    str_cpy(b + str_len(b), " SEC LEFT", 10);
+    px_text(DX1 - px_text_w(PXF_3, b) + 1, 30, PXF_3, b, px_dim);
+    if (ur.dest < 0) {
+        str_cpy(b, "WHICH TRACK? WHITE KEYS 1-", sizeof b);
+        fmt_int(b + str_len(b), sys.ntrk);
+    } else {
+        str_cpy(b, "ONTO TRACK ", sizeof b);
+        fmt_int(b + str_len(b), ur.dest + 1);
+        if (tape_ctl[(uint32_t)ur.dest].nblk && !tape_ctl[(uint32_t)ur.dest].empty) {
+            str_cpy(b + str_len(b), ", REPLACING ", 13);
+            vz_secs(t, (int32_t)(tape_ctl[(uint32_t)ur.dest].nblk * TAPE_BLK * 10u / TAPE_SR));
+            str_cpy(b + str_len(b), t, 8);
+        }
+    }
+    px_text(DX0, DLBL, PXF_3, b, ur.dest < 0 ? px_dim : px_ink);
+}
+
 /* The panel: what the step is, the time large, and one level bar (both sides' peak), plain. READY: the room a take
- * has, or a note to play something on the computer; RECORDING: the take's seconds of the room; CHOOSE: the take's
- * length and where it would go. */
+ * has, or a note to play something on the computer; RECORDING: the take's seconds of the room, and the memory as a
+ * ribbon (the take growing against the other tracks); CHOOSE: viz_usbrec_choose. */
 static void viz_usbrec(void)
 {
     char b[28], t[12];
     int32_t pk = ur.peak, w;
     uint32_t room = ur_room() * TAPE_CHS * 10u / TAPE_SR;          /* tenths */
     ur.peak = pk - (pk >> 2);                                      /* (the bar falls between frames) */
+    if (ur.state == UR_CHOOSE) {
+        viz_usbrec_choose();
+        return;
+    }
     if (ur.state == UR_READY) {
         px_text(DX0, 2, PXF_5B, "READY", px_ink);
         vz_secs(t, (int32_t)room);
@@ -1290,33 +1417,17 @@ static void viz_usbrec(void)
         str_cpy(b + str_len(b), t, 8);
         str_cpy(b + str_len(b), " SEC", 5);
         px_text(DX0, 14, PXF_5, b, px_ink);
-    } else {
-        uint32_t tn = ur.state == UR_RECORDING ? usbrec_tenths() : ur.nblk * TAPE_BLK * 10u / TAPE_SR;
-        vz_secs(t, (int32_t)tn);
+    } else {                                                       /* RECORDING */
+        vz_secs(t, (int32_t)usbrec_tenths());
         px_text_big(DX0, 1, 3, t, px_ink);
         w = DX0 + 18 * (int32_t)str_len(t);
-        if (ur.state == UR_RECORDING) {
-            vz_secs(b + 3, (int32_t)room);
-            b[0] = 'O';
-            b[1] = 'F';
-            b[2] = ' ';
-            px_text(w, 9, PXF_3, "SEC", px_ink);
-            px_text(w, 16, PXF_3, b, px_dim);
-        } else {
-            px_text(w, 16, PXF_3, "SEC", px_ink);
-        }
-    }
-    if (ur.state == UR_CHOOSE) {                                   /* where it goes */
-        if (ur.dest < 0) {
-            str_cpy(b, "PICK: KEYS 1-", sizeof b);
-            fmt_int(b + str_len(b), sys.ntrk);
-        } else {
-            str_cpy(b, "REC: ONTO TRACK ", sizeof b);
-            fmt_int(b + str_len(b), ur.dest + 1);
-        }
-        px_text(DX0, 26, PXF_5, b, px_ink);
-        px_text(DX0, DLBL, PXF_3, "HOME: THROW IT AWAY", px_dim);
-        return;
+        vz_secs(b + 3, (int32_t)room);
+        b[0] = 'O';
+        b[1] = 'F';
+        b[2] = ' ';
+        px_text(w, 9, PXF_3, "SEC", px_ink);
+        px_text(w, 16, PXF_3, b, px_dim);
+        ur_ribbon(24, ur.nch);
     }
     if (!usbrec_live()) {                                          /* nothing arriving */
         px_text(DX0, 28, PXF_3, "PLAY SOUND ON THE COMPUTER", px_dim);
@@ -1366,6 +1477,14 @@ static uint32_t viz_sig(void)
         return hash_str(h ^ 0x5A5Au, ui.msg);
     if (ui.view == VIEW_USBREC) {                                      /* the step, the time, the level, the room */
         uint32_t tn = ur.state == UR_RECORDING ? usbrec_tenths() : ur.nblk;
+        if (ur.state == UR_CHOOSE) {                                   /* the knobs, the loop's place, the memory */
+            for (k = 0; k < 4u; k++)
+                h = (h ^ (uint32_t)(ur.kv[k] + 32768)) * 16777619u;
+            h = (h ^ ((ur.pp >> 12) / TAPE_BLK * (DW + 1u) / (ur.nblk ? ur.nblk : 1u))) * 16777619u;
+            for (t = 0; t < NTRK; t++)
+                h = (h ^ tape_ctl[t].nch) * 16777619u;
+            h += mem_count(MEM_FREE) * 2654435761u;
+        }
         return h + ur.state * 31u + tn * 131u + (uint32_t)(ur.dest + 1) * 7u + (uint32_t)usbrec_live() * 65537u +
                (uint32_t)(ur.peak * 24 / 32767) * 524287u + ur_room() * 8191u + sys.ntrk * 3u;
     }

@@ -36,6 +36,10 @@ page	BTN_REC	hold	held a second while stopped: the USB record mode (the tracks s
 usb-record	BTN_REC	press	READY: start the take; RECORDING: stop it; CHOOSE: put it on the picked track (its tape replaced) and leave	now	-	change
 usb-record	BTN_HOME	press	back a step: RECORDING or CHOOSE: the take thrown away; READY: leave	now	-	change
 usb-record	WHITE_1-4	press	CHOOSE: the track the take goes to (1..TRACKS)	now	-	change
+usb-record	ENC_K1	turn	CHOOSE: START, where the kept part begins (a block, 11.6 ms, a detent; faster turned fast)	now	-	change
+usb-record	ENC_K2	turn	CHOOSE: LENGTH of the kept part (the rest goes back to memory when it's kept)	now	-	change
+usb-record	ENC_K3	turn	CHOOSE: GAIN, -24..+24 dB; past +24: NORM (the loudest point to full scale)	now	-	change
+usb-record	ENC_K4	turn	CHOOSE: FADE at both cut points, 0..500 ms (10 ms to start with)	now	-	change
 page	BTN_SAVE	tap	quick-save the active project (now: a message)	planned	8	PRD 2.2
 page	BTN_SAVE	hold	undo the last tape clear (while nothing has been recorded over it)	now	-	change
 page	BTN_OCTDN	press	the white keys an octave down (SYNTH's notes; RESONATOR notes, SEQ step pages later)	now	-	PRD 2.1

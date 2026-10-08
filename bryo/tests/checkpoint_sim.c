@@ -462,6 +462,7 @@ static int stress(double secs)
                     usbrec_rec();
             } else {
                 usbrec_pick(st_rand(NTRK));
+                usbrec_knob(st_rand(4), (int32_t)st_rand(9) - 4);   /* (trimmed, shaped, while it previews) */
                 if (st_rand(4)) {
                     takes += ur.dest >= 0;
                     usbrec_rec();

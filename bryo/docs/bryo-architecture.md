@@ -167,6 +167,27 @@ they live in the pool's room that was kept for USB audio in.
 What gives way when memory runs short: chunks come off a cleared tape first, then a parked track's tape (TRACKS),
 then the end of the longest tape. Nothing is set aside per track, so there's no constant to shrink any more.
 
+### Flash: the installed image (measured 2026-10-08)
+
+The app's image runs in place from flash: 0x4000..0x92FFF, 568 KiB of room once the package header is in
+(`firmware/app.ld`, XIP 0x8DFBC bytes). I can't build for the pi32v2 here (the JieLi toolchain is behind the
+network), so I measured the unity build the way the device build starts (LLVM IR, `-Os`) on a 32-bit host target,
+and Felucca 1.0.3 the same way, as a yardstick:
+
+| Build | Code | Constants | Code in RAM | Sum |
+| --- | ---: | ---: | ---: | ---: |
+| Bryo now | 120 KB | 157 KB | 4 KB | 281 KB |
+| Felucca 1.0.3 | 254 KB | 236 KB | 4 KB | 494 KB |
+
+Constants are the same bytes on any target. Code isn't: but Felucca shipped and fits its 568 KiB, so the pi32v2's
+code can be at most about 1.34 times this measure. That puts Bryo between about 270 and 320 KB, roughly half the
+room: 250 to 300 KB free. `./build.sh` prints the real number; that's the one to trust.
+
+Where Bryo's goes: the four factory reels 98 KB (ADPCM, 11 KB a second of sound), Felucca's anti-aliased fonts 43 KB
+(only their sizes are still used, by the boot, crash and update screens: about 40 KB to win back if it's needed,
+without touching the update path's code), tables 5 KB; the UI's code about 55 KB, the DSP and the main loop the rest.
+A device like COLOR or SPACE costs 2 to 6 KB of code, a page of the UI 1 to 3 KB.
+
 ### Flash (Felucca's 296 KiB data region, rewritten as Bryo's)
 
 | Area | Bytes | What |
@@ -930,14 +951,31 @@ them out over one block and plays the computer instead. Their GRAIN buffers, RES
 to the shared memory (their polls see `sys.usbrec`), so the take can use it. The FM-1's own USB input, what the
 computer can record from it, sends silence: otherwise whatever the computer plays would come straight back to it.
 
-| Step | REC | HOME | White keys |
-| --- | --- | --- | --- |
-| READY | start the take | leave | - |
-| RECORDING | stop it | stop, throw it away | - |
-| CHOOSE | put it on the picked track (its tape replaced) and leave | throw it away (READY) | 1..TRACKS pick the track (lit) |
+| Step | REC | HOME | White keys | KNOB 1-4 |
+| --- | --- | --- | --- | --- |
+| READY | start the take | leave | - | - |
+| RECORDING | stop it | stop, throw it away | - | - |
+| CHOOSE | keep it on the picked track (its tape replaced) and leave | throw it away (READY) | 1..TRACKS pick the track (lit) | START, LENGTH, GAIN (NORM past +24 dB), FADE |
 
 The screen keeps to what the step needs: the four tracks as numbered boxes with what each holds, the step's word or
 the take's seconds large, one level bar, and the room left.
+
+**A long take shouldn't eat the other tracks by surprise.** A 20 s take is most of the shared memory, so what a take
+costs is on screen from the moment it records: under the running time, the memory as one ribbon (the other tracks'
+tapes dim, the take in ink growing, what's left a dotted line). In CHOOSE the take loops so you hear it, its outline
+shows the kept part in ink and the trimmed part dim, the ribbon shows the kept part only (and leaves out the tape it
+would replace), and the numbers say KEEP 1.30 and how many seconds the other tracks would have left. Trimming it
+gives that room back as you turn.
+
+- **START, LENGTH** move a block (11.6 ms) a detent, four or sixteen when turned fast. Blocks are the unit because
+  each decodes on its own: keeping a trimmed take moves its blocks down to the start of its chunks with a plain
+  copy and gives back the chunks past the end.
+- **GAIN** is -24..+24 dB; one detent past +24 is NORM, the loudest block of the kept part to full scale (from the
+  peaks the encoder already stored, so it costs nothing to show).
+- **FADE** (0..500 ms, 10 to start with) fades in and out at the cut points, so a cut mid-sound doesn't click; the
+  loop's seam in the preview gets the same fades.
+- What's kept is decoded and encoded again only where it changed: every block when GAIN isn't 0 dB, otherwise only
+  the blocks under a fade. The rest keep their bits, so trimming alone adds no second generation of ADPCM noise.
 
 **How the sound gets in.** `usb.c` (behind `BRYO_UAC_OUT`, on in Bryo, off in the update loader, whose descriptors
 stay byte for byte) adds a second UAC1 streaming interface: the computer plays into the FM-1, 16-bit stereo at
@@ -960,7 +998,9 @@ both hand chunks over the same way.
 **Tests.** `test_usbrec` holds REC playing (a hint, no mode) and stopped (the mode, with no arm on the let-go). The
 devices give their memory back. A 441 Hz sine from the computer is heard at 440.8 Hz with no jump, the ring holding
 steady against the two clocks. A 3 s take in packets of 44 and 45 frames keeps every frame (357 blocks, none lost),
-asks for a track, lands on track 3 and plays back at 300.0 Hz. With 3 chunks free the take stops at 48 blocks, and
+asks for a track and loops in CHOOSE at 300.0 Hz. Trimmed to 0.50..1.50 s it keeps 6 chunks instead of 23; NORM
+on a take peaking at 7,500 is x4.34; at GAIN -6 dB and FADE 100 ms it lands on track 3 as 86 blocks at half level,
+faded in and out, and plays back at 300.0 Hz. With 3 chunks free the take stops at 48 blocks, and
 HOME throws it away and leaves. `usb_sie_test` (UAC in and out) parses Bryo's descriptors as a host would (five
 interfaces, the AC header and its terminals, the stream's endpoint) and runs the endpoint against the emulated
 controller: a packet before the computer picks the stream is dropped, then 20 packets polled twice a frame all
