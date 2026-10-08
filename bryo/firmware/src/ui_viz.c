@@ -514,7 +514,7 @@ static void viz_space(const int16_t *v, uint32_t f)
     int32_t dly = v[4] ? v[4] : 100, verb = v[5] ? v[5] : 100;
     uint16_t dink = v[4] ? px_ink : px_dim, vink = v[5] ? px_ink : px_dim;
     px_line(DX0, DY1 + 1, DX1, DY1 + 1, px_dim, 2);
-    for (x = DX0; x <= DX1; x++) {                                     /* the tail: a dim hatch under its edge */
+    for (x = DX0; x <= DX1; x++) {                                     /* the tail: its edge alone, no fill */
         int32_t ms = (x - DX0) * 2000 / DW - pre, e, y;
         if (ms < 0) {
             py = DY1;
@@ -525,8 +525,6 @@ static void viz_space(const int16_t *v, uint32_t f)
             break;
         e = e * e / 1000 * verb / 100;
         y = DY1 - e * DH / 1000;
-        if ((x & 1) == 0 && y < DY1)
-            px_line(x, y + 2, x, DY1, px_dim, 2);
         if (x > DX0)
             px_line(x - 1, py, x, y, vink, 1);
         py = y;
