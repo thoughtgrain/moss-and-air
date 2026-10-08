@@ -44,6 +44,7 @@ static const char *const DEV_NAME[NDEV] = {"TAPE", "GRAIN", "RESONATOR", "COLOR"
  * devices where Bryo's does the same job (docs/s4-alignment.md): TAPE's SOS is DUB, MOSAIC's SPRAY is SPRY, and so
  * on; the PRD's knob positions stay. A device's pages run until one whose first label is empty. */
 static const char *const N_PATN[4] = {"EVEN", "SWNG", "CLST", "RND"};
+static const char *const N_SCAN[4] = {"TAPE", "STR", "POS", "DLY"};
 static const char *const N_GSCAL[5] = {"OFF", "CHR", "MAJ", "MIN", "PEN"};
 static const char *const N_RSCAL[4] = {"HARM", "MAJ", "MIN", "PEN"};
 static const char *const N_SLOP[3] = {"LP", "BP", "HP"};
@@ -65,10 +66,15 @@ static const pdesc_t DEV_P[NDEV][NPK] = {
          * a grain plays backwards */
         {"WET", 0, 100, 0, F_PCT}, {"SPRY", 0, 100, 20, F_PCT},   /* (WET 0: off until it's turned up) */
         {"CONT", 0, 100, 50, F_PCT}, {"REV", 0, 100, 0, F_PCT},
-        /* 3: WARP: how fast the read point moves through the loop (0 freezes it, - backwards); the order grains
+        /* 3: WARP: how fast the read point moves (0 holds it, - backwards); the order grains
          * fire in; their pitch held to a scale; a random pitch per grain, up to +-PRND semitones */
         {"WARP", -200, 200, 100, F_BIPCT}, {"PATN", 0, 3, 3, F_ENUM, N_PATN},
-        {"SCAL", 0, 4, 0, F_ENUM, N_GSCAL}, {"PRND", 0, 12, 0, F_ST}},
+        {"SCAL", 0, 4, 0, F_ENUM, N_GSCAL}, {"PRND", 0, 12, 0, F_ST},
+        /* 4: what grains read and where (grain.c): the track's TAPE, or the live buffer of the last bars, read
+         * stretching behind the write head (STR), at a spot (POS) or a delay behind it (DLY); OFST: POS's spot, DLY's
+         * delay, as a share of the buffer; FDBK: how much of the buffer stays as new sound goes in (the S-4's) */
+        {"SCAN", 0, 3, 1, F_ENUM, N_SCAN}, {"OFST", 0, 100, 25, F_PCT},
+        {"FDBK", 0, 100, 0, F_PCT}, {""}},
     {   /* RESONATOR (the S-4's RING) */
         {"PTCH", 33, 81, 45, F_NOTE}, {"DEC", 0, 100, 60, F_PCT},
         {"TONE", 0, 100, 60, F_PCT}, {"WET", 0, 100, 0, F_PCT},

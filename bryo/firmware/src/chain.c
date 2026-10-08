@@ -3,7 +3,8 @@
  *
  * Each track starts with its source (source.c): its TAPE (tape.c: the loop plays while the transport runs, the
  * white keys play its 16 slices), SYNTH or POLY (the white keys play notes). REC records onto the tape either way.
- * Then GRAIN (grain.c: grains of the track's tape, blended by WET), from which the track is stereo. RESONATOR,
+ * Then GRAIN (grain.c: grains of a live buffer of the source, or of the tape, blended by WET), from which the track
+ * is stereo. RESONATOR,
  * COLOR and SPACE arrive in the next phases; chain_block() keeps the shape they slot into.
  *
  * What REC records is each track's REC IN (param.c RIN_*, the routing view): by default (AUTO) the other three
@@ -59,8 +60,8 @@ static void chain_source(uint32_t t, uint32_t keys, const int32_t *rin, int32_t 
         }
         SOURCES[e].render(t, e == cur ? keys : 0u, e == SRC_TAPE ? rec : 0, o, n);
         rt->src_g[e] = g1;
-        for (i = 0; i < n; i++)
-            s[i] += (o[i] * (g0 + (((g1 - g0) * (int32_t)i) >> CTL_LOG2))) >> 15;
+        for (i = 0; i < n; i++)                         /* (in 32 bits: POLY's four voices sum past 16) */
+            s[i] += ((o[i] >> 2) * ((g0 + (((g1 - g0) * (int32_t)i) >> CTL_LOG2)) >> 1)) >> 12;
     }
 }
 
@@ -155,10 +156,12 @@ static void chain_tracks(int32_t n)
         sys.sel = (uint8_t)(n - 1);
 }
 
-/* main loop, every pass: the memory's bookkeeping (tape.c tape_poll: growing tapes and their ends) */
+/* main loop, every pass: the memory's bookkeeping (tape.c tape_poll: growing tapes and their ends; grain.c
+ * grain_poll: GRAIN's buffers) */
 static void chain_poll(void)
 {
     tape_poll();
+    grain_poll();
 }
 
 /* all sound off now (an update starting, a panic): the keys stop and the transport stops (the heads fade out) */

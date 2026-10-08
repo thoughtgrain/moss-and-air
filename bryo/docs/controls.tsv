@@ -41,7 +41,7 @@ page	ENC_K3	turn	the third value on the strip	now	-	PRD 1
 page	ENC_K4	turn	the fourth value on the strip	now	-	PRD 1
 page	ENC_SELECT	turn	the global tempo, 40..240 BPM	now	-	PRD 2.1
 page	ENC_PRESETS	turn	open the project manager and scroll its slots (now: a message)	planned	8	change
-page	ENC_ALGORITHM	turn	open the routing matrix and move through its cells (now: a message)	planned	6	change
+page	ENC_ALGORITHM	turn	open REC IN (the routing view): what each track's REC records	now	-	change
 page	WHITE_1-16	press	TAPE: slice n of the focused track's loop (16 slices); playing: the head jumps there (crossfaded); stopped: that slice plays once. SYNTH and POLY: notes, key n the semitone n above C of OCT (until RESONATOR and SEQ give the keys their own jobs)	now	-	change
 page	BLACK_OP1	press	mute / unmute track 1	now	-	PRD 2.3
 page	BLACK_OP2	press	mute / unmute track 2	now	-	PRD 2.3
@@ -53,9 +53,9 @@ page	BLACK_PIT	press	global pitch shift down (unmuted tracks)	planned	3	PRD 2.3
 page	BLACK_GLO	press	global pitch shift up (unmuted tracks)	planned	3	PRD 2.3
 page	BLACK_MONO	hold	held 0.5 s (countdown ring): clear the focused track's modulation routing; SAVE held undoes	planned	7	PRD 2.3
 page	BLACK_POLY	hold	held 0.5 s: clear the focused track's tape (a reel: the track goes back to its own tape, cleared); SAVE held undoes	now	-	PRD 2.3
-page	BLACK_ZERO	hold	momentary global granular freeze while held: every track's GRAIN cursor stops (FROZEN on the GRAIN page)	now	-	PRD 2.3
+page	BLACK_ZERO	hold	momentary global granular freeze while held: every GRAIN buffer stops recording and its grains loop the held bars (SCAN TAPE: the cursor stops); FROZEN on the GRAIN page	now	-	PRD 2.3
 page:tape	WHITE_1-16	press	play from slice n of the loop (finger drumming, stutter)	now	-	PRD 2.3
-page:grain	WHITE_1-16	press	on a TAPE track: GRAIN's cursor to slice n of the loop (the tape's head stays); stopped, grains while the key is held	now	-	PRD 2.3
+page:grain	WHITE_1-16	press	on a TAPE track: GRAIN's cursor to sixteenth n of the tape's loop (SCAN TAPE) or of the buffer (POS: the spot, DLY: the trail); the tape's head stays; stopped, grains while the key is held	now	-	PRD 2.3
 page	BLACK_POLY	release	(the key, not the POLY source engine) letting go before 0.5 s cancels the clear	now	-	change
 page:resonator	WHITE_1-16	press	chromatic notes for the resonator (tuned feedback chords); OCT-/OCT+ shift	planned	4	PRD 2.3
 page:slot	WHITE_1-16	press	on a SEQ slot: the 16 steps (OCT-/OCT+: steps 17-32)	planned	7	PRD 2.3
@@ -66,6 +66,7 @@ mixer	ENC_K4	turn	track 4 level	now	-	change
 mixer	BTN_GLO	tap	close the mixer	now	-	change
 mixer	BTN_HOME	press	close the mixer and focus the source (any page pad does the same for its page)	now	-	change
 mixer	BTN_EDIT	hold	the selected track's channel: KNOB 1-4 set LOW HIGH FILT PAN (heard from phase 6); letting go returns to the levels	now	-	PRD 2.2
+mixer	ENC_SELECT	turn	TRACKS 1-4: the tracks in use; the ones above it park (silent, not rendered, their tapes taken first when memory runs short)	now	-	change
 glo-held	WHITE_1-4	press	focus track 1..4 (the white keys don't play while GLO is held)	now	-	change
 glo-held	ENC_K1-4	turn	the four track levels; letting go of GLO returns to the page	now	-	change
 glo-held	BTN_GLO	release	back to the page if something was done or it was held past HOLD; else the mixer stays up	now	-	change
@@ -77,6 +78,6 @@ project-view	ENC_PRESETS	turn	move through the project slots	planned	8	change
 project-view	BTN_OCTUP	press	load the selected project	planned	8	change
 project-view	BTN_OCTDN	press	leave the project manager	planned	8	change
 project-view	BTN_SAVE	press	save into the selected slot	planned	8	PRD 2.1
-routing-view	ENC_ALGORITHM	turn	move through the routing cells (track -> track's tape)	planned	6	change
-routing-view	BTN_OCTUP	press	toggle the selected route	planned	6	change
-routing-view	BTN_OCTDN	press	leave the routing matrix	planned	6	change
+routing-view	ENC_ALGORITHM	turn	the focused track's REC IN (AUTO OTHR T1-T4; its own number: SELF)	now	-	change
+routing-view	ENC_K1-4	turn	track 1..4's REC IN: AUTO (as before: the others on TAPE, its own source on SYNTH or POLY), OTHR (the others' mix), T1-T4 (one track; its own: SELF)	now	-	change
+routing-view	BTN_HOME	press	leave REC IN for the source (any page pad does the same for its page; GLO for the mixer)	now	-	change

@@ -11,7 +11,7 @@ build in.
 | --- | --- |
 | Where audio comes from | All of it: reels (factory + uploaded), resampling inside Bryo, **and USB audio in from the computer, early** (phase 3), **plus synth engines**. |
 | What starts a track's chain | **A source engine per track**, picked like a modulator engine: TAPE, SYNTH, POLY, and engines still to be decided. The source flows into GRAIN, RESONATOR, COLOR and SPACE. |
-| Tape format | IMA ADPCM, mono, 22.05 kHz, about 3.3 s per track. |
+| Tape format | IMA ADPCM, mono, 22.05 kHz; tapes take what they record from one shared memory (28 s in all; see "Memory by usage"). |
 | Gestures where the hardware differs | Adapt what makes sense; **ask before changing anything else**. The remaps below stand. |
 | MONO and POLY keys | Hold for 0.5 s with a countdown ring, plus one level of undo. |
 
@@ -128,7 +128,8 @@ predictor/step index per block.**
 Why:
 
 - **Length.** 16-bit stereo 44.1 kHz would give each track about a third of a second. ADPCM at 22.05 kHz
-  is 11 KB per second, so 36 KiB per track gives about **3.3 s per track** (more at half speed).
+  is 11 KB per second, so 36 KiB per track gave about **3.3 s per track** (more at half speed). Since
+  "Memory by usage" the tracks share the RAM instead: one track can hold 28 s, four tracks whatever they record.
 - **It's the format Felucca's user samples already use** (`eng_sample.c`, `tools/fm1_sample_upload.py`).
   Loading a reel from flash into a tape, or saving a tape, is a straight copy with no transcoding, and the
   upload tools keep working.
@@ -142,30 +143,33 @@ Why:
 
 ## Budgets
 
-### RAM (the 344 KiB pool)
+### RAM (the 344 KiB pool, and main RAM's spare room)
 
 | Use | Bytes | How it's sized |
 | --- | ---: | --- |
-| Tapes | 147,456 | 4 × 36 KiB ADPCM (3.3 s each at 22.05 kHz) plus 4 × 1.3 KiB block index |
-| RESONATOR | 25,600 | 4 tracks × 4 strings × 800 samples × 2 B (lowest note A1, 55 Hz) |
-| SPACE delay | 65,536 | 4 tracks × 8,192 samples × 2 B (0.37 s at 22.05 kHz, or 0.74 s at half speed) |
-| SPACE reverb | 40,000 | 4 small reverbs, Felucca's ROOM structure run at 22.05 kHz |
+| Shared sound memory | 270,336 pool + 50,688 main RAM | 152 chunks of tape-format sound (28.2 s in all), handed out by usage: tapes as long as what's on them, GRAIN's live buffers while GRAIN is on; RESONATOR and SPACE will draw from it too. See "Memory by usage" |
+| RESONATOR | 25,600 (planned) | 4 tracks × 4 strings × 800 samples × 2 B (lowest note A1, 55 Hz), from the shared memory while it's on |
+| SPACE delay | 65,536 (planned) | 4 tracks × 8,192 samples × 2 B, from the shared memory while it's on (8-bit when memory is short) |
+| SPACE reverb | 40,000 (planned) | 4 small reverbs, Felucca's ROOM structure run at 22.05 kHz |
 | Screen canvas | 5,460 (main RAM) | 2 bits a dot (1.6 KB) and two 4-row line buffers (3.8 KB); see "The screen as dots" |
-| GRAIN | 9,824 | 4 tracks × 8 grains × 305 B (a 128-sample decoded window each; see "GRAIN, as built") |
-| USB audio in | 16,384 | ring buffer: 4,096 stereo frames × 4 B (93 ms) for drift and jitter |
+| GRAIN | 9,728 pool + 2,900 main RAM | 32 grains × 304 B (a 128-sample decoded window each), and each track's buffer bookkeeping; the buffers themselves are shared memory |
+| USB audio in | 16,384 (planned) | ring buffer: 4,096 stereo frames × 4 B (93 ms) for drift and jitter |
 | SYNTH | 576 | 4 tracks × 3 voices of oscillator and filter state (.bss) |
 | POLY | 8,288 | 4 tracks × 4 voices × a 256-sample block reader (pool), plus 448 B of voice state (.bss) |
-| Spare | ~13,000 | build.py already enforces at least 8 KiB free; SPACE delay is the first thing to shrink |
+| The drive | 17,340 | the FAT, root and write cache of the USB drive (the 36 KB WAV inbox is gone: a WAV lands in shared memory) |
 
-What gives way if the budget breaks: SPACE delay length first, then tape length. Both are single
-constants (`TAPE_BYTES`, `SPACE_DLY_LEN` in `src/bryo_config.h`).
+Measured now: the pool holds 312.0 KB of 336 (32 KB spare, 16 KB of it for USB audio in, build.py keeps 8 KB);
+main RAM 80.2 KB of 96.
+
+What gives way when memory runs short: chunks come off a cleared tape first, then a parked track's tape (TRACKS),
+then the end of the longest tape. Nothing is set aside per track, so there's no constant to shrink any more.
 
 ### Flash (Felucca's 296 KiB data region, rewritten as Bryo's)
 
 | Area | Bytes | What |
 | --- | ---: | --- |
 | Projects | 8 × 4 KiB × 2 (A/B) = 64 KiB | Machine state: devices, mixer, routing, modulators, p-locks, which reel each tape holds |
-| Reel slots | 6 × 36 KiB = 216 KiB | Saved tapes and uploaded audio, all the same format; a project points to reels |
+| Reel slots | 6 × 40 KiB = 240 KiB | Saved tapes and uploaded audio, all the same format; a long one spans the slots after it (21.5 s at most); a project points to reels |
 | Settings | unchanged | 0xFC000–0xFEFFF, as Felucca |
 
 A project saves its four tapes into reel slots it owns (so saving with audio needs four free reels), or it
@@ -180,7 +184,7 @@ with its mixes. My target for all four tracks, everything on, is **at most 2,000
 | Stage, per track | Estimate | Notes |
 | --- | ---: | --- |
 | TAPE read | 20 | ADPCM decode at 22.05 kHz, linear interpolation to 44.1 kHz |
-| GRAIN | 240 | 8 sounding grains × about 30 (decoding, window ramp, interpolation, pan; see "GRAIN, as built") |
+| GRAIN | 240 | 8 sounding grains × about 30 (decoding, window ramp, interpolation, pan), plus about 100 recording its buffer (measured: see "GRAIN, as built") |
 | RESONATOR | 60 | 4 strings |
 | COLOR | 30 | drive table, crush, follower plus noise |
 | SPACE | 80 | delay plus reverb at 22.05 kHz |
@@ -491,7 +495,7 @@ How it's built, and why:
 - **Writing is best effort, and I say so on the drive.** A drive never hears "here is a file called X": it sees
   sectors. A sector that starts with a WAV header starts a capture; the sectors after it (and wherever the FAT
   chains the file next) are converted as they arrive (any rate, 8 to 32-bit PCM or float, any channels, to the
-  tape format) into a RAM inbox. The directory entry that points at it names it: `TAPEn.WAV` replaces track n's
+  tape format) into the shared memory (it was a 36 KB RAM inbox until "Memory by usage"). The directory entry that points at it names it: `TAPEn.WAV` replaces track n's
   tape; `USERn.WAV` replaces your reel n; any other name goes to the first free user reel, named after the file;
   a file never named in the root (dropped into a folder) goes to a free reel after 3 s. The FAT and directory the
   computer writes are kept in RAM and read back as written, so its view holds until you eject.
@@ -509,7 +513,8 @@ What to expect:
 - **Speed:** one 64-byte packet each way per poll (2 kHz): about 128 KB/s, so a 3.3 s WAV copies in a few seconds.
 - **New files appear after you eject and plug back in.** The drive doesn't tell the computer its contents changed.
 - **Deleting a file in Finder or Explorer doesn't delete the sound.** Clear it on the FM-1 (POLY held).
-- **A WAV longer than 3.3 s is cut to 3.3 s; stereo is mixed to mono.** That's the tape's size and format.
+- **A WAV is kept as long as free memory allows (21.5 s at most as a user reel); stereo is mixed to mono.** That's
+  the tape's format. (It was cut to 3.3 s until "Memory by usage".)
 - **Saving a user reel stutters the sound for about a second** (the flash turns interrupts off while it writes),
   and the screen says SAVING.
 - **What can still go wrong:** a WAV scattered across an old, full volume whose FAT is written after its data can
@@ -655,75 +660,161 @@ the SPACE delay can stay 16-bit; storing it in 8 bits (32 KB back) stays in rese
 **Tests:** the canvas clips at its edges, keeps 2 bits a dot and reaches the screen as 2 x 2 pixel dots in the
 right colours; the calibration, boot, update and crash screens are in the golden set.
 
-## GRAIN, as built (2026-10-08)
+## GRAIN, as built (2026-10-08, the live buffer)
 
-GRAIN is the first device after the source to make sound (`grain.c`).
+GRAIN is the first device after the source to make sound (`grain.c`). It's the S-4's MOSAIC: grains of a live buffer
+of what the source plays.
 
-**What it granulates: the track's tape**, inside TAPE's loop window (STRT, LEN). That's what its picture already
-drew, and what `controls.tsv` planned for the white keys on its page. I chose the tape over a live buffer of the
-source's output for memory: a live buffer is 22-33 KB a track at 22.05 kHz, and the tape is already there. It also
-means a SYNTH or POLY track granulates what you've printed onto its tape, under the live synth (WET blends them).
+**The buffer.** My first GRAIN read the track's tape, to save the 22-33 KB a live buffer costs a track. That made
+SYNTH and POLY second-class: you had to print them onto the tape before GRAIN could touch them, and there was no
+time-stretch of what you'd just played. With the shared memory ("Memory by usage") a buffer only costs anything
+while GRAIN is on, so now it keeps the last few bars of the source: the tape as it plays, or the synth as you play
+it. It's in the tape's own format, so grains read it the same way, and it's in whole bars:
 
-**The cursor** is where grains start. It moves through the loop window at WARP's speed (100 %: the tape's own pace;
-0: still; below 0: backwards) while the transport plays or a key holds a slice, and wraps at the window's ends. On a
-TAPE track with the GRAIN page up, a white key moves the cursor to its slice and leaves the tape's head alone;
-stopped, grains play while the key is held. The 0 black key held freezes every track's cursor (PRD 2.3), and the
-GRAIN page tags it FROZEN.
+| TRACKS | Bars | At 120 BPM |
+| --- | --- | --- |
+| 3 or 4 | 1 | 2 s, 11 chunks |
+| 2 | 2 | 4 s, 22 chunks |
+| 1 | 4 | 8 s, 44 chunks |
+
+Never past 12 s, so a slow tempo halves the bars until it fits (4 bars at 40 BPM would be 24 s: it holds 2). The
+write head starts on the bar line when the transport starts and wraps at the buffer's end, so the buffer is always
+whole bars. It records while the transport plays, and always on a SYNTH or POLY track, because you play those without
+the transport. A buffer is sized while GRAIN is on (WET above 0) and SCAN reads it; WET 0, SCAN TAPE or a parked
+track gives the chunks back. When nothing is free it takes them from the end of the longest tape, like any device
+switched on.
+
+**FDBK** (the S-4's FEEDBACK) is how much of the buffer stays as new sound goes in: 0 keeps only the last bars, 100
+layers forever. That's also what makes switching the source smooth: the old sound stays in the buffer until the write
+head passes, then fades at FDBK each pass, so TAPE to SYNTH crossfades in the grains over a bar instead of cutting.
+
+**Freeze** (the 0 black key, held) stops every buffer recording and holds its bars, and the grains go on playing
+them: a loop locked to the tempo. Change the tempo while frozen and the loop's pace follows. It's a transition tool:
+freeze, switch the source or mute, let go to carry on.
+
+**SCAN** (page 4) picks what grains read and where they start, the cursor:
+
+| SCAN | Reads | The cursor |
+| --- | --- | --- |
+| TAPE | the track's tape, inside TAPE's loop window (no buffer, no memory) | moves at WARP's speed (100 %: the tape's pace); frozen, it stops |
+| STR | the buffer | moves at WARP's speed against the write head's: 100 keeps a fixed distance, lower falls behind and stretches time |
+| POS | the buffer | stays at OFST of it (0: the bar line) |
+| DLY | the buffer | trails the write head by OFST of the buffer: grains of what played that long ago |
+
+STR is the default. On the GRAIN page the white keys move the cursor to their sixteenth (of the tape's loop, or of
+the buffer, where a bar's sixteenths are its sixteenth notes); in POS and DLY a key sets the spot or the trail until
+OFST is turned again.
 
 **A grain** starts around the cursor (SPRY: up to half the window either way), lasts SIZE, and reads at PTCH plus a
 random +-PRND semitones, held to SCAL's scale. REV is the share that plays backwards. CONT shapes the window, from
 square with 2 ms ends to a full Hann. SPRD places it in the stereo field, and its level is 1 / sqrt(the expected
-overlap). RATE (1..80 a second, square law) and PATN (EVEN, SWNG, CLST, RND) time the starts.
+overlap). RATE (1..80 a second, square law) and PATN (EVEN, SWNG, CLST, RND) time the starts. Grains start while the
+transport plays, on a SYNTH or POLY track, while frozen, or while a white key is held on the GRAIN page.
 
-**WET starts at 0**, so a track sounds as before until you turn it up. A non-zero default would put grains of the
-factory reel under every SYNTH and POLY track.
+**WET starts at 0**, so a track sounds as before, and takes no memory, until you turn it up.
 
 **From GRAIN on, the track is stereo** (SPRD needs it). `track_rt[].last`, what the other tracks' REC hears, stays
 mono (the two sides' average).
 
 **Reading without a copy.** Each grain decodes the ADPCM itself into a 128-sample window, starting from the stored
-decoder state of the window's block. A forward grain slides its window and decodes each tape sample once. A
-backward grain re-decodes from its block's start at each refill, which is why the window is 128 samples rather
-than 64: half as many refills. 32 grains in all take 9.6 KB of the pool (it now holds about 231.8 KB of 336).
+decoder state of the window's block. A forward grain slides its window and decodes each sample once; a backward one
+re-decodes from its block's start at each refill, which is why the window is 128 samples rather than 64.
+
+**32 grains in all, shared by TRACKS.** They're four groups of 8; each track has its own, and a parked track's group
+goes to a track still on, so with 1 or 2 tracks a track sounds up to 16 at once (TRACKS 3: 16, 8, 8). The total never
+passes 32, so the worst case costs what four tracks of 8 did. I started at 16 a track, halved it to 8 when four tracks
+shared the CPU, and this gives the 16 back when fewer do. Shedding lowers every track's allowance, two of each 8 at a
+time down to half; a second without shedding gives one back. A grain due while all its track's allowed grains sound is
+skipped, not stolen, so nothing cuts off mid-grain.
 
 **Cost, measured** (instructions per output sample for the whole chain, four tracks, the host's 64-bit build under
 callgrind; a ballpark for the FM-1, not its cycles):
 
 | All four tracks | Per sample |
 | --- | ---: |
-| GRAIN off (tapes only) | 823 |
-| WET 100 at the defaults (about 2 grains sounding a track) | 1,149 |
-| WET 100, RATE 100, SIZE 500: 8 grains a track, the cap | 2,820 |
-| the same, every grain backwards | 3,521 |
+| GRAIN off (tapes only) | 856 |
+| WET 100 at the defaults: about 2 grains a track, each buffer recording | 1,528 |
+| WET 100, RATE 100, SIZE 500: 8 grains a track, the cap | 3,238 |
+| the same, every grain backwards | 3,961 |
+| the same with SCAN TAPE (no buffer to record) | 2,869 |
+| TRACKS 2: two tracks of 16 grains | 2,598 |
 
-The first version cost 9,760 with a cap of 16. A forward grain re-decoded its whole block every time it left its window,
-and the window's shape was a table read per sample. Now the window slides forward, the envelope is taken once a
-block and ramped, and the grain's state sits in locals for the block. The rest is the decoding itself: 32 grains read
-16 tape samples per output sample between them.
+Recording a buffer costs about 100 a track: each tape sample is decoded, mixed with FDBK and encoded again. The
+first GRAIN cost 9,760 at a cap of 16. A forward grain re-decoded its whole block every time it left its window, and
+the window's shape was a table read per sample. Now the window slides forward, the envelope is taken once a block
+and ramped, and the grain's state sits in locals for the block. Whether the cap holds on the FM-1 needs the
+hardware: the table above is the case where it matters.
 
-**Eight a track, not sixteen.** I started at 16 and halved it. Past about eight overlapping grains the texture
-doesn't change much: the 1 / sqrt(overlap) level keeps it at the same loudness and it just smears. Halving cost and
-memory buys room for RESONATOR, COLOR and SPACE, and eight grains are few enough to draw one by one.
+**The picture shows grains, not the sample.** Across is where a grain reads; up and down is its pitch, with the
+sound's own pitch dotted through the middle and two octaves to each edge, so PTCH, PRND and SCAL move grains up and
+down. A grain shows up only while it sounds. It covers what it reads, so a grain slowed down by PTCH is narrower and
+a sped-up one wider. Its height is its window (CONT) swelled by the level there, the played part is solid and the
+rest dim, and its playhead is an arrow pointing the way it runs (REV: right to left). With nothing sounding, a dim
+outline of one grain from the knobs sits at the cursor.
 
-**Shedding** takes grains first: two off the cap for every track (down to 4), one back after a second without
-shedding. A grain due while all the allowed ones sound is skipped, not stolen, so nothing cuts off mid-grain. Whether
-8 a track holds on the FM-1 needs the hardware: the table above is the case where it matters.
+- With the buffer (STR, POS, DLY) the field is the whole buffer, a measure or a few: the bar lines dotted, the beats
+  ticked, the write head a solid line while it records (gone while frozen), the cursor the triangle on top, and the
+  sound's level along the bottom. At WET 0 it shows the bars it will hold, empty.
+- With SCAN TAPE the field is the stretch of the tape the grains can reach, zoomed around the cursor (SPRY's scatter
+  plus a few grains' length, never less than 256 samples), SPRY's reach dotted under it. My first picture drew the
+  whole loop window, and at that scale an 80 ms grain was a dot or two wide.
 
-**The picture shows grains, not the sample.** My first picture drew the whole loop window with every grain on it,
-and at the scale of a whole reel an 80 ms grain is a dot or two wide. Now the field is the stretch the grains can
-reach, zoomed around the cursor (the triangle at the top): SPRY's scatter either way plus a few grains' length,
-never less than 256 tape samples. SPRY's reach is dotted under it. Across is where a grain reads; up and down is its
-pitch, with the tape's own pitch dotted through the middle and two octaves to each edge, so PTCH, PRND and SCAL move
-grains up and down. A grain shows up only while it sounds. It covers the tape it reads, so a grain slowed down by
-PTCH is narrower and a sped-up one wider. Its height is its window (CONT) swelled by the sample's level, the played
-part is solid and the rest is dim, and its playhead is an arrow pointing the way it runs (REV: right to left). With
-nothing sounding (stopped, or WET 0), a dim outline of one grain from the knobs sits at the cursor, so turning SIZE,
-PTCH or CONT still shows something.
-
-**Tests** (`test_grain`): a grain's decoder against the tape's reader, both ways, over block boundaries; one grain's
+**Tests** (`test_grain`, `test_grain_buffer`): a grain's decoder against the tape's reader, both ways; one grain's
 output sample for sample; pitch inside a grain (440.2 Hz at PTCH 0, 880.2 at +12, 440.2 backwards); WET 0 changes
-nothing; no grains while stopped; SPRD 0 centred, 100 spread; the cap and shedding; WARP 100, -100 and 0; the 0 key's
-freeze; SCAL MAJ with PRND 12; the GRAIN page's keys; an empty tape.
+nothing; SPRD 0 centred, 100 spread; the cap and shedding; WARP; SCAL MAJ with PRND 12; the GRAIN page's keys; an
+empty tape. The buffer: its bars by TRACKS and tempo (and the 12 s limit), none at WET 0 or SCAN TAPE, the write head
+on the bar line, the beat recorded; switching TAPE to SYNTH carries the beat until the write head passes; FDBK 50
+halves it a pass; freeze holds the buffer while grains loop it, and the loop's pace follows the tempo; POS and DLY
+cursors, a key's spot and OFST taking over again; SYNTH played with the transport stopped, recorded and granulated;
+16 grains with TRACKS 2, 16-8-8 with 3; a buffer taking from the longest tape when nothing is free.
+
+## Memory by usage, TRACKS and REC IN (2026-10-08)
+
+Until now every track had a 36 KB tape whether it used it or not, and the plan reserved a delay and a reverb per
+track the same way. That's 4 × 3.3 s of tape however you play, with a third of the RAM sitting idle on tracks doing
+nothing. Now there's one pool and each track takes what it uses (`mem.c`).
+
+**Chunks.** The pool is 152 chunks of 16 tape blocks (4,096 samples, 186 ms each): 128 in the pool region and 24 in
+main RAM's spare room, 28.2 s of tape-format sound in all. A tape is a list of chunks, and a reader looks a block up
+through the list (one more load per block decode). The main loop hands chunks out and takes them back; the audio ISR
+only reads the lists. Taking a chunk away shortens the list first, then frees it, and that's safe to reuse at once:
+the main loop never runs inside the audio ISR, so a block being rendered finishes before the next step, and every
+later block sees the shorter list. Nothing in the ISR holds a pointer into a chunk from one block to the next.
+
+**Tapes grow as they record.** REC on a blank tape starts the head at the loop's start when the transport plays; the
+tape grows behind it, the main loop keeping a chunk ready ahead (`tape_poll`). Letting go of REC sets the loop's
+length. A reel copied in takes exactly the chunks it needs. A track that never records holds nothing.
+
+**When nothing is free**, chunks come off the end of a tape, in this order: a cleared tape (its undo goes), a parked
+track's tape (the longest), then the longest tape of all, never the one asking and never one that's growing. A WAV
+arriving over USB only takes free chunks, cleared and parked tapes, never a tape in use; what doesn't fit is cut and
+the message says so. When there's nothing left to take, a growing tape stops and loops what it has.
+
+**TRACKS** (SELECT on the mixer, 1-4) says how many tracks are in use. The ones above it park: they fade out in 2 ms
+and stop rendering, REC on them lets go, the focus and GLO's track keys stay below it. Nothing is erased: a parked
+tape is just the first taken when memory runs short, and raising TRACKS brings back what's still there. Fewer
+tracks also means more for the ones left: GRAIN's buffer holds more bars and a track sounds more grains. The mixer's
+levels page shows it all under the faders: each track's seconds of tape (and GRAIN buffer), OFF for a parked one,
+the memory as one ribbon (tapes solid, buffers dim, free dotted), TRACKS and the time still free. EDIT held still
+gives the channel.
+
+**REC IN** (ALGORITHM): what each track's REC records, KNOB 1-4 a track each, ALGORITHM turned again the focused
+track's. AUTO is what REC always did: the others' mix on a TAPE track, its own source on a SYNTH or POLY track. OTHR
+is the others' mix whatever the source; T1-T4 one track, after its devices; a track's own number reads SELF and
+records it back onto itself, DUB setting how much of the last pass stays. So T1 into T2 into T3 into T4 is three
+knob turns, and every bounce can add its own effects. The picture draws the routes you've set as lines between the
+tracks (solid while that REC is armed) and names the defaults, with the routing of the last-turned track in words.
+
+**Reels across slots.** The six user reel slots are 40 KiB each. A sound up to 3.3 s fits one, laid out exactly as
+reels always were (so old reels still read). A longer one runs into the slots after it, its data in one piece, up to
+21.5 s across all six; its header says how many it spans. The slots it covers read as empty but aren't free.
+
+**Tests** (`test_memory`): a blank tape grows while REC records it and stops at its length, looping what it recorded;
+stealing takes a cleared tape first, then a parked track's, then the longest, never from a tape in use for an import;
+a tape that can't grow loops what it has, and REC with nothing anywhere is refused; a 700-block reel spans three
+slots and plays from flash, a one-slot reel keeps the old layout, a save into a covered slot breaks the long reel; a
+10 s WAV lands whole on a tape, a 6 s one as a reel across two slots, and one with no memory at all is refused; TRACKS
+parks and brings back a track; REC IN T1 records track 1 alone, and a SYNTH track on OTHR records the others.
 
 ## Build order
 
@@ -734,10 +825,11 @@ Each phase ends in something you can flash and hear or see, and each is its own 
 | 1. Skeleton (**done**, host-verified) | `bryo.c` boots on the kept hardware layer; the old app code is removed; silence plus a test tone; the header and an empty strip; install, UBOOT and calibration still work | it installs from the web installer and returns to stock |
 | 2. TAPE + reels (**done**, host-verified; see "Phase 2, as built") | tapes play factory reels; the loop window, speed, reverse, half speed, FADE; slices on the white keys; REC and overdub (resampling the other tracks); clear and undo | you can load, slice, record and overdub a loop |
 | 3. USB audio in + SYNTH + POLY (SYNTH, POLY and source_t **done**, host-verified; see "SYNTH, as built" and "POLY, as built") | the source_t interface; the UAC OUT endpoint, drift handling, INPUT = USB; the SYNTH source; the POLY source (voices with their own envelope and filter, three HOME pages) | you can record your computer, and play the synth and samples onto a tape |
-| 3b. GRAIN (**done**, host-verified; see "GRAIN, as built") | the scheduler, the sounding cap, FREEZE (key 0) | grains run on 4 tracks inside the budget |
+| 3b. GRAIN (**done**, host-verified; see "GRAIN, as built") | the scheduler, the sounding cap, FREEZE (key 0); the live buffer, SCAN, FDBK | grains run on 4 tracks inside the budget |
+| 3c. Memory by usage (**done**, host-verified; see "Memory by usage, TRACKS and REC IN") | the shared chunks, growing tapes, TRACKS, REC IN, long reels | memory follows what you use |
 | 4. RESONATOR | strings, chromatic keys, OCT shifts | tuned feedback chords from the keys |
 | 5. COLOR + SPACE | drive, crush, noise; delay and reverb | the full chain on 4 tracks inside the budget |
-| 6. Mixer + routing | GLO mixer, filters, compressor; ALGORITHM routes track to tape | track-to-tape overdub between tracks |
+| 6. Mixer + routing (routing **done** early: REC IN) | GLO mixer, filters, compressor | the mixer's DSP |
 | 7. Modulation | the 4 engines, hold-and-turn depth, assigning engines, p-locks | the PRD's §4 workflow end to end |
 | 8. Projects | save and recall with reels; user reel slots in flash and the upload tool; quick SAVE; undo for MONO and POLY | a power cycle brings a session back |
 | 9. Screen (mostly done early: the dot-grid screens) | the modulation arcs on the pictograms, the motion dots, the summed white dot | the PRD's §5 |

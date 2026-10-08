@@ -354,7 +354,9 @@ static void test_input(void)
     press(B_EDIT);
     press(B_EDIT);
     press(B_EDIT);
-    check("EDIT again, past GRAIN's pages 2 and 3: RESONATOR", ui.dev == DEV_RESO);
+    check("EDIT again: GRAIN 4 (SCAN OFST FDBK)", ui.dev == DEV_GRAIN && ui.page == 3u);
+    press(B_EDIT);
+    check("EDIT again, past GRAIN's pages 2 to 4: RESONATOR", ui.dev == DEV_RESO);
     press(B_EDIT);
     press(B_EDIT);
     check("EDIT again, past RESONATOR's page 2: GRAIN", ui.dev == DEV_GRAIN && ui.page == 0u);
@@ -393,6 +395,9 @@ static void test_input(void)
     press(B_EDIT);
     check("..again: GRAIN's page 3 (WARP PATN SCAL PRND)", ui.dev == DEV_GRAIN && ui.page == 2u &&
           !strcmp(dev_p(0, DEV_GRAIN)[8].label, "WARP"));
+    press(B_EDIT);
+    check("..again: GRAIN's page 4 (SCAN OFST FDBK)", ui.dev == DEV_GRAIN && ui.page == 3u &&
+          !strcmp(dev_p(0, DEV_GRAIN)[12].label, "SCAN"));
     press(B_EDIT);
     check("..again: RESONATOR", ui.dev == DEV_RESO && ui.page == 0u);
     press(B_EDIT);
@@ -553,8 +558,10 @@ static void test_settings(void)
 /* -------------------------------------------------------------- screens --- */
 static const char *out_dir;
 static void shot_screen(const char *pal, const char *name);
+static void chain_poll(void);
 static void shot(const char *pal, const char *name)
 {
+    chain_poll();                                        /* (the main loop's bookkeeping, as every frame) */
     ui.force = 1;
     ui_draw();
     shot_screen(pal, name);
@@ -676,17 +683,39 @@ static void screens_in(const char *pal)
     turn(2, 2);
     turn(3, 5);
     shot(pal, "grain3");
-    {   /* the 0 black key held while playing: the cursors frozen */
-        uint32_t u;
+    {   /* playing a bar into the buffer, then the 0 black key held: the buffer frozen, the grains looping it */
+        uint32_t u, z = 0;
         for (u = 0; u < 27u; u++)
             if (KEY_BLACK[u] == BK_ZERO)
-                fm1_in.notes = 1u << u;
+                z = 1u << u;
         sys.playing = 1;
+        for (u = 0; u < 1378u * 3u; u++) {
+            render(1, 0);
+            chain_poll();
+        }
+        shot(pal, "grain_playing");
+        fm1_in.notes = z;
         render(40, 0);
         shot(pal, "grain_frozen");
         fm1_in.notes = 0;
+        press(B_EDIT);                                   /* GRAIN 4: SCAN DLY, OFST 50, FDBK 30 */
+        turn(0, 2);
+        turn(1, 25);
+        turn(2, 30);
+        render(400, 0);
+        shot(pal, "grain4");
+        turn(0, -3);                                     /* SCAN TAPE: grains of the tape, its field zoomed */
+        render(400, 0);
+        shot(pal, "grain_tape");
+        turn(0, 1);
+        turn(1, -25);
+        turn(2, -30);
         sys.playing = 0;
         render(400, 0);
+        press(B_EDIT);                                   /* (round to GRAIN's page 1 for RESONATOR below) */
+        press(B_EDIT);
+        press(B_EDIT);
+        press(B_EDIT);
     }
     press(B_EDIT);
     shot(pal, "resonator");
@@ -1258,7 +1287,7 @@ static uint32_t syn_sounding(uint32_t t)
 static void test_synth(void)
 {
     enum { NB = 690 };                                   /* 0.5 s */
-    static int32_t s[NB * CTL];
+    static int32_t s[2 * NB * CTL];                      /* (some checks render two of them) */
     int16_t *p;
     char b[120];
     double hz, br_open, br_shut;
@@ -1513,7 +1542,7 @@ static double pol_note(uint32_t k, int32_t *s, uint32_t nb)
 static void test_poly(void)
 {
     enum { NB = 690 };                                   /* 0.5 s */
-    static int32_t s[NB * CTL];
+    static int32_t s[2 * NB * CTL];                      /* (some checks render two of them) */
     int16_t *p;
     char b[120];
     double h0, h7, h12;
@@ -1637,7 +1666,7 @@ static uint32_t zero_key_bit(void)
 static void test_grain(void)
 {
     enum { NB = 690 };                                   /* 0.5 s */
-    static int32_t s[NB * CTL];
+    static int32_t s[2 * NB * CTL];                      /* (some checks render two of them) */
     int16_t *p;
     char b[120];
     uint32_t i, t, ok, maxc = 0;
@@ -1646,6 +1675,7 @@ static void test_grain(void)
     make_sine_reel(0, 440.0, 200);                       /* user reel 1: 2.3 s of A4 (440 Hz) */
     tp[0].dev[DEV_SRC][TK_REEL] = (int16_t)(NREEL + 1u);
     p = tp[0].dev[DEV_GRAIN];
+    p[GP_SCAN] = SCAN_TAPE;                              /* (these read the tape: the buffer is test_grain_buffer's) */
     {   /* a grain's own decoder against the tape's block reader, both ways */
         tape_view_t v;
         tape_rd_t rd = {0};
@@ -1680,14 +1710,14 @@ static void test_grain(void)
         p[1] = 0;                                        /* (one grain at a time, 500 ms, from the cursor) */
         p[0] = 500;
         p[5] = 0;
-        grain[0].used = 0;
+        grain_kill(0);
         grain[0].wait = 0;
         grain[0].cur = 0;
         sys.playing = 1;
         tape_view(0, &v);
         grain_block(0, dry, 0, 0, gl, gr, CTL);
         for (blk = 0; blk < 600u; blk++) {
-            grain_t g = grain[0].g[0];
+            grain_t g = gslot[0];
             grain_block(0, dry, 0, 0, gl, gr, CTL);
             int32_t m = (int32_t)(g.left < CTL ? g.left : CTL), e0 = gr_env(&g, g.len - g.left);
             int32_t e1 = gr_env(&g, g.len - g.left + (uint32_t)m);
@@ -1801,9 +1831,9 @@ static void test_grain(void)
     for (i = 0, ok = 1; i < NB; i++) {
         uint32_t j;
         render(1, 0);
-        for (j = 0; j < GR_CAP; j++)
-            if ((grain[0].used >> j) & 1u) {
-                int32_t st = grain[0].g[j].st16;
+        for (j = 0; j < GR_SLOTS; j++)
+            if (((gr_used >> j) & 1u) && gslot[j].trk == 0) {
+                int32_t st = gslot[j].st16;
                 ok &= st % 16 == 0 && ((0xAB5u >> (uint32_t)(((st / 16) % 12 + 12) % 12)) & 1u) && abs(st) <= 12 * 16;
             }
     }
@@ -1844,6 +1874,240 @@ static void test_grain(void)
     render(NB, 0);
     memset(host_nor, 0xFF, sizeof host_nor);
     uslot_names();
+}
+
+/* blocks of audio with the main loop's bookkeeping between them (as main.c runs it) */
+static void render_poll(uint32_t blocks)
+{
+    uint32_t b;
+    for (b = 0; b < blocks; b++) {
+        render(1, 0);
+        chain_poll();
+    }
+}
+
+/* track t's tape holds n chunks of tone (a take: its length n chunks) */
+static void fill_tape(uint32_t t, uint32_t n)
+{
+    uint32_t b;
+    tape_free(t);
+    tape_reserve(t, n, 1);
+    for (b = 0; b < (uint32_t)tape_ctl[t].nch * MEM_CB; b++)
+        tape_chunk(t, b)->peak[b % MEM_CB] = 100;
+    tape_ctl[t].nblk = (uint16_t)(tape_ctl[t].nch * MEM_CB);
+    tape_ctl[t].empty = 0;
+    tp[t].dev[DEV_SRC][TK_REEL] = 0;
+}
+
+/* GRAIN's live buffer: its bars, what it records, freeze, SCAN */
+static uint32_t buf_sum(uint32_t t)                      /* a fingerprint of a buffer's data */
+{
+    uint32_t c, b, h = 0;
+    for (c = 0; c < gbuf[t].nch; c++)
+        for (b = 0; b < MEM_CB; b++)
+            h = h * 31u + mem_at(gbuf[t].map[c])->data[b][7] + mem_at(gbuf[t].map[c])->peak[b];
+    return h;
+}
+static uint32_t buf_loud(uint32_t t, uint32_t from, uint32_t to)   /* blocks of buffer t in [from, to) above a whisper */
+{
+    tape_view_t v;
+    uint32_t b, n = 0;
+    gr_buf_view(t, &v);
+    for (b = from; b < to && b < v.len / TAPE_BLK; b++)
+        n += tv_peak(&v, b) > 20u;
+    return n;
+}
+
+static void test_grain_buffer(void)
+{
+    char b[120];
+    int16_t *p;
+    uint32_t t, i, nb;
+    int32_t c0;
+    power_on();
+    p = tp[0].dev[DEV_GRAIN];
+    for (t = 1; t < NTRK; t++)
+        track[t].mute = 1;
+    chain_poll();
+    check("GRAIN at WET 0: no buffer, no memory taken", !gbuf[0].nch && !mem_count(MEM_GRAIN));
+    p[GP_WET] = 100;
+    chain_poll();
+    check("WET up (SCAN STR, the default): a buffer of 1 bar at 120 BPM with 4 tracks (2 s, 11 chunks)",
+          p[GP_SCAN] == SCAN_STR && gbuf[0].len == 44100u && gbuf[0].nch == 11 && gbuf[0].bars == 1 &&
+          mem_count(MEM_GRAIN) == 11);
+    chain_tracks(2);
+    chain_poll();
+    check("TRACKS 2: 2 bars (4 s)", gbuf[0].len == 88200u && gbuf[0].bars == 2);
+    chain_tracks(1);
+    chain_poll();
+    check("TRACKS 1: 4 bars (8 s)", gbuf[0].len == 176400u && gbuf[0].bars == 4 && gbuf[0].nch == 44);
+    sys.bpm = 40;
+    chain_poll();
+    snprintf(b, sizeof b, "..at 40 BPM 4 bars would pass 12 s: 2 bars (%u samples, %u chunks)", (unsigned)gbuf[0].len,
+             (unsigned)gbuf[0].nch);
+    check(b, gbuf[0].bars == 2 && gbuf[0].len == 264600u && gbuf[0].nch == 65);
+    sys.bpm = 120;
+    chain_tracks(4);
+    chain_poll();
+    check("..back to TRACKS 4, 120 BPM: 1 bar, the rest given back", gbuf[0].nch == 11 && mem_count(MEM_GRAIN) == 11);
+    p[GP_SCAN] = SCAN_TAPE;
+    chain_poll();
+    check("SCAN TAPE: no buffer (grains read the tape)", !gbuf[0].nch && !mem_count(MEM_GRAIN));
+    p[GP_SCAN] = SCAN_STR;
+    chain_poll();
+
+    sys.playing = 1;                                     /* track 1 plays the beat into its buffer */
+    render_poll(1);
+    check("PLAY: the write head starts at the bar line", gbuf[0].w <= CTL / 2);
+    render_poll(1377);
+    snprintf(b, sizeof b, "..1 s on: the write head half a bar on (%d of 44,100), the buffer holds the beat",
+             (int)gbuf[0].w);
+    check(b, abs(gbuf[0].w - 22050) < CTL && buf_loud(0, 0, 86) > 40u);
+    render_poll(1378 * 3);
+    check("..WET 100, SCAN STR: grains sound", grain_count(0) > 0);
+
+    tp[0].src = SRC_SYNTH;                               /* the carry-over: TAPE -> SYNTH (silent), FDBK 0 */
+    render_poll(10);
+    nb = buf_loud(0, (uint32_t)gbuf[0].w / TAPE_BLK + 4u, 172u);
+    snprintf(b, sizeof b, "switched to SYNTH: the beat is still in the buffer ahead of the write head (%u blocks)", nb);
+    check(b, nb > 10u);
+    render_poll(1378 * 2 + 50);
+    check("..a bar later (FDBK 0): all of it the new (silent) source", buf_loud(0, 0, 172) == 0);
+
+    tp[0].src = SRC_TAPE;                                /* FDBK 50: half the old stays each pass */
+    render_poll(1378 * 2 + 50);
+    {
+        uint32_t full = buf_loud(0, 0, 172), half;
+        tape_view_t v;
+        uint32_t s0 = 0, s1 = 0, k;
+        gr_buf_view(0, &v);
+        for (k = 0; k < 172; k++)
+            s0 += tv_peak(&v, k);
+        p[GP_FDBK] = 50;
+        tp[0].src = SRC_SYNTH;
+        render_poll(1378 * 2 + 50);
+        for (k = 0; k < 172; k++)
+            s1 += tv_peak(&v, k);
+        half = s1 * 100u / (s0 ? s0 : 1u);
+        snprintf(b, sizeof b, "FDBK 50: a bar of silence over the beat leaves it at half (%u%%)", half);
+        check(b, full > 40u && half >= 40u && half <= 60u);
+        p[GP_FDBK] = 0;
+    }
+
+    tp[0].src = SRC_TAPE;
+    render_poll(1378 * 2 + 50);
+    {   /* freeze: the buffer holds, the grains loop it */
+        uint32_t h0, w0;
+        fm1_in.notes = zero_key_bit();
+        render_poll(2);
+        h0 = buf_sum(0);
+        w0 = (uint32_t)gbuf[0].w;
+        c0 = grain[0].cur;
+        render_poll(1378);
+        check("the 0 key held: the buffer stops recording (its sound unchanged, the write head still)",
+              buf_sum(0) == h0 && (uint32_t)gbuf[0].w == w0);
+        check("..and the grains play on through it (the cursor moves, grains sound)", grain[0].cur != c0 &&
+              grain_count(0) > 0);
+        sys.bpm = 60;                                    /* half the tempo while frozen: the loop's pace halves */
+        chain_poll();
+        c0 = grain[0].cur;
+        render(100, 0);
+        {
+            int32_t d = ((grain[0].cur - c0) >> 12 + 0);
+            d = d < 0 ? d + (int32_t)gbuf[0].len : d;
+            snprintf(b, sizeof b, "..the tempo halved while frozen: the buffer keeps its size, the loop half the pace (%d)", (int)d);
+            check(b, gbuf[0].len == 44100u && abs(d - 100 * CTL / 4) < 4);
+        }
+        sys.bpm = 120;
+        fm1_in.notes = 0;
+        render_poll(20);
+        check("..let go: it records again", (uint32_t)gbuf[0].w != w0);
+    }
+
+    p[GP_SCAN] = SCAN_POS;                               /* POS: OFST 50 holds the cursor halfway */
+    p[GP_OFST] = 50;
+    render_poll(20);
+    check("SCAN POS, OFST 50: the cursor halfway through the buffer, still", (grain[0].cur >> 12) == 22050);
+    press(B_EDIT);
+    fm1_in.notes = note_bit_of_white(4);
+    render_poll(2);
+    check("..on the GRAIN page, white key 5: the cursor to the buffer's fifth sixteenth", (grain[0].cur >> 12) == 44100 * 4 / 16);
+    fm1_in.notes = 0;
+    p[GP_OFST] = 60;
+    render_poll(2);
+    check("..OFST turned again takes over", (grain[0].cur >> 12) == 44100 * 60 / 100);
+    press(B_HOME);
+    p[GP_SCAN] = SCAN_DLY;                               /* DLY: OFST 25 behind the write head */
+    p[GP_OFST] = 25;
+    render_poll(20);
+    {
+        int32_t lag = gbuf[0].w - (grain[0].cur >> 12);
+        lag = lag < 0 ? lag + (int32_t)gbuf[0].len : lag;
+        snprintf(b, sizeof b, "SCAN DLY, OFST 25: the cursor a quarter of the buffer behind the write head (%d)", (int)lag);
+        check(b, abs(lag - 44100 / 4) < CTL);
+    }
+    p[GP_SCAN] = SCAN_STR;
+
+    {   /* SYNTH played with the transport stopped: it goes into the buffer and the grains play it */
+        static int32_t o[400 * CTL];
+        sys.playing = 0;
+        render_poll(400);
+        tp[0].src = SRC_SYNTH;
+        p[GP_WET] = 100;
+        fm1_in.notes = note_bit_of_white(9);
+        render_poll(1378);
+        fm1_in.notes = 0;
+        check("SYNTH, stopped: what you play goes into the buffer", buf_loud(0, 0, 172) > 60u);
+        render(400, o);
+        check("..and grains of it sound after the note ends (no transport needed)", grain_count(0) > 0 &&
+              peak_of(o + 200 * CTL, 200 * CTL) > 500);
+        tp[0].src = SRC_TAPE;
+        sys.playing = 1;
+        render_poll(1378 * 2);
+    }
+
+    {   /* fewer tracks: a track sounds more grains; never more than 32 in all */
+        uint32_t mx = 0;
+        p[GP_RATE] = 100;
+        p[GP_SIZE] = 500;
+        render_poll(1378);
+        for (i = 0; i < 1378; i++) {
+            render_poll(1);
+            mx = grain_count(0) > mx ? grain_count(0) : mx;
+        }
+        check("4 tracks: track 1 sounds up to 8 grains", mx == 8u);
+        chain_tracks(2);
+        for (i = 0, mx = 0; i < 1378; i++) {
+            render_poll(1);
+            mx = grain_count(0) > mx ? grain_count(0) : mx;
+        }
+        snprintf(b, sizeof b, "TRACKS 2: track 1 up to 16 (%u), the slots of parked track 3's group with it", mx);
+        check(b, mx == 16u && gr_allow(0) == 16u && gr_allow(1) == 16u);
+        chain_tracks(3);
+        check("TRACKS 3: 16, 8, 8 (32 in all)", gr_allow(0) == 16u && gr_allow(1) == 8u && gr_allow(2) == 8u);
+        chain_tracks(4);
+        p[GP_RATE] = 40;
+        p[GP_SIZE] = 80;
+    }
+
+    {   /* nothing free: a buffer takes from the end of the longest tape */
+        sys.playing = 0;
+        render_poll(400);
+        p[GP_WET] = 0;
+        chain_poll();
+        fill_tape(2, 100);
+        fill_tape(3, 50);
+        while (mem_count(MEM_FREE))
+            mem_alloc(MEM_IMPORT);
+        p[GP_WET] = 100;
+        chain_poll();
+        check("no chunk free: GRAIN's buffer takes from the end of the longest tape (track 3's)",
+              gbuf[0].nch == 11 && tape_ctl[2].nch == 89 && tape_ctl[3].nch == 50);
+    }
+    sys.playing = 0;
+    for (t = 0; t < NTRK; t++)
+        track[t].mute = 0;
+    render_poll(400);
 }
 
 /* the tape's edges: an empty user reel, a loop shorter than a block, the seam running backwards */
@@ -2197,29 +2461,6 @@ static void test_canvas(void)
 }
 
 /* ------------------------------------------------------------- memory --- */
-/* blocks of audio with the main loop's bookkeeping between them (as main.c runs it) */
-static void render_poll(uint32_t blocks)
-{
-    uint32_t b;
-    for (b = 0; b < blocks; b++) {
-        render(1, 0);
-        chain_poll();
-    }
-}
-
-/* track t's tape holds n chunks of tone (a take: its length n chunks) */
-static void fill_tape(uint32_t t, uint32_t n)
-{
-    uint32_t b;
-    tape_free(t);
-    tape_reserve(t, n, 1);
-    for (b = 0; b < (uint32_t)tape_ctl[t].nch * MEM_CB; b++)
-        tape_chunk(t, b)->peak[b % MEM_CB] = 100;
-    tape_ctl[t].nblk = (uint16_t)(tape_ctl[t].nch * MEM_CB);
-    tape_ctl[t].empty = 0;
-    tp[t].dev[DEV_SRC][TK_REEL] = 0;
-}
-
 static void test_memory(void)
 {
     char b[120];
@@ -2526,6 +2767,7 @@ int main(int argc, char **argv)
     test_synth();
     test_poly();
     test_grain();
+    test_grain_buffer();
     test_input();
     test_settings();
     palette_set(UI_GREY_INDEX);                          /* (the screens are one ink now, whatever the palette) */

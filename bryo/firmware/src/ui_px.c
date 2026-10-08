@@ -276,7 +276,7 @@ enum {
     PK_SHAPE, PK_FOLD, PK_SKEW, PK_SMOOTH, PK_STEPS, PK_SLEW, PK_SWING, PK_KEYS, PK_SHELF_LO, PK_SHELF_HI, PK_FILTER,
     PK_PAN, PK_TOGGLE, PK_FADE, PK_WINDOW, PK_GATE, PK_PRE, PK_MODE, PK_DIR, PK_STEPAT, PK_NONE,
     PK_CURVE, PK_VAR, PK_SRC, PK_OSC, PK_DETUNE, PK_CUTOFF, PK_RES, PK_ENVAMT, PK_KTRK, PK_VOICES, PK_PATTERN,
-    PK_SCALE, PK_SLOPE, PK_CMOD
+    PK_SCALE, PK_SLOPE, PK_CMOD, PK_SCAN
 };
 
 /* the waveform shapes WAVE's SHAPE picks, at phase p (0..63 a cycle), x1000 */
@@ -747,6 +747,31 @@ static void px_picto(uint32_t kind, int32_t x, int32_t y, const pdesc_t *d, int3
         }
         break;
     }
+    case PK_SCAN:                                        /* GRAIN's SCAN: what grains read, and where */
+        if (v == 0) {                                    /* TAPE: the tape's two reels */
+            px_ring(x + 6, cy, 5, c, 1);
+            px_ring(x + 16, cy, 5, c, 1);
+            px_line(x + 6, cy + 5, x + 16, cy + 5, c, 1);
+            break;
+        }
+        px_frame(x, y + 5, 22, 11, m, 2);                /* the buffer */
+        if (v == 1) {                                    /* STR: stretched, an arrow both ways across it */
+            px_line(x + 3, cy, x + 18, cy, c, 1);
+            px_line(x + 3, cy, x + 6, cy - 3, c, 1);
+            px_line(x + 3, cy, x + 6, cy + 3, c, 1);
+            px_line(x + 18, cy, x + 15, cy - 3, c, 1);
+            px_line(x + 18, cy, x + 15, cy + 3, c, 1);
+        } else if (v == 2) {                             /* POS: a pin at a spot */
+            px_line(x + 8, y + 3, x + 8, y + 17, c, 1);
+            px_box(x + 6, y + 1, 5, 4, c);
+        } else {                                         /* DLY: the write head, and the read point trailing it */
+            px_line(x + 18, y + 3, x + 18, y + 17, c, 1);
+            px_line(x + 6, y + 5, x + 6, y + 15, c, 2);
+            px_line(x + 7, cy, x + 16, cy, c, 1);
+            px_line(x + 7, cy, x + 10, cy - 3, c, 1);
+            px_line(x + 7, cy, x + 10, cy + 3, c, 1);
+        }
+        break;
     case PK_STEPAT: {                                    /* 16 steps, the one it starts on solid */
         int32_t k;
         for (k = 0; k < 16; k++) {
@@ -911,7 +936,8 @@ static const uint8_t DEV_PK[NDEV][NPK] = {
      PK_SRC, PK_CLOCK, PK_NONE, PK_NONE},            /*       REEL ROTA */
     {PK_SQUARE, PK_DOTS, PK_KNOB, PK_BOWTIE,         /* GRAIN: SIZE RATE PTCH SPRD */
      PK_MIX, PK_NOISE, PK_WINDOW, PK_DOTS,           /*        WET SPRY CONT REV */
-     PK_SPEED, PK_PATTERN, PK_SCALE, PK_VAR},        /*        WARP PATN SCAL PRND */
+     PK_SPEED, PK_PATTERN, PK_SCALE, PK_VAR,         /*        WARP PATN SCAL PRND */
+     PK_SCAN, PK_START, PK_LOOP, PK_NONE},           /*        SCAN OFST FDBK */
     {PK_KEYS, PK_DECAY, PK_TONE, PK_MIX,             /* RESONATOR: PTCH DEC TONE WET */
      PK_CUTOFF, PK_RES, PK_SLOPE, PK_SCALE},         /*            CUT RES SLOP SCAL */
     {PK_DRIVE, PK_STAIRS, PK_NOISE, PK_TONE,         /* COLOR: DRIV CRSH NOIS TILT */

@@ -11,7 +11,7 @@
  *   POLY       per page: the sound with STRT and the keys' range, the envelope, the filter with its TYPE
  *   TAPE       the whole tape's sound, large, lit inside the loop window (STRT, LEN, bracketed) with its 16 slices
  *              ticked under it; the playhead over it (stopped: where playing starts, moved by ROTA)
- *   GRAIN      the grains as they sound: where each reads (across), its pitch (up), its stretch of the sample
+ *   GRAIN      the grains as they sound: where each reads (across), its pitch (up), its stretch of the sound
  *              under its window with the playhead running its way; the cursor and SPRY's reach; FROZEN
  *   RESONATOR  the response over 8 octaves: peaks on PTCH's partials (harmonics, or a scale's chord tones; a node on
  *              each, the root's filled and named), as sharp as DEC makes them, kept up top by TONE, shaped by the
@@ -173,49 +173,94 @@ static int32_t gr_wrap(int32_t d, int32_t ll)
 
 static void viz_grain(const int16_t *v, uint32_t f)
 {
-    /* A field of the grains as they sound, not the whole sample: the stretch of TAPE's loop window around the cursor
-     * (in the middle) that grains can reach, SPRY's scatter plus a few grains' length. Across: where a grain reads
-     * (SPRY's range dotted under the field); up and down: its pitch (PTCH and its
-     * PRND, the tape's own in the middle, +-2 octaves at the edges). A grain is drawn while it sounds: the stretch of
-     * the sample it reads (wider when it reads faster, narrower slowed down), its height its window (CONT) swelled by
-     * the sample's level there, played solid and still to play dim, its playhead an arrow the way it runs (REV: right
-     * to left). Nothing sounding (stopped, or WET 0): one grain's outline at the cursor, from the knobs. */
+    /* A field of the grains as they sound, not the whole sample. Across: where a grain reads; up and down: its pitch
+     * (PTCH and its PRND, the sound's own in the middle, +-2 octaves at the edges). A grain is drawn while it sounds:
+     * the stretch it reads (wider when it reads faster, narrower slowed down), its height its window (CONT) swelled
+     * by the level there, played solid and still to play dim, its playhead an arrow the way it runs (REV: right to
+     * left). Nothing sounding (stopped, or WET 0): one grain's outline at the cursor, from the knobs.
+     *   SCAN TAPE: the stretch of TAPE's loop window around the cursor (in the middle) that grains can reach, SPRY's
+     *              range dotted under it.
+     *   the buffer (STR POS DLY): all of it, its bars (the bar lines dotted, the beats ticked), the write head a
+     *              solid line while it records (gone while frozen), the cursor the triangle on top, the sound's
+     *              level along the bottom. WET 0: the bars it will hold, empty. */
     grain_trk_t *G = &grain[sys.sel];
+    gr_buf_t *B = &gbuf[sys.sel];
     tape_view_t tv;
-    int32_t ls, ll, i, k, x, cx = 60, yc0 = 19, n = 0, sp, reach, gspan, fw, cur;
+    uint32_t scan = (uint32_t)clamp(v[GP_SCAN], 0, 3), buf = scan != SCAN_TAPE;
+    int32_t ls, ll, i, k, x, cx, yc0 = buf ? 16 : 19, n = 0, sp, reach, gspan, fw, cur;
     char b[16];
-    tape_view(sys.sel, &tv);
-    if (!tv.len) {
-        px_text_c(0, 120, 16, PXF_3, "NOTHING ON THE TAPE", px_dim);
-        return;
+    if (buf) {
+        gr_buf_view(sys.sel, &tv);
+        ls = 0;
+        ll = (int32_t)tv.len;
+        if (!ll && v[GP_WET]) {                                        /* on, but nothing to hold it in */
+            px_text_c(0, 120, 12, PXF_3, "NO MEMORY FREE", px_dim);
+            px_text_c(0, 120, 20, PXF_3, "FOR THE BUFFER", px_dim);
+            goto labels;
+        }
+        if (!ll)                                                       /* WET 0: the bars it will hold, empty */
+            ll = (int32_t)(gr_bars() * (5292000u / (sys.bpm ? sys.bpm : 120u)));
+    } else {
+        tape_view(sys.sel, &tv);
+        if (!tv.len) {
+            px_text_c(0, 120, 16, PXF_3, "NOTHING ON THE TAPE", px_dim);
+            return;
+        }
+        tape_window(sys.sel, tv.len, &ls, &ll);
     }
-    tape_window(sys.sel, tv.len, &ls, &ll);
     cur = G->cur >> 12;
-    reach = ll * v[5] / 200;                                           /* SPRY: tape samples either way */
-    gspan = (int32_t)((uint32_t)gr_rate(v[2] * 16) * ((uint32_t)v[0] * 441u / 10u) >> 12);   /* a grain, read */
-    fw = clamp(2 * reach + 3 * gspan > 4 * gspan ? 2 * reach + 3 * gspan : 4 * gspan, 256, ll);   /* the field */
-#define GX(s) (cx + gr_wrap((s) - cur, ll) * DW / fw)                  /* a tape sample's column (cursor: 60) */
-#define GY(st16) (yc0 - (st16) * 14 / (24 * 16))                      /* a pitch's row */
-    sp = reach * DW / fw;                                              /* SPRY's reach, dots */
-    px_line(clamp(cx - sp, DX0, DX1), 36, clamp(cx + sp, DX0, DX1), 36, px_dim, 2);   /* where grains may start */
-    px_line(DX0, yc0, DX1, yc0, px_dim, 4);                            /* the tape's own pitch */
-    for (k = 0; k < (int32_t)GR_CAP; k++) {                            /* the grains sounding */
-        const grain_t *g = &G->g[k];
-        int32_t rate, span, p0, a0, b0, xa, xb, ph, yc, fr;
-        if (!((G->used >> k) & 1u) || !g->len)
+    reach = ll * v[GP_SPRY] / 200;                                     /* SPRY: samples either way */
+    gspan = (int32_t)((uint32_t)gr_rate(v[GP_PTCH] * 16) * ((uint32_t)v[GP_SIZE] * 441u / 10u) >> 12);   /* a grain, read */
+    if (buf) {                                                         /* the whole buffer, left to right */
+        fw = ll;
+        cx = DX0 + (int32_t)((uint32_t)(cur - ls) * (uint32_t)DW / (uint32_t)ll);
+    } else {                                                           /* the cursor's neighbourhood, centred */
+        fw = clamp(2 * reach + 3 * gspan > 4 * gspan ? 2 * reach + 3 * gspan : 4 * gspan, 256, ll);
+        cx = 60;
+    }
+#define GX(s) (buf ? DX0 + (int32_t)((uint32_t)((((s) - ls) % ll + ll) % ll) * (uint32_t)DW / (uint32_t)ll) \
+                   : cx + gr_wrap((s) - cur, ll) * DW / fw)            /* a sample's column */
+#define GY(st16) (yc0 - (st16) * (buf ? 11 : 14) / (24 * 16))        /* a pitch's row */
+    if (buf) {                                                         /* the bars and beats, the write head, the level */
+        uint32_t bars = tv.len && B->bars ? B->bars : gr_bars(), q;
+        for (q = 0; q <= bars * 4u; q++) {
+            int32_t xq = DX0 + (int32_t)(q * (uint32_t)DW / (bars * 4u));
+            if (q % 4u == 0u)
+                px_line(xq, 4, xq, 28, px_dim, 2);
+            else
+                px_dot(xq, 4, px_dim);
+        }
+        for (x = DX0; x <= DX1; x++) {                                 /* the level along the bottom: 3 dots at most */
+            uint32_t s0 = (uint32_t)(x - DX0) * (uint32_t)ll / (uint32_t)DW, bb = s0 / TAPE_BLK;
+            int32_t a = bb < tv.len / TAPE_BLK ? (int32_t)tv_peak(&tv, bb) * 4 / 256 : 0;
+            if (a)
+                px_box(x, 33 - a, 1, a, px_dim);
+        }
+        if (!grain_frozen && tv.len && (sys.playing || tp[sys.sel].src != SRC_TAPE)) {   /* (only while it records) */
+            int32_t xw = GX(B->w);
+            px_line(xw, 2, xw, 33, px_ink, 1);
+        }
+    } else {
+        sp = reach * DW / fw;                                          /* SPRY's reach, dots */
+        px_line(clamp(cx - sp, DX0, DX1), 36, clamp(cx + sp, DX0, DX1), 36, px_dim, 2);   /* where grains may start */
+    }
+    px_line(DX0, yc0, DX1, yc0, px_dim, 4);                            /* the sound's own pitch */
+    for (k = 0; k < (int32_t)GR_SLOTS; k++) {                          /* the grains sounding */
+        const grain_t *g = &gslot[k];
+        int32_t rate, span, p0, a0, xa, xb, ph, yc, fr;
+        if (!((gr_used >> k) & 1u) || g->trk != sys.sel || !g->len)
             continue;
         n++;
         rate = g->inc < 0 ? -g->inc : g->inc;
         span = (int32_t)((uint32_t)rate * g->len >> 12);
         p0 = (g->pos >> 12) - ((g->inc * (int32_t)(g->len - g->left)) >> 12);   /* (fits: |inc| < 2^15, len < 2^15) */
         a0 = g->rev ? p0 - span : p0;
-        b0 = a0 + span;
         xa = GX(a0);
-        xb = GX(b0);
+        xb = xa + span * DW / fw;
         if (xb <= xa)
             xb = xa + 1;
-        ph = GX(g->pos >> 12);
-        yc = clamp(GY(g->st16), 5, 33);
+        ph = xa + ((g->pos >> 12) - a0) * DW / fw;
+        yc = clamp(GY(g->st16), 5, buf ? 28 : 33);
         fr = (int32_t)(g->fade * 1000u / g->len);                     /* each ramp, of the grain (1/1000) */
         for (x = clamp(xa, DX0, DX1); x <= clamp(xb, DX0, DX1); x++) {
             int32_t at = (x - xa) * 1000 / (xb - xa), e = 32767, s = a0 + (x - xa) * span / (xb - xa), h;
@@ -225,7 +270,7 @@ static void viz_grain(const int16_t *v, uint32_t f)
                 e = GR_RAMP[at * 128 / (fr ? fr : 1)];
             else if (1000 - at < fr)
                 e = GR_RAMP[(1000 - at) * 128 / (fr ? fr : 1)];
-            h = (2 + clamp((int32_t)tv_peak(&tv, blk) * 3, 0, 255) * 5 / 255) * e / 32767;   /* (quiet stretches: still a shape) */
+            h = (2 + clamp((int32_t)tv_peak(&tv, blk) * 3, 0, 255) * (buf ? 3 : 5) / 255) * e / 32767;   /* (quiet stretches: still a shape) */
             px_box(x, yc - h, 1, 2 * h + 1, on ? px_ink : px_dim);
         }
         if (ph >= DX0 && ph <= DX1) {                                  /* the playhead, an arrow its way */
@@ -237,7 +282,8 @@ static void viz_grain(const int16_t *v, uint32_t f)
         }
     }
     if (!n) {                                                          /* nothing sounding: a grain from the knobs */
-        int32_t span = gspan, xa = cx, xb = GX(cur + span), yc = clamp(GY(v[2] * 16), 5, 33), fr = v[6] * 5, pyu = yc, pyd = yc;
+        int32_t span = gspan, xa = cx, xb = cx + span * DW / fw, yc = clamp(GY(v[GP_PTCH] * 16), 5, buf ? 28 : 33);
+        int32_t fr = v[GP_CONT] * 5, pyu = yc, pyd = yc, hm = buf ? 4 : 6;
         if (xb <= xa + 2)
             xb = xa + 3;
         for (x = xa; x <= xb && x <= DX1; x++) {
@@ -246,7 +292,7 @@ static void viz_grain(const int16_t *v, uint32_t f)
                 e = GR_RAMP[at * 128 / (fr ? fr : 1)];
             else if (1000 - at < fr)
                 e = GR_RAMP[(1000 - at) * 128 / (fr ? fr : 1)];
-            h = 6 * e / 32767;
+            h = hm * e / 32767;
             if (x > xa) {
                 px_line(x - 1, pyu, x, yc - h, px_dim, 1);
                 px_line(x - 1, pyd, x, yc + h, px_dim, 1);
@@ -254,7 +300,7 @@ static void viz_grain(const int16_t *v, uint32_t f)
             pyu = yc - h;
             pyd = yc + h;
         }
-        if (v[7]) {                                                    /* REV: some run backwards */
+        if (v[GP_REV]) {                                               /* REV: some run backwards */
             px_dot(xa - 1, yc - 1, px_dim);
             px_dot(xa - 1, yc + 1, px_dim);
             px_dot(xa - 2, yc, px_dim);
@@ -267,7 +313,8 @@ static void viz_grain(const int16_t *v, uint32_t f)
         px_tag(118 - px_text_w(PXF_3, "FROZEN") - 1, 0, PXF_3, "FROZEN", px_ink, px_bg);
 #undef GX
 #undef GY
-    if (!v[4])
+labels:
+    if (!v[GP_WET])
         str_cpy(b, "WET 0: OFF", sizeof b);
     else {
         fmt_int(b, n);
@@ -277,9 +324,17 @@ static void viz_grain(const int16_t *v, uint32_t f)
         px_tag(1, DLBL - 1, PXF_3, b, px_ink, px_bg);
     else
         px_text(2, DLBL, PXF_3, b, px_ink);
-    if (f >= 4u && f < 12u && f != 4u)
+    if (f >= 5u && f < 15u)
         vz_ktag(118, DLBL - 1, &DEV_P[DEV_GRAIN][f], v[f]);
-    else
+    else if (buf) {                                                    /* the buffer: its bars ("STR 2 BARS") */
+        char m[16];
+        str_cpy(m, N_SCAN[scan], sizeof m);
+        str_cpy(m + str_len(m), " ", 2);
+        uint32_t bars = tv.len && B->bars ? B->bars : gr_bars();
+        fmt_int(m + str_len(m), (int32_t)bars);
+        str_cpy(m + str_len(m), bars > 1u ? " BARS" : " BAR", 6);
+        px_text(118 - px_text_w(PXF_3, m), DLBL, PXF_3, m, px_dim);
+    } else
         px_text(118 - px_text_w(PXF_3, tape_name(sys.sel)), DLBL, PXF_3, tape_name(sys.sel), px_dim);   /* its source */
 }
 
@@ -1244,11 +1299,12 @@ static uint32_t viz_sig(void)
             h = (h ^ tape_ver[t]) * 16777619u;
     if (ui.kind == FOCUS_DEV && ui.dev == DEV_GRAIN) {                 /* GRAIN: its cursor, FROZEN, the grains */
         const grain_trk_t *G = &grain[sys.sel];
+        const gr_buf_t *B = &gbuf[sys.sel];
         h = (h ^ (uint32_t)((G->cur >> 12) / 256 * 2 + grain_frozen)) * 16777619u;
-        for (k = 0; k < GR_CAP; k++)
-            if ((G->used >> k) & 1u)
-                h = (h ^ (uint32_t)(G->g[k].pos >> 18) ^ k << 24) * 16777619u;
-        h = (h ^ G->used) * 16777619u;
+        h = (h ^ (uint32_t)(B->len + B->bars * 7u + (uint32_t)B->w / 1024u * 131u)) * 16777619u;
+        for (k = 0; k < GR_SLOTS; k++)
+            if (((gr_used >> k) & 1u) && gslot[k].trk == sys.sel)
+                h = (h ^ (uint32_t)(gslot[k].pos >> 18) ^ k << 24) * 16777619u;
     }
     if (ui.kind == FOCUS_DEV && ui.dev == DEV_GRAIN)                   /* GRAIN draws TAPE's loop window too */
         h = (h ^ (uint32_t)(tp[sys.sel].dev[DEV_SRC][0] << 8 | tp[sys.sel].dev[DEV_SRC][1])) * 16777619u;

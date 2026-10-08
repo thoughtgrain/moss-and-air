@@ -12,14 +12,17 @@ Felucca's own README is kept in [docs/FELUCCA-README.md](docs/FELUCCA-README.md)
 
 ## Where it stands
 
-**Phase 2 of 10: TAPE.** Each of the four tracks has a tape: a 3.3 s loop in RAM (IMA ADPCM at 22.05 kHz) that
-plays when you press PLAY. To start, track n plays factory reel n (BEAT, KEYS, AIR, PLUK, made from material in
+**Phase 2 of 10: TAPE.** Each of the four tracks has a tape: a loop in RAM (IMA ADPCM at 22.05 kHz) that plays when
+you press PLAY. The tracks share one memory (28 s in all) and each takes what it records: a blank tape grows while
+REC records it, and TRACKS (SELECT on the mixer) switches tracks off to give the rest more. To start, track n plays factory reel n (BEAT, KEYS, AIR, PLUK, made from material in
 this repository). The loop window, speed, reverse and half speed work; the white keys play 16 slices of the loop;
-REC records the other tracks onto the focused track's tape, with DUB for sound on sound; holding the POLY key clears
+REC records the other tracks onto the focused track's tape (or one chosen track, or itself: REC IN, turn ALGORITHM),
+with DUB for sound on sound; holding the POLY key clears
 a tape and holding SAVE undoes it. A track can also start with SYNTH or POLY instead (hold HOME, turn SELECT):
 SYNTH is a small subtractive synth, up to three voices; POLY plays any reel (or the track's own tape) across the
 keys, up to four notes, each with its own envelope and filter. REC prints either onto the track's tape. GRAIN
-makes sound now: turn its WET up and it granulates the track's tape (the 0 black key held freezes it). RESONATOR,
+makes sound now: turn its WET up and it keeps the last bars of the track's sound in a live buffer and granulates
+them, stretched, held at a spot or delayed (SCAN); the 0 black key held freezes the buffer into a loop. RESONATOR,
 COLOR, SPACE and the modulators don't make sound yet; that's phases 4 to 7. Their knobs already carry the Torso S-4's names where they do the same job
 ([docs/s4-alignment.md](docs/s4-alignment.md)). Phases 1 and 2 are verified on the host only: nothing has been built
 for or run on an FM-1 yet. The plan, with what the hardware allows and the order of the work, is in
@@ -67,7 +70,7 @@ settings from Felucca are kept and still apply; the menu to change them comes ba
 
 Plugged in, the FM-1 also shows up as a small drive named BRYO. Copy `TAPE1.WAV` .. `TAPE4.WAV` off to keep what
 each track plays; copy a WAV on to load it: named `TAPE2.WAV` it replaces track 2's tape, any other name goes to
-one of six user reels in flash (named after the file). Any WAV works (the FM-1 keeps the first 3.3 s, mono).
+one of six user reels in flash (named after the file). Any WAV works (mono; a tape keeps as much as free memory holds, a user reel up to 21.5 s).
 New files show up after you eject and plug back in; deleting a file on the computer doesn't delete the sound.
 The details, and why it works this way, are in [docs/bryo-architecture.md](docs/bryo-architecture.md) under
 "Files over USB".
