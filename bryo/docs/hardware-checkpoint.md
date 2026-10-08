@@ -5,6 +5,46 @@ three things only the FM-1 can tell me: whether the audio interrupt keeps up wit
 shared memory behaves with real timing (USB packets and screen frames cutting in), and whether anything sounds wrong
 that the host tests can't hear. This page is the run sheet. It takes about 20 minutes.
 
+## On the host first: `tests/checkpoint_sim.sh`
+
+There's no emulator for the FM-1's pi32v2 core (it's JieLi's own instruction set; QEMU doesn't know it), so the
+device's real load can only come from the device. What I can do on the host is run the firmware's own sources
+through this run sheet, with the hardware stubbed as the tests do (`tests/checkpoint_sim.c`):
+
+- **Every run rendered to a WAV** (`build/checkpoint/runN.wav`) to listen to before touching the device.
+- **Each run's cost** in host instructions per output sample (callgrind): a ratio against what Felucca's engines cost,
+  not the FM-1's percentage.
+- **The interrupts for real.** The audio interrupt and TIMER5's `usb_poll` fire as asynchronous signals that cut into
+  the main loop at any instruction, as on the device (TIMER5 outranks the audio; `usb_poll` never runs nested in it),
+  faster than the device does, while the main loop turns knobs, changes TRACKS, records, freezes, draws, and a WAV
+  after WAV arrives over the drive. Every so often it stops both and checks the shared memory's books: each chunk
+  owned once, listed where its owner says, none lost. I checked the check: with the WAV capture allocating from the
+  interrupt again (the bug the review round found), it fails on every try within seconds.
+
+What it gave on 2026-10-08 (host instructions per output sample, the whole chain, four tracks):
+
+| Run | What | Host cost | What the firmware reported |
+| --- | --- | ---: | --- |
+| 1 | four reels, GRAIN off | 861 | |
+| 2 | WET 100, the defaults (each buffer recording) | 1,535 | 4 grains sounding, 44 chunks of buffers |
+| 3 | the cap: 8 grains a track | 3,263 | 32 grains (8 8 8 8) |
+| 4 | the cap, all backwards | 4,022 | 32 grains |
+| 5 | the cap, SCAN TAPE | 2,888 | 32 grains |
+| 6 | the cap, TRACKS 2 (16 + 16) | 2,715 | 32 grains (16 16 0 0) |
+| 7 | a blank tape recorded 12 s, then looped | 964 | the tape 12.00 s long, 65 chunks |
+| 8 | the freeze tapped on and off | 979 | frozen at 3 s, let go at 9 s |
+| 9 | SYNTH played, transport stopped, GRAIN on | 618 | grains sounding after the phrase |
+| 10 | a 20 s WAV over TAPE3.WAV while playing | - | the tape 20.00 s, TRACK 3'S TAPE REPLACED |
+
+These are measurements, not listening: the WAVs are there to be heard.
+No sample past full scale and no sudden jump (over 12,000 between neighbouring samples) in any of them. The stress:
+over 20 s, 132,143 audio blocks and 86,245 USB sectors cut into the main loop, and the books balanced at every one
+of 10,778 checks.
+
+What that leaves for the device: the load. Run 4 costs 4.7 times run 1 on the host; on the FM-1 that ratio is the
+question. And how GRAIN's level sits against the dry sound is worth a listen: at WET 100 the grains peak around a
+third of the reels.
+
 ## Build and install
 
 1. `tools/get_toolchain.sh` once, if `~/.jieli/toolchain` isn't there, and the AC79 SDK in `~/fw-AC79_AIoT_SDK`

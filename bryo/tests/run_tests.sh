@@ -100,6 +100,8 @@ rm -rf build/bryo_ui/ppm && mkdir -p build/bryo_ui/ppm      # (no renders left o
 $CC -I"$GEN" -Itests -o "$OUT/bryo_host" tests/bryo_host.c -lm
 run "Bryo: chain, input mapping, every screen" "$OUT/bryo_host" build/bryo_ui
 run "Bryo screens pixel-identical to tests/bryo_golden.txt" "$PY" tests/ui_golden.py check tests/bryo_golden.txt build/bryo_ui
+$CC -I"$GEN" -Itests -o "$OUT/checkpoint_sim" tests/checkpoint_sim.c -lm -lrt
+run "Bryo under real interrupts: the audio and usb_poll cutting into the main loop, the shared memory's books (3 s)" "$OUT/checkpoint_sim" stress 3
 run "controls map (docs/controls.tsv): well formed, every physical control mapped" "$PY" tests/controls_check.py
 reels_same() { "$PY" tools/gen_reels.py "$OUT/reels_a.h" >/dev/null && "$PY" tools/gen_reels.py "$OUT/reels_b.h" >/dev/null &&
                cmp -s "$OUT/reels_a.h" "$OUT/reels_b.h" && cmp -s "$OUT/reels_a.h" "$GEN/bryo_reels.h"; }
