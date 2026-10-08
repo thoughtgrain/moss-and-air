@@ -151,7 +151,7 @@ Why:
 | SPACE delay | 65,536 | 4 tracks × 8,192 samples × 2 B (0.37 s at 22.05 kHz, or 0.74 s at half speed) |
 | SPACE reverb | 40,000 | 4 small reverbs, Felucca's ROOM structure run at 22.05 kHz |
 | Screen canvas | 5,460 (main RAM) | 2 bits a dot (1.6 KB) and two 4-row line buffers (3.8 KB); see "The screen as dots" |
-| GRAIN | 19,552 | 4 tracks × 16 grains × 305 B (a 128-sample decoded window each; see "GRAIN, as built") |
+| GRAIN | 9,824 | 4 tracks × 8 grains × 305 B (a 128-sample decoded window each; see "GRAIN, as built") |
 | USB audio in | 16,384 | ring buffer: 4,096 stereo frames × 4 B (93 ms) for drift and jitter |
 | SYNTH | 576 | 4 tracks × 3 voices of oscillator and filter state (.bss) |
 | POLY | 8,288 | 4 tracks × 4 voices × a 256-sample block reader (pool), plus 448 B of voice state (.bss) |
@@ -180,7 +180,7 @@ with its mixes. My target for all four tracks, everything on, is **at most 2,000
 | Stage, per track | Estimate | Notes |
 | --- | ---: | --- |
 | TAPE read | 20 | ADPCM decode at 22.05 kHz, linear interpolation to 44.1 kHz |
-| GRAIN | 240 | 16 sounding grains × about 15 (window table, interpolation, pan) |
+| GRAIN | 240 | 8 sounding grains × about 30 (decoding, window ramp, interpolation, pan; see "GRAIN, as built") |
 | RESONATOR | 60 | 4 strings |
 | COLOR | 30 | drive table, crush, follower plus noise |
 | SPACE | 80 | delay plus reverb at 22.05 kHz |
@@ -684,7 +684,7 @@ mono (the two sides' average).
 **Reading without a copy.** Each grain decodes the ADPCM itself into a 128-sample window, starting from the stored
 decoder state of the window's block. A forward grain slides its window and decodes each tape sample once. A
 backward grain re-decodes from its block's start at each refill, which is why the window is 128 samples rather
-than 64: half as many refills. 64 grains in all take 19.1 KB of the pool (it now holds 241.6 KB of 336).
+than 64: half as many refills. 32 grains in all take 9.6 KB of the pool (it now holds about 231.8 KB of 336).
 
 **Cost, measured** (instructions per output sample for the whole chain, four tracks, the host's 64-bit build under
 callgrind; a ballpark for the FM-1, not its cycles):
@@ -693,17 +693,32 @@ callgrind; a ballpark for the FM-1, not its cycles):
 | --- | ---: |
 | GRAIN off (tapes only) | 823 |
 | WET 100 at the defaults (about 2 grains sounding a track) | 1,149 |
-| WET 100, RATE 100, SIZE 500: 16 grains a track, the cap | 4,755 |
-| the same, every grain backwards | 6,099 |
+| WET 100, RATE 100, SIZE 500: 8 grains a track, the cap | 2,820 |
+| the same, every grain backwards | 3,521 |
 
-The first version cost 9,760 at the cap. A forward grain re-decoded its whole block every time it left its window,
+The first version cost 9,760 with a cap of 16. A forward grain re-decoded its whole block every time it left its window,
 and the window's shape was a table read per sample. Now the window slides forward, the envelope is taken once a
-block and ramped, and the grain's state sits in locals for the block. The rest is the decoding itself: 64 grains read
-32 tape samples per output sample between them.
+block and ramped, and the grain's state sits in locals for the block. The rest is the decoding itself: 32 grains read
+16 tape samples per output sample between them.
+
+**Eight a track, not sixteen.** I started at 16 and halved it. Past about eight overlapping grains the texture
+doesn't change much: the 1 / sqrt(overlap) level keeps it at the same loudness and it just smears. Halving cost and
+memory buys room for RESONATOR, COLOR and SPACE, and eight grains are few enough to draw one by one.
 
 **Shedding** takes grains first: two off the cap for every track (down to 4), one back after a second without
 shedding. A grain due while all the allowed ones sound is skipped, not stolen, so nothing cuts off mid-grain. Whether
-16 a track is the right cap needs the FM-1: the table above is the case where it matters.
+8 a track holds on the FM-1 needs the hardware: the table above is the case where it matters.
+
+**The picture shows grains, not the sample.** My first picture drew the whole loop window with every grain on it,
+and at the scale of a whole reel an 80 ms grain is a dot or two wide. Now the field is the stretch the grains can
+reach, zoomed around the cursor (the triangle at the top): SPRY's scatter either way plus a few grains' length,
+never less than 256 tape samples. SPRY's reach is dotted under it. Across is where a grain reads; up and down is its
+pitch, with the tape's own pitch dotted through the middle and two octaves to each edge, so PTCH, PRND and SCAL move
+grains up and down. A grain shows up only while it sounds. It covers the tape it reads, so a grain slowed down by
+PTCH is narrower and a sped-up one wider. Its height is its window (CONT) swelled by the sample's level, the played
+part is solid and the rest is dim, and its playhead is an arrow pointing the way it runs (REV: right to left). With
+nothing sounding (stopped, or WET 0), a dim outline of one grain from the knobs sits at the cursor, so turning SIZE,
+PTCH or CONT still shows something.
 
 **Tests** (`test_grain`): a grain's decoder against the tape's reader, both ways, over block boundaries; one grain's
 output sample for sample; pitch inside a grain (440.2 Hz at PTCH 0, 880.2 at +12, 440.2 backwards); WET 0 changes

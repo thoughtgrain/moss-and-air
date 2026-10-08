@@ -23,11 +23,11 @@
  * reverse grain refills its window backwards (up to 256 decodes per 64 samples). A grain starting past the tape's end
  * reads silence.
  *
- * Load: at most GR_CAP grains sound per track; a grain due while all of them sound is skipped. The audio ISR's
+ * Load: at most GR_CAP (8) grains sound per track; a grain due while all of them sound is skipped. The audio ISR's
  * shedding (chain_shed) lowers that cap for every track, two at a time down to 4, and it comes back one a second.
  * Audio ISR only; the main loop writes the knobs. */
 
-#define GR_CAP 16u                   /* grains sounding at once per track, at most */
+#define GR_CAP 8u                    /* grains sounding at once per track, at most */
 #define GR_WIN 128u                  /* a grain's decoded window, tape samples (a reverse refill re-decodes from its
                                       * block's start: the wider the window, the rarer) */
 
@@ -169,6 +169,12 @@ static int32_t gr_pitch(grain_trk_t *G, const int16_t *p)
     return best;
 }
 
+/* a grain's step for pitch st16 (1/16 semitone), Q12 tape samples per output sample: 2048 at the tape's own pitch */
+static int32_t gr_rate(int32_t st16)
+{
+    return (int32_t)(pitch_inc((uint32_t)clamp(60 * 16 + st16, 0, 2047)) / (pitch_inc(60u * 16u) >> 11));
+}
+
 /* the gap before the next grain, output samples: RATE 0..100 -> 1..80 grains a second, in PATN's rhythm */
 static int32_t gr_gap(grain_trk_t *G, const int16_t *p)
 {
@@ -196,7 +202,7 @@ static void gr_start(uint32_t t, grain_trk_t *G, const int16_t *p, const tape_vi
     at = (G->cur >> 12) + (sp ? (int32_t)(gr_rnd(G) % (uint32_t)(2 * sp + 1)) - sp : 0);
     at = ls + ((at - ls) % ll + ll) % ll;
     g->st16 = (int16_t)gr_pitch(G, p);
-    rate = (int32_t)(pitch_inc((uint32_t)clamp(60 * 16 + g->st16, 0, 2047)) / (pitch_inc(60u * 16u) >> 11));
+    rate = gr_rate(g->st16);
     g->rev = (uint8_t)((int32_t)(gr_rnd(G) % 100u) < p[7]);
     g->len = (uint32_t)p[0] * 441u / 10u;              /* SIZE ms -> output samples */
     g->fade = (uint32_t)p[6] * g->len / 200u;          /* CONT: the ramps, up to half the grain each */

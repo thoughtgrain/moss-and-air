@@ -1722,17 +1722,17 @@ static void test_grain(void)
         maxc = grain_count(0) > maxc ? grain_count(0) : maxc;
     }
     render(NB, s);
-    check("RATE 100, SIZE 500: grains up to the cap of 16, never more, under full scale",
+    check("RATE 100, SIZE 500: grains up to the cap of 8, never more, under full scale",
           maxc == GR_CAP && peak_of(s, NB * CTL) <= 32767);
     grain_shed();
     for (i = 0, maxc = 0; i < 1300u; i++) {
         render(1, 0);
         maxc = grain_count(0) > maxc ? grain_count(0) : maxc;
     }
-    check("shedding lowers the cap (16 -> 14): the grains follow it down", grain_cap == 14u && maxc <= 16u &&
-          grain_count(0) <= 14u);
+    check("shedding lowers the cap (8 -> 6): the grains follow it down", grain_cap == 6u && maxc <= 8u &&
+          grain_count(0) <= 6u);
     render(200, 0);
-    check("..and a second without shedding gives one back", grain_cap == 15u);
+    check("..and a second without shedding gives one back", grain_cap == 7u);
     grain_cap = GR_CAP;
     p[1] = 40;
     p[0] = 80;
