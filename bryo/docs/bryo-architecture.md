@@ -129,7 +129,8 @@ Why:
 
 - **Length.** 16-bit stereo 44.1 kHz would give each track about a third of a second. ADPCM at 22.05 kHz
   is 11 KB per second, so 36 KiB per track gave about **3.3 s per track** (more at half speed). Since
-  "Memory by usage" the tracks share the RAM instead: one track can hold 28 s, four tracks whatever they record.
+  "Memory by usage" the tracks share the RAM instead: 28 s in all, up to 23.6 s on one tape, four tracks whatever
+  they record.
 - **It's the format Felucca's user samples already use** (`eng_sample.c`, `tools/fm1_sample_upload.py`).
   Loading a reel from flash into a tape, or saving a tape, is a straight copy with no transcoding, and the
   upload tools keep working.
@@ -688,11 +689,13 @@ switched on.
 layers forever. That's also what makes switching the source smooth: the old sound stays in the buffer until the write
 head passes, then fades at FDBK each pass, so TAPE to SYNTH crossfades in the grains over a bar instead of cutting.
 
-**Freeze** (the 0 black key, held) stops every buffer recording and holds its bars, and the grains go on playing
+**Freeze** (the 0 black key: held, while it's held; tapped, latched until the next tap, its LED lit, as a tapped GLO
+latches the mixer) stops every buffer recording and holds its bars, and the grains go on playing
 them: a loop locked to the tempo. Change the tempo while frozen and the loop's pace follows. It's a transition tool:
 freeze, switch the source or mute, let go to carry on.
 
-**SCAN** (page 4) picks what grains read and where they start, the cursor:
+**SCAN** (page 4, with WARP, OFST and FDBK beside it: set it up left to right) picks what grains read and where they
+start, the cursor:
 
 | SCAN | Reads | The cursor |
 | --- | --- | --- |
@@ -783,19 +786,22 @@ later block sees the shorter list. Nothing in the ISR holds a pointer into a chu
 
 **Tapes grow as they record.** REC on a blank tape starts the head at the loop's start when the transport plays; the
 tape grows behind it, the main loop keeping a chunk ready ahead (`tape_poll`). Letting go of REC sets the loop's
-length. A reel copied in takes exactly the chunks it needs. A track that never records holds nothing.
+length. A reel copied in takes exactly the chunks it needs. A track that never records holds nothing. One tape holds
+23.6 s at most (127 chunks): the head's position is kept in 1/4096ths of a sample in 32 bits, which runs out at 23.8 s.
 
 **When nothing is free**, chunks come off the end of a tape, in this order: a cleared tape (its undo goes), a parked
 track's tape (the longest), then the longest tape of all, never the one asking and never one that's growing. A WAV
 arriving over USB only takes free chunks, cleared and parked tapes, never a tape in use; what doesn't fit is cut and
 the message says so. When there's nothing left to take, a growing tape stops and loops what it has.
 
-**TRACKS** (SELECT on the mixer, 1-4) says how many tracks are in use. The ones above it park: they fade out in 2 ms
+**TRACKS** (GLO held + SELECT, 1-4) says how many tracks are in use. It's a held pad and SELECT, like HOME + SELECT
+picking the source and a slot + SELECT its engine, so plain SELECT stays the tempo on every view and a tempo turn on
+the mixer can never park a track mid-song. The ones above it park: they fade out in 2 ms
 and stop rendering, REC on them lets go, the focus and GLO's track keys stay below it. Nothing is erased: a parked
 tape is just the first taken when memory runs short, and raising TRACKS brings back what's still there. Fewer
 tracks also means more for the ones left: GRAIN's buffer holds more bars and a track sounds more grains. The mixer's
 levels page shows it all under the faders: each track's seconds of tape (and GRAIN buffer), OFF for a parked one,
-the memory as one ribbon (tapes solid, buffers dim, free dotted), TRACKS and the time still free. EDIT held still
+the memory as one ribbon (tapes solid, buffers dim, free dotted), TRACKS and the time still free. EDIT (held, or tapped to latch it) still
 gives the channel.
 
 **REC IN** (ALGORITHM): what each track's REC records, KNOB 1-4 a track each, ALGORITHM turned again the focused

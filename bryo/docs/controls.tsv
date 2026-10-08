@@ -54,6 +54,7 @@ page	BLACK_GLO	press	global pitch shift up (unmuted tracks)	planned	3	PRD 2.3
 page	BLACK_MONO	hold	held 0.5 s (countdown ring): clear the focused track's modulation routing; SAVE held undoes	planned	7	PRD 2.3
 page	BLACK_POLY	hold	held 0.5 s: clear the focused track's tape (a reel: the track goes back to its own tape, cleared); SAVE held undoes	now	-	PRD 2.3
 page	BLACK_ZERO	hold	momentary global granular freeze while held: every GRAIN buffer stops recording and its grains loop the held bars (SCAN TAPE: the cursor stops); FROZEN on the GRAIN page	now	-	PRD 2.3
+page	BLACK_ZERO	tap	the freeze latched until the next tap (its LED lit), as a tapped GLO latches the mixer: the right hand is free for GRAIN's knobs	now	-	change
 page:tape	WHITE_1-16	press	play from slice n of the loop (finger drumming, stutter)	now	-	PRD 2.3
 page:grain	WHITE_1-16	press	on a TAPE track: GRAIN's cursor to sixteenth n of the tape's loop (SCAN TAPE) or of the buffer (POS: the spot, DLY: the trail); the tape's head stays; stopped, grains while the key is held	now	-	PRD 2.3
 page	BLACK_POLY	release	(the key, not the POLY source engine) letting go before 0.5 s cancels the clear	now	-	change
@@ -66,9 +67,10 @@ mixer	ENC_K4	turn	track 4 level	now	-	change
 mixer	BTN_GLO	tap	close the mixer	now	-	change
 mixer	BTN_HOME	press	close the mixer and focus the source (any page pad does the same for its page)	now	-	change
 mixer	BTN_EDIT	hold	the selected track's channel: KNOB 1-4 set LOW HIGH FILT PAN (heard from phase 6); letting go returns to the levels	now	-	PRD 2.2
-mixer	ENC_SELECT	turn	TRACKS 1-4: the tracks in use; the ones above it park (silent, not rendered, their tapes taken first when memory runs short)	now	-	change
+mixer	BTN_EDIT	tap	the channel page latched (as a tapped GLO latches the mixer), so one hand turns the knobs; tapped again: the levels	now	-	change
 glo-held	WHITE_1-4	press	focus track 1..4 (the white keys don't play while GLO is held)	now	-	change
 glo-held	ENC_K1-4	turn	the four track levels; letting go of GLO returns to the page	now	-	change
+glo-held	ENC_SELECT	turn	TRACKS 1-4: the tracks in use; the ones above it park (silent, not rendered, their tapes taken first when memory runs short). A pad held + SELECT picks that pad's thing, as HOME + SELECT (the source) and a slot + SELECT (its engine); plain SELECT stays the tempo on every view	now	-	change
 glo-held	BTN_GLO	release	back to the page if something was done or it was held past HOLD; else the mixer stays up	now	-	change
 slot-held	ENC_K1-4	hold-turn	modulation depth from this slot to that knob's parameter on the page; release commits	planned	7	PRD 4.2
 slot-held	ENC_SELECT	hold-turn	the focused slot's pad held: its engine (LFO ADSR SEQ FOLLOW), starting from that engine's defaults; the tempo is left alone	now	-	change

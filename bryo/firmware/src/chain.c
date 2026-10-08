@@ -71,9 +71,9 @@ static void chain_block(int32_t *out, uint32_t n)
     int32_t l[CTL], r[CTL], rin[NTRK][CTL];
     uint32_t i, t, u, keys = sys.keys_live ? white_keys(fm1_in.notes) : 0u, sel = sys.sel, zero = 0;
     uint32_t ntrk = sys.ntrk >= 1u && sys.ntrk <= NTRK ? sys.ntrk : NTRK;
-    for (u = 0; u < 27u; u++)                          /* the 0 black key held: every grain cursor frozen */
+    for (u = 0; u < 27u; u++)                          /* the 0 black key held, or tapped (latched): GRAIN frozen */
         if (KEY_BLACK[u] == BK_ZERO)
-            zero = (fm1_in.notes >> u) & 1u;
+            zero = ((fm1_in.notes >> u) & 1u) | (sys.freeze != 0);
     for (t = 0; t < NTRK; t++)                         /* what each track's REC hears (REC IN), last block */
         if ((sys.rec >> t) & 1u) {
             uint32_t from = tp[t].recin;
@@ -139,7 +139,7 @@ static void chain_shed(void)
     grain_shed();
 }
 
-/* main loop: TRACKS set to n (the mixer's SELECT). The tracks above it park: they fade out in 2 ms and stop
+/* main loop: TRACKS set to n (GLO held + SELECT). The tracks above it park: they fade out in 2 ms and stop
  * rendering (the CPU they took is free), REC on them is let go, and their tapes are the first taken when memory runs
  * short (tape.c tape_steal); nothing is erased, so raising TRACKS again brings back what's still there. */
 static void chain_tracks(int32_t n)

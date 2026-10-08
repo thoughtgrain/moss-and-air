@@ -351,7 +351,7 @@ static void cap_emit(int32_t x)              /* one sample at 22,050 Hz into the
         mem_chunk_t *m;
         uint32_t o = cap.nblk % MEM_CB;
         if (cap.nblk / MEM_CB >= cap.nch) {            /* a new chunk: a free one, else a cleared or parked tape's */
-            int32_t k = cap.nch < MEM_NC ? tape_alloc(MEM_IMPORT, NTRK, 0) : -1;
+            int32_t k = cap.nch < TAPE_MAXCH ? tape_alloc(MEM_IMPORT, NTRK, 0) : -1;   /* (a tape's most) */
             if (k < 0) {
                 cap.cut = 1;
                 cap.bn = 0;

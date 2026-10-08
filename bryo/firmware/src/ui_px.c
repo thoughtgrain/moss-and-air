@@ -936,8 +936,8 @@ static const uint8_t DEV_PK[NDEV][NPK] = {
      PK_SRC, PK_CLOCK, PK_NONE, PK_NONE},            /*       REEL ROTA */
     {PK_SQUARE, PK_DOTS, PK_KNOB, PK_BOWTIE,         /* GRAIN: SIZE RATE PTCH SPRD */
      PK_MIX, PK_NOISE, PK_WINDOW, PK_DOTS,           /*        WET SPRY CONT REV */
-     PK_SPEED, PK_PATTERN, PK_SCALE, PK_VAR,         /*        WARP PATN SCAL PRND */
-     PK_SCAN, PK_START, PK_LOOP, PK_NONE},           /*        SCAN OFST FDBK */
+     PK_PATTERN, PK_SCALE, PK_VAR, PK_NONE,          /*        PATN SCAL PRND */
+     PK_SCAN, PK_SPEED, PK_START, PK_LOOP},          /*        SCAN WARP OFST FDBK */
     {PK_KEYS, PK_DECAY, PK_TONE, PK_MIX,             /* RESONATOR: PTCH DEC TONE WET */
      PK_CUTOFF, PK_RES, PK_SLOPE, PK_SCALE},         /*            CUT RES SLOP SCAL */
     {PK_DRIVE, PK_STAIRS, PK_NOISE, PK_TONE,         /* COLOR: DRIV CRSH NOIS TILT */

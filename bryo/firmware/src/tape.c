@@ -41,8 +41,9 @@
 #define TAPE_BLK 256u                /* samples per block */
 #define TAPE_NBLK 288u               /* the longest factory reel, and a one-slot user reel: 3.34 s */
 #define TAPE_LEN (TAPE_BLK * TAPE_NBLK)
-#define TAPE_MAXBLK (MEM_NC * MEM_CB)                    /* a tape holding every chunk: 28.2 s */
 #define TAPE_CHS (MEM_CB * TAPE_BLK)                    /* samples a chunk holds */
+#define TAPE_MAXCH 127u              /* a tape's most chunks: 23.6 s. The head is in Q12 samples in an int32, which
+                                      * holds 524,288 samples (23.8 s); 127 chunks leave room for a step past the end */
 #define TAPE_SR 22050
 #define TAPE_DECLICK 88              /* the shortest fade (a jump, start and stop): 2 ms at 44.1 kHz */
 
@@ -607,7 +608,7 @@ static int32_t tape_alloc(uint32_t o, uint32_t except, int active)
 static uint32_t tape_reserve(uint32_t t, uint32_t nch, int active)
 {
     tape_ctl_t *c = &tape_ctl[t];
-    while (c->nch < nch && c->nch < MEM_NC) {
+    while (c->nch < nch && c->nch < TAPE_MAXCH) {
         int32_t k = tape_alloc(MEM_TAPE + t, t, active);
         if (k < 0)
             break;

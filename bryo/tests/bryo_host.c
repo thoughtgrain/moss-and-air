@@ -354,7 +354,7 @@ static void test_input(void)
     press(B_EDIT);
     press(B_EDIT);
     press(B_EDIT);
-    check("EDIT again: GRAIN 4 (SCAN OFST FDBK)", ui.dev == DEV_GRAIN && ui.page == 3u);
+    check("EDIT again: GRAIN 4 (SCAN WARP OFST FDBK)", ui.dev == DEV_GRAIN && ui.page == 3u);
     press(B_EDIT);
     check("EDIT again, past GRAIN's pages 2 to 4: RESONATOR", ui.dev == DEV_RESO);
     press(B_EDIT);
@@ -393,11 +393,11 @@ static void test_input(void)
     check("..whose KNOB 1 is WET (0 -> 30), not SIZE", tp[0].dev[DEV_GRAIN][4] == 30 && tp[0].dev[DEV_GRAIN][0] == 80);
     tp[0].dev[DEV_GRAIN][4] = 0;
     press(B_EDIT);
-    check("..again: GRAIN's page 3 (WARP PATN SCAL PRND)", ui.dev == DEV_GRAIN && ui.page == 2u &&
-          !strcmp(dev_p(0, DEV_GRAIN)[8].label, "WARP"));
+    check("..again: GRAIN's page 3 (PATN SCAL PRND)", ui.dev == DEV_GRAIN && ui.page == 2u &&
+          !strcmp(dev_p(0, DEV_GRAIN)[8].label, "PATN"));
     press(B_EDIT);
-    check("..again: GRAIN's page 4 (SCAN OFST FDBK)", ui.dev == DEV_GRAIN && ui.page == 3u &&
-          !strcmp(dev_p(0, DEV_GRAIN)[12].label, "SCAN"));
+    check("..again: GRAIN's page 4 (SCAN WARP OFST FDBK: what grains read, set up left to right)", ui.dev == DEV_GRAIN &&
+          ui.page == 3u && !strcmp(dev_p(0, DEV_GRAIN)[12].label, "SCAN") && !strcmp(dev_p(0, DEV_GRAIN)[13].label, "WARP"));
     press(B_EDIT);
     check("..again: RESONATOR", ui.dev == DEV_RESO && ui.page == 0u);
     press(B_EDIT);
@@ -504,8 +504,13 @@ static void test_input(void)
     check("..KNOB 3 sets the selected track's FILT (TRACK 3: 0 -> -30), not a level", tp[2].ch[CH_FILT] == -30 &&
           track[2].level == 100u);
     let_go(B_EDIT);
-    check("EDIT let go: the levels again, the mixer still up", !ui.chan && ui.view == VIEW_MIXER);
+    check("EDIT let go after turning a knob: the levels again, the mixer still up", !ui.chan && ui.view == VIEW_MIXER);
     tp[2].ch[CH_FILT] = 0;
+    tap(B_EDIT);
+    check("EDIT tapped on the mixer: the channel page stays (latched, as a tapped GLO; the right hand free for the knobs)",
+          ui.chan && ui.chan_latched && ui.view == VIEW_MIXER);
+    tap(B_EDIT);
+    check("..tapped again: the levels", !ui.chan && !ui.chan_latched && ui.view == VIEW_MIXER);
     press(B_FX);
     check("a page pad closes the mixer", ui.view == VIEW_PAGE && ui.dev == DEV_COLOR && !ui.glo_latched);
     press(B_HOME);
@@ -677,11 +682,10 @@ static void screens_in(const char *pal)
     turn(2, 50);
     turn(3, 40);
     shot(pal, "grain2");
-    press(B_EDIT);                                       /* GRAIN 3: WARP -52 %, PATN SWNG, SCAL MAJ, PRND 5 */
-    turn(0, -38);
-    turn(1, -2);
-    turn(2, 2);
-    turn(3, 5);
+    press(B_EDIT);                                       /* GRAIN 3: PATN SWNG, SCAL MAJ, PRND 5 */
+    turn(0, -2);
+    turn(1, 2);
+    turn(2, 5);
     shot(pal, "grain3");
     {   /* playing a bar into the buffer, then the 0 black key held: the buffer frozen, the grains looping it */
         uint32_t u, z = 0;
@@ -698,24 +702,22 @@ static void screens_in(const char *pal)
         render(40, 0);
         shot(pal, "grain_frozen");
         fm1_in.notes = 0;
-        press(B_EDIT);                                   /* GRAIN 4: SCAN DLY, OFST 50, FDBK 30 */
+        press(B_EDIT);                                   /* GRAIN 4: SCAN DLY, WARP 52 %, OFST 50, FDBK 30 */
         turn(0, 2);
-        turn(1, 25);
-        turn(2, 30);
+        turn(1, -12);
+        turn(2, 25);
+        turn(3, 30);
         render(400, 0);
         shot(pal, "grain4");
         turn(0, -3);                                     /* SCAN TAPE: grains of the tape, its field zoomed */
         render(400, 0);
         shot(pal, "grain_tape");
         turn(0, 1);
-        turn(1, -25);
-        turn(2, -30);
+        turn(1, 12);
+        turn(2, -25);
+        turn(3, -30);
         sys.playing = 0;
         render(400, 0);
-        press(B_EDIT);                                   /* (round to GRAIN's page 1 for RESONATOR below) */
-        press(B_EDIT);
-        press(B_EDIT);
-        press(B_EDIT);
     }
     press(B_EDIT);
     shot(pal, "resonator");
@@ -845,11 +847,14 @@ static void screens_in(const char *pal)
     tape_reserve(3, 33, 1);
     tape_ctl[3].nblk = 33 * MEM_CB;
     shot(pal, "mixer");
-    host_enc[panel.enc[EN_SELECT]] = -1;                 /* SELECT on the mixer: TRACKS 3 (track 4 parked) */
+    hold(B_GLO);                                         /* GLO held + SELECT: TRACKS 3 (track 4 parked) */
+    host_enc[panel.enc[EN_SELECT]] = -1;
     ui_input();
     shot(pal, "mixer_tracks3");
     host_enc[panel.enc[EN_SELECT]] = 1;
     ui_input();
+    let_go(B_GLO);
+    tap(B_GLO);                                          /* (the mixer up again, latched, for the shots below) */
     hold(B_EDIT);                                        /* the channel: LOW +6, HIGH -4, a low-pass, PAN right */
     turn(0, 6);
     turn(1, -4);
@@ -1816,18 +1821,18 @@ static void test_grain(void)
     render(100, 0);
     check("the 0 black key held: every cursor frozen", grain[0].cur == c0 && grain_count(0) > 0);
     fm1_in.notes = 0;
-    p[8] = -100;
+    p[GP_WARP] = -100;
     c0 = grain[0].cur;
     render(10, 0);
     check("WARP -100: the cursor runs backwards", ((c0 - grain[0].cur) >> 12) == 10 * CTL / 2);
-    p[8] = 0;
+    p[GP_WARP] = 0;
     c0 = grain[0].cur;
     render(10, 0);
     check("WARP 0: still", grain[0].cur == c0);
-    p[8] = 100;
+    p[GP_WARP] = 100;
 
-    p[10] = 2;                                           /* SCAL MAJ, PRND 12: every pitch on the major scale */
-    p[11] = 12;
+    p[GP_SCAL] = 2;                                      /* SCAL MAJ, PRND 12: every pitch on the major scale */
+    p[GP_PRND] = 12;
     for (i = 0, ok = 1; i < NB; i++) {
         uint32_t j;
         render(1, 0);
@@ -1838,8 +1843,8 @@ static void test_grain(void)
             }
     }
     check("SCAL MAJ, PRND 12: every grain's pitch a major-scale semitone within an octave", ok);
-    p[10] = 0;
-    p[11] = 0;
+    p[GP_SCAL] = 0;
+    p[GP_PRND] = 0;
 
     sys.playing = 0;                                     /* the GRAIN page, stopped: a key plays its slice */
     render(NB, 0);
@@ -1898,6 +1903,9 @@ static void fill_tape(uint32_t t, uint32_t n)
     tape_ctl[t].empty = 0;
     tp[t].dev[DEV_SRC][TK_REEL] = 0;
 }
+
+static uint32_t led_lit;                                 /* (test_controls_more's LED reader, below) */
+static void led_on(const uint8_t *a, uint32_t id);
 
 /* GRAIN's live buffer: its bars, what it records, freeze, SCAN */
 static uint32_t buf_sum(uint32_t t)                      /* a fingerprint of a buffer's data */
@@ -2013,7 +2021,7 @@ static void test_grain_buffer(void)
         c0 = grain[0].cur;
         render(100, 0);
         {
-            int32_t d = ((grain[0].cur - c0) >> 12 + 0);
+            int32_t d = (grain[0].cur - c0) >> 12;
             d = d < 0 ? d + (int32_t)gbuf[0].len : d;
             snprintf(b, sizeof b, "..the tempo halved while frozen: the buffer keeps its size, the loop half the pace (%d)", (int)d);
             check(b, gbuf[0].len == 44100u && abs(d - 100 * CTL / 4) < 4);
@@ -2022,6 +2030,30 @@ static void test_grain_buffer(void)
         fm1_in.notes = 0;
         render_poll(20);
         check("..let go: it records again", (uint32_t)gbuf[0].w != w0);
+    }
+
+    {   /* the 0 key tapped: the freeze latches (as GLO's mixer: held momentary, tapped latched) */
+        uint32_t h0, n0 = 0;
+        for (n0 = 0; n0 < 27u && KEY_BLACK[n0] != BK_ZERO; n0++)
+            ;
+        fm1_in.notes = 1u << n0;
+        key_edge(n0);
+        fm1_in.notes = 0;
+        ui_input();
+        render_poll(4);
+        h0 = buf_sum(0);
+        render_poll(1378);
+        check("the 0 key tapped: the freeze latches (the buffer holds after the key is up), and its LED lights",
+              sys.freeze && buf_sum(0) == h0 && grain_frozen);
+        ui_leds();
+        led_on(fm1_led, 14u + n0);
+        check("..its LED lit", led_lit);
+        fm1_in.notes = 1u << n0;
+        key_edge(n0);
+        fm1_in.notes = 0;
+        ui_input();
+        render_poll(20);
+        check("..tapped again: let go, it records again", !sys.freeze && buf_sum(0) != h0);
     }
 
     p[GP_SCAN] = SCAN_POS;                               /* POS: OFST 50 holds the cursor halfway */
@@ -2556,6 +2588,10 @@ static void test_memory(void)
         }
     }
 
+    power_on();
+    check("one tape holds 127 chunks at most (23.6 s: its head's Q12 position fits 32 bits)",
+          tape_reserve(0, MEM_NC, 1) == TAPE_MAXCH && (int64_t)TAPE_MAXCH * TAPE_CHS * 4096 + 8192 < 0x7FFFFFFFLL);
+
     {   /* a tape that can't grow any more stops at its end and loops */
         power_on();
         for (t = 0; t < MEM_NC - 3u; t++)
@@ -2588,17 +2624,24 @@ static void test_memory(void)
         sys.sel = 3;
         sys.rec = 1u << 3;
         tape_prepare(3);
-        tap(B_GLO);                                      /* the mixer, latched */
+        tap(B_GLO);                                      /* the mixer, latched: SELECT is still the tempo */
         host_enc[panel.enc[EN_SELECT]] = -1;
         ui_input();
-        check("on the mixer, SELECT -1: TRACKS 3; the focus moves off track 4, its REC is let go",
-              sys.ntrk == 3 && sys.sel == 2 && !(sys.rec & 8u) && !tape_ctl[3].rec_ok);
+        check("on the latched mixer, SELECT is the tempo as everywhere (TRACKS untouched)", sys.ntrk == 4 &&
+              sys.bpm == 119);
+        sys.bpm = 120;
+        hold(B_GLO);
+        host_enc[panel.enc[EN_SELECT]] = -1;
+        ui_input();
+        check("GLO held + SELECT -1: TRACKS 3; the focus moves off track 4, its REC is let go",
+              sys.ntrk == 3 && sys.sel == 2 && !(sys.rec & 8u) && !tape_ctl[3].rec_ok && sys.bpm == 120);
         host_enc[panel.enc[EN_SELECT]] = -5;
         ui_input();
         check("..down to 1 at least", sys.ntrk == 1 && sys.sel == 0);
         host_enc[panel.enc[EN_SELECT]] = 2;
         ui_input();
         check("..and back up: TRACKS 3", sys.ntrk == 3);
+        let_go(B_GLO);
         render(4, 0);
         p3 = tape_rt[3].pos;
         render(100, 0);

@@ -22,7 +22,7 @@
  *   MOD slots  LFO's shape (RND: its loop of steps) and its next time round dotted, ADSR's envelope with its
  *              stages named and bent, SEQ's 16 steps as bars of their values, FOLLOW's envelope over what it listens to
  *   REC IN     (ALGORITHM) who records whom: the tracks as boxes, a line from each one heard into the recorder
- *   MIXER      the levels: what each track holds of the shared memory, TRACKS and the time free; EDIT held (the
+ *   MIXER      the levels: what each track holds of the shared memory, TRACKS and the time free; EDIT (the
  *              channel): the selected track's EQ and filter as one response, the pan as two speakers
  *
  * The DSP of each device will use the same mappings as these pictures (the comments name them), so what is drawn
@@ -324,7 +324,7 @@ labels:
         px_tag(1, DLBL - 1, PXF_3, b, px_ink, px_bg);
     else
         px_text(2, DLBL, PXF_3, b, px_ink);
-    if (f >= 5u && f < 15u)
+    if (f >= 5u && f < 16u && !pdesc_empty(&DEV_P[DEV_GRAIN][f]))
         vz_ktag(118, DLBL - 1, &DEV_P[DEV_GRAIN][f], v[f]);
     else if (buf) {                                                    /* the buffer: its bars ("STR 2 BARS") */
         char m[16];

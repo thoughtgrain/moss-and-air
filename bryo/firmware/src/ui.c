@@ -40,7 +40,13 @@ static struct {
     uint8_t glo_latched;             /* the mixer stays up (GLO tapped) */
     uint8_t poly_held, save_held;    /* the POLY key (clear the tape) and SAVE (undo) held, waiting for HOLD */
     uint32_t poly_t0, save_t0;
-    uint8_t chan;                    /* EDIT held on the mixer: the knobs set the selected track's channel strip */
+    uint8_t zero_held;               /* the 0 key down: let go before HOLD, a tap (the freeze latches or lets go) */
+    uint32_t zero_t0;
+    uint8_t chan;                    /* the mixer's channel page: the knobs set the selected track's channel strip */
+    uint8_t chan_held, chan_used;    /* EDIT down on the mixer, and a knob turned meanwhile (as GLO's: held momentary,
+                                      * tapped latched) */
+    uint8_t chan_latched;
+    uint32_t chan_t0;
     uint32_t glo_t0;                 /* when GLO went down */
     uint8_t force;                   /* redraw everything next frame */
     uint8_t msg_t;
@@ -174,7 +180,7 @@ static void draw_head(void)
 /* ------------------------------------------------------------- strip --- */
 /* four cells of 30 dots: the knob's pictogram (it shows the value), its label, the value. The page's last-turned
  * knob has its label inverted. On the mixer each cell is a track: a fader whose notches are the level set and whose
- * fill is the live meter (so the strip redraws as the meters move); EDIT held: the selected track's channel. */
+ * fill is the live meter (so the strip redraws as the meters move); EDIT (held, or tapped to latch): the selected track's channel. */
 static void draw_strip(void)
 {
     uint32_t k, sig = 2166136261u + ux.theme * 3u;
@@ -231,15 +237,12 @@ static void draw_strip(void)
 /* ------------------------------------------------------------ footer --- */
 static void draw_foot(void)
 {
-    char a[24], b[16];
+    char a[28], b[16];
     uint32_t sig;
-    if (ui.glo_held) {                                /* "KEYS 1-3: TRACK": as many as TRACKS */
-        str_cpy(a, sys.ntrk > 1u ? "KEYS 1-4: TRACK" : "KEY 1: TRACK", sizeof a);
-        if (sys.ntrk > 1u)
-            a[7] = (char)('0' + sys.ntrk);
-    }
+    if (ui.glo_held)                                  /* the white keys pick the track; SELECT sets TRACKS */
+        str_cpy(a, "KEYS:TRK SEL:TRACKS", sizeof a);
     else if (ui.view == VIEW_MIXER)
-        str_cpy(a, ui.chan ? "KNOBS: CHANNEL" : "SELECT:TRACKS EDIT:CH", sizeof a);
+        str_cpy(a, ui.chan ? "KNOBS: CHANNEL" : "EDIT: CHANNEL", sizeof a);
     else if (ui.view == VIEW_ROUTE)
         str_cpy(a, "KNOBS: REC IN", sizeof a);
     else

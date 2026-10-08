@@ -66,15 +66,17 @@ static const pdesc_t DEV_P[NDEV][NPK] = {
          * a grain plays backwards */
         {"WET", 0, 100, 0, F_PCT}, {"SPRY", 0, 100, 20, F_PCT},   /* (WET 0: off until it's turned up) */
         {"CONT", 0, 100, 50, F_PCT}, {"REV", 0, 100, 0, F_PCT},
-        /* 3: WARP: how fast the read point moves (0 holds it, - backwards); the order grains
-         * fire in; their pitch held to a scale; a random pitch per grain, up to +-PRND semitones */
-        {"WARP", -200, 200, 100, F_BIPCT}, {"PATN", 0, 3, 3, F_ENUM, N_PATN},
-        {"SCAL", 0, 4, 0, F_ENUM, N_GSCAL}, {"PRND", 0, 12, 0, F_ST},
-        /* 4: what grains read and where (grain.c): the track's TAPE, or the live buffer of the last bars, read
-         * stretching behind the write head (STR), at a spot (POS) or a delay behind it (DLY); OFST: POS's spot, DLY's
-         * delay, as a share of the buffer; FDBK: how much of the buffer stays as new sound goes in (the S-4's) */
-        {"SCAN", 0, 3, 1, F_ENUM, N_SCAN}, {"OFST", 0, 100, 25, F_PCT},
-        {"FDBK", 0, 100, 0, F_PCT}, {""}},
+        /* 3: the order grains fire in; their pitch held to a scale; a random pitch per grain, up to +-PRND
+         * semitones */
+        {"PATN", 0, 3, 3, F_ENUM, N_PATN}, {"SCAL", 0, 4, 0, F_ENUM, N_GSCAL},
+        {"PRND", 0, 12, 0, F_ST}, {""},
+        /* 4: what grains read and where (grain.c), left to right as you set it up: SCAN, the track's TAPE or the
+         * live buffer of the last bars, read stretching behind the write head (STR), at a spot (POS) or a delay
+         * behind it (DLY); WARP, how fast the read point moves (TAPE, STR; 0 holds it, - backwards); OFST, POS's
+         * spot or DLY's delay as a share of the buffer; FDBK, how much of the buffer stays as new sound goes in
+         * (the S-4's) */
+        {"SCAN", 0, 3, 1, F_ENUM, N_SCAN}, {"WARP", -200, 200, 100, F_BIPCT},
+        {"OFST", 0, 100, 25, F_PCT}, {"FDBK", 0, 100, 0, F_PCT}},
     {   /* RESONATOR (the S-4's RING) */
         {"PTCH", 33, 81, 45, F_NOTE}, {"DEC", 0, 100, 60, F_PCT},
         {"TONE", 0, 100, 60, F_PCT}, {"WET", 0, 100, 0, F_PCT},
@@ -154,7 +156,7 @@ static uint32_t pdesc_pages(const pdesc_t *p)
     return n;
 }
 
-/* each track's channel strip, after the chain and before the mix (the mixer's second page: EDIT held under GLO).
+/* each track's channel strip, after the chain and before the mix (the mixer's second page: EDIT on the mixer, held or tapped).
  * LOW and HIGH are shelves (+-12 dB); FILT is one knob for two filters, a low-pass turning left of 0 and a
  * high-pass turning right of it (the DJ-mixer way: 0 is open); PAN is the place in the stereo field. The mixer
  * DSP (phase 6) applies them; until then they are values you can set and see. */

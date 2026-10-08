@@ -51,8 +51,8 @@
 #define GR_WIN 128u                  /* a grain's decoded window, samples (a reverse refill re-decodes from its
                                       * block's start: the wider the window, the rarer) */
 #define GR_BUF_MAX (12u * TAPE_SR)   /* a buffer's most, tape samples (12 s) */
-enum { GP_SIZE, GP_RATE, GP_PTCH, GP_SPRD, GP_WET, GP_SPRY, GP_CONT, GP_REV, GP_WARP, GP_PATN, GP_SCAL, GP_PRND, GP_SCAN,
-       GP_OFST, GP_FDBK };
+enum { GP_SIZE, GP_RATE, GP_PTCH, GP_SPRD, GP_WET, GP_SPRY, GP_CONT, GP_REV, GP_PATN, GP_SCAL, GP_PRND, GP_SCAN = 12,
+       GP_WARP, GP_OFST, GP_FDBK };   /* (param.c DEV_P[DEV_GRAIN]: page 3's fourth knob is empty) */
 enum { SCAN_TAPE, SCAN_STR, SCAN_POS, SCAN_DLY };
 
 /* sin^2 (pi/2 i/128), Q15: a window's rising ramp */

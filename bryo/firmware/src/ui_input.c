@@ -6,9 +6,11 @@
  *   EDIT           focus GRAIN; again: GRAIN 2, RESONATOR, GRAIN ... (each device's pages, then the next device)
  *   FX             focus COLOR; again: COLOR 2, SPACE, SPACE 2, COLOR ...
  *   LFO ENV SEQ ARP  focus modulator slot 1..4; again: the slot's next page; held + SELECT: the slot's engine
- *   GLO held       the mixer while held: white keys 1..4 pick the track, KNOB 1..4 set the levels; let go: back
+ *   GLO held       the mixer while held: white keys 1..4 pick the track, KNOB 1..4 set the levels, SELECT sets
+ *                  TRACKS; let go: back
  *   GLO tapped     the mixer stays up; tap again (or any page pad): back
- *   EDIT held      on the mixer: KNOB 1..4 set the selected track's channel (LOW HIGH FILT PAN); let go: levels
+ *   EDIT on the mixer  the selected track's channel (LOW HIGH FILT PAN) on KNOB 1..4: held, while held; tapped,
+ *                  latched (tapped again: the levels), as GLO's mixer and the 0 key's freeze
  *   SCL            unassigned (the PRD's SEL; track picking moved under GLO)
  *   PLAY           start / stop
  *   REC            arm the focused track (recording arrives with TAPE, phase 2)
@@ -78,7 +80,7 @@ static void ui_leds(void)
     led_put(nl, panel.btn[B_OCTUP], track[sys.sel].octave > 3u);
     for (k = 0; k < 27u; k++) {
         uint32_t b = KEY_BLACK[k];
-        led_put(nl, 14u + k, b <= BK_OP4 && track[b].mute);
+        led_put(nl, 14u + k, (b <= BK_OP4 && track[b].mute) || (b == BK_ZERO && sys.freeze));   /* (0 lit: latched) */
         led_put(nd, 14u + k, 1);
     }
     for (k = 0; k < NB; k++)
@@ -105,6 +107,7 @@ static void focus_dev(uint32_t d, uint32_t page)
 {
     ui.view = VIEW_PAGE;
     ui.chan = 0;
+    ui.chan_latched = 0;
     ui.glo_latched = 0;
     ui.kind = FOCUS_DEV;
     ui.dev = (uint8_t)d;
@@ -132,6 +135,7 @@ static void focus_slot(uint32_t s)
     uint32_t again = ui.view == VIEW_PAGE && ui.kind == FOCUS_SLOT && ui.slot == s;
     ui.view = VIEW_PAGE;
     ui.chan = 0;
+    ui.chan_latched = 0;
     ui.glo_latched = 0;
     ui.kind = FOCUS_SLOT;
     ui.slot = (uint8_t)s;
@@ -162,6 +166,7 @@ static void glo_up(void)
     ui.glo_latched = 0;
     ui.view = VIEW_PAGE;
     ui.chan = 0;
+    ui.chan_latched = 0;
     ui.last = 0xFF;
 }
 
@@ -171,9 +176,17 @@ static void on_button(uint32_t b)
     case B_HOME:                                        /* TAPE, its page 2 */
         pad_devices(DEV_SRC, DEV_SRC);
         break;
-    case B_EDIT:                                        /* GRAIN, GRAIN 2, RESONATOR; on the mixer: the channel, held */
-        if (ui.view == VIEW_MIXER) {
-            ui.chan = 1;
+    case B_EDIT:                                        /* GRAIN's pages, RESONATOR's; on the mixer: the channel */
+        if (ui.view == VIEW_MIXER) {                    /* (held: while held; tapped: latched; tapped again: off) */
+            if (ui.chan && ui.chan_latched) {
+                ui.chan = 0;
+                ui.chan_latched = 0;
+            } else {
+                ui.chan = 1;
+                ui.chan_held = 1;
+                ui.chan_used = 0;
+                ui.chan_t0 = fm1_ms;
+            }
             ui.last = 0xFF;
             if (ui.glo_held)
                 ui.glo_used = 1;
@@ -230,6 +243,10 @@ static void on_black(uint32_t k)
         track[k].mute = (uint8_t)!track[k].mute;
     } else if (k == BK_OP5 || k == BK_OP6) {           /* the focused track's tape: reverse, half speed */
         tk[k == BK_OP5 ? TK_REV : TK_HALF] = (int16_t)!tk[k == BK_OP5 ? TK_REV : TK_HALF];
+    } else if (k == BK_ZERO) {                          /* GRAIN's freeze: held, while it's held (the ISR reads
+                                                         * the key); tapped, latched until the next tap */
+        ui.zero_held = 1;
+        ui.zero_t0 = fm1_ms;
     } else if (k == BK_POLY) {                          /* held HOLD: clear the focused track's tape */
         ui.poly_held = 1;
         ui.poly_t0 = fm1_ms;
@@ -255,6 +272,17 @@ static void hold_keys(void)
             fmt_int(m + 6, (int32_t)sys.sel + 1);
             str_cpy(m + str_len(m), " CLEARED. HOLD SAVE: UNDO", 28);
             ui_message(m);
+        }
+    }
+    if (ui.zero_held) {                                 /* the 0 key let go: a tap latches the freeze or lets it go */
+        for (k = 0; k < 27u && KEY_BLACK[k] != BK_ZERO; k++)
+            ;
+        if (!((fm1_in.notes >> k) & 1u)) {
+            ui.zero_held = 0;
+            if ((uint32_t)(fm1_ms - ui.zero_t0) < hold) {
+                sys.freeze = (uint8_t)!sys.freeze;
+                ui_message(sys.freeze ? "FROZEN. TAP 0 TO LET GO" : "FREEZE LET GO");
+            }
         }
     }
     if (ui.save_held) {
@@ -289,6 +317,8 @@ static void on_knob(uint32_t c, int32_t d)
     ui.last = (uint8_t)c;
     if (ui.glo_held)
         ui.glo_used = 1;
+    if (ui.chan_held)
+        ui.chan_used = 1;
 }
 
 static void ui_input(void)
@@ -301,9 +331,16 @@ static void ui_input(void)
             if (b < NB)
                 on_button(b);
         }
-    if (ui.chan && (((released >> panel.btn[B_EDIT]) & 1u) || !((fm1_in.buttons >> panel.btn[B_EDIT]) & 1u))) {
-        ui.chan = 0;                                    /* EDIT let go: the mixer's levels again */
-        ui.last = 0xFF;
+    if (ui.chan_held && (((released >> panel.btn[B_EDIT]) & 1u) || !((fm1_in.buttons >> panel.btn[B_EDIT]) & 1u))) {
+        ui.chan_held = 0;                               /* EDIT let go: a tap keeps the channel page, a hold that
+                                                         * turned something (or a long one) goes back to the levels */
+        if (!ui.chan_used && (uint32_t)(fm1_ms - ui.chan_t0) < HOLD_MS[settings_hold % 4u] && ui.view == VIEW_MIXER) {
+            ui.chan_latched = 1;
+        } else {
+            ui.chan = 0;
+            ui.chan_latched = 0;
+            ui.last = 0xFF;
+        }
     }
     hold_keys();
     if (ui.glo_held && (((released >> panel.btn[B_GLO]) & 1u) || !((fm1_in.buttons >> panel.btn[B_GLO]) & 1u)))
@@ -336,12 +373,12 @@ static void ui_input(void)
             tp[sys.sel].src = (uint8_t)(((int32_t)tp[sys.sel].src + d % (int32_t)NSRC + (int32_t)NSRC) % (int32_t)NSRC);
             ui.page = 0;
             ui.last = 0xFF;
-        } else if (ui.view == VIEW_MIXER) {             /* on the mixer, SELECT: TRACKS (how many are in use) */
+        } else if (ui.glo_held) {                       /* GLO held + SELECT: TRACKS (how many are in use), as a pad
+                                                         * held + SELECT picks that pad's thing elsewhere */
             chain_tracks((int32_t)sys.ntrk + d);
             ui.last = 0xFF;
-            if (ui.glo_held)
-                ui.glo_used = 1;
-        } else {                                        /* SELECT: the global tempo */
+            ui.glo_used = 1;
+        } else {                                        /* SELECT: the global tempo, on every view */
             sys.bpm = (uint16_t)clamp((int32_t)sys.bpm + d, 40, 240);
         }
     }
@@ -352,6 +389,7 @@ static void ui_input(void)
         if (ui.view != VIEW_ROUTE) {
             ui.view = VIEW_ROUTE;
             ui.chan = 0;
+            ui.chan_latched = 0;
             ui.glo_latched = 0;
             ui.last = 0xFF;
         } else {

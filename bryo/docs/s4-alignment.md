@@ -78,13 +78,17 @@ architecture doc already plans TAPE, SYNTH and POLY.
 | CONTOUR | CONT (was WIN) | the grain's window. **done** |
 | SPRAY | SPRY (was JIT) | the jitter of where grains read. **done** (SPRD stays: it's the stereo spread, Bryo's own) |
 | WET | WET (was MIX) | **done** |
-| WARP | WARP (-200..200 %, page 3) | How fast the read point moves through the loop: 100 % plays at speed, 0 freezes it, negative runs backwards. **done** as a knob; the sound comes with GRAIN's DSP. |
+| WARP | WARP (-200..200 %, page 4) | How fast the read point moves: 100 % keeps pace, 0 holds it, negative runs backwards. **done**. (OS 2.2 folded WARP into SPRAY's modes; Bryo keeps it a knob, beside SCAN.) |
+| SCAN (OS 2.2) | SCAN (TAPE STR POS DLY, page 4) + OFST | What grains read: the track's tape, or a live buffer of the last bars read stretching (STR), at a spot (POS) or a delay behind the write head (DLY). **done** (see "GRAIN, as built") |
+| FEEDBACK (OS 2.2) | FDBK (page 4) | How much of the buffer stays as new sound goes in. **done** |
+| buffer lock (OS 2.2) | the 0 key | Freeze: held momentary, tapped latched; the buffer stops recording and the grains loop it. **done** |
 | PATTERN | PATN (EVEN SWNG CLST RND, page 3) | The order grains fire in *(the S-4's own patterns unverified)*. RND is the default, the scatter GRAIN always had. **done** |
 | pitch scale | SCAL (OFF CHR MAJ MIN PEN, page 3) | holds grain pitch to a scale. **done** |
 | random pitch | PRND (0..12 st, page 3) | a random pitch per grain. **done** |
 | reverse | REV | the chance a grain plays backwards: stays |
 
-So three pages: SIZE RATE PTCH SPRD / WET SPRY CONT REV / WARP PATN SCAL PRND.
+So four pages: SIZE RATE PTCH SPRD / WET SPRY CONT REV / PATN SCAL PRND / SCAN WARP OFST FDBK. Not taken from OS
+2.2 yet: RAND RATE, RAND SIZE and RAND AMP (page 3's fourth knob is free for one).
 
 ## RESONATOR (the S-4's RING)
 

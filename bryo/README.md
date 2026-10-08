@@ -14,7 +14,7 @@ Felucca's own README is kept in [docs/FELUCCA-README.md](docs/FELUCCA-README.md)
 
 **Phase 2 of 10: TAPE.** Each of the four tracks has a tape: a loop in RAM (IMA ADPCM at 22.05 kHz) that plays when
 you press PLAY. The tracks share one memory (28 s in all) and each takes what it records: a blank tape grows while
-REC records it, and TRACKS (SELECT on the mixer) switches tracks off to give the rest more. To start, track n plays factory reel n (BEAT, KEYS, AIR, PLUK, made from material in
+REC records it, and TRACKS (GLO held + SELECT) switches tracks off to give the rest more. To start, track n plays factory reel n (BEAT, KEYS, AIR, PLUK, made from material in
 this repository). The loop window, speed, reverse and half speed work; the white keys play 16 slices of the loop;
 REC records the other tracks onto the focused track's tape (or one chosen track, or itself: REC IN, turn ALGORITHM),
 with DUB for sound on sound; holding the POLY key clears
@@ -36,14 +36,15 @@ What works on the panel now (every control, in every context, with what's planne
 | --- | --- |
 | HOME | the track's source (TAPE, SYNTH or POLY); again for its next page (TAPE 2, TAPE 3: REEL and ROTATE; SYNTH's FILTER, AMP, VOICE; POLY's ENV, FILTER) |
 | HOME held + SELECT | the track's source: TAPE, SYNTH or POLY (each keeps its own knobs) |
-| EDIT | GRAIN; again: GRAIN 2, GRAIN 3, RESONATOR, RESONATOR 2 |
+| EDIT | GRAIN; again: GRAIN 2, GRAIN 3, GRAIN 4 (SCAN WARP OFST FDBK), RESONATOR, RESONATOR 2 |
 | FX | COLOR; again: COLOR 2, COLOR 3, SPACE, SPACE 2, SPACE 3 |
 | LFO ENV SEQ ARP | modulator slots 1 to 4; again for the slot's next page; held + SELECT: the slot's engine (LFO, ADSR, SEQ, FOLLOW) |
-| GLO, held | the mixer while held: white keys 1 to 4 pick the track, KNOB 1 to 4 set the levels |
+| GLO, held | the mixer while held: white keys 1 to 4 pick the track, KNOB 1 to 4 set the levels, SELECT sets TRACKS (1 to 4 in use) |
 | GLO, tapped | the mixer stays up; tap again or press a page pad to leave |
-| EDIT, held on the mixer | KNOB 1 to 4 set the selected track's LOW, HIGH, FILT and PAN |
+| EDIT on the mixer | KNOB 1 to 4 set the selected track's LOW, HIGH, FILT and PAN: held, while held; tapped, until tapped again |
 | KNOB 1 to 4 | the four values on screen |
-| SELECT | the tempo |
+| SELECT | the tempo, on every view |
+| ALGORITHM | REC IN: KNOB 1 to 4 set what each track's REC records (AUTO, the others, one track, itself); turned again, the focused track's |
 | PLAY | start and stop: every tape plays its loop from the start |
 | REC | arm the focused track: while playing it records onto its tape the other tracks (TAPE) or its own sound (SYNTH, POLY); a reel is copied on first |
 | SAVE, held | undo the last tape clear |
@@ -52,6 +53,7 @@ What works on the panel now (every control, in every context, with what's planne
 | Black keys OP1 to OP4 | track mutes |
 | Black keys OP5, OP6 | the focused tape's reverse and half speed |
 | Black key POLY, held 0.5 s | clear the focused track's tape |
+| Black key 0 | GRAIN's freeze: held, while it's held; tapped, latched until the next tap |
 | SCL | nothing yet (proposed: hold for the system menu) |
 
 The screen is drawn like a groovebox OLED: a grid of 2 x 2 px dots, bitmap type, white on black (your palette
