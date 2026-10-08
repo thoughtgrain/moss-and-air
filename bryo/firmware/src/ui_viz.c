@@ -414,7 +414,8 @@ static void viz_color(const int16_t *v, uint32_t f)
 /* ------------------------------------------------------------- SPACE --- */
 /* A sonar seen from above, flattened to fit the panel: the dry hit at the centre, the sound going out as rings.
  *   the delay   each echo a ring, its radius its time (TIME apart), there while it's still heard (FDBK, TONE's loss
- *               each pass, DLY's level); on each a thick notch as long as the echo is loud. SPRD sends the
+ *               each pass, DLY's level): the first solid, the later ones dotted, rings closer than 3 dots merged;
+ *               on each a notch as long as the echo is loud. SPRD sends the
  *               notches alternately left and right, the way a ping-pong delay throws echoes across: at 0 they sit
  *               at 12 o'clock.
  *   the reverb  VERB roughens each ring's 1-dot stroke and bleeds dots outward from it; the tail itself is a
@@ -445,7 +446,7 @@ static int32_t sp_y(int32_t r, int32_t a) { return 18 - px_cos(a) * SP_RY / 1000
 static void viz_space(const int16_t *v, uint32_t f)
 {
     int32_t t, k, a, x, y, g = 32767, n = 0, prev = -1000, tl = 100 - (v[6] < 0 ? -v[6] : v[6]) / 5;
-    int32_t jag = v[5] * 40 / 100, bleed = v[5] * 6 / 100, sh = v[7] * 16 / 100;   /* (jag: of the radius, 1/1000) */
+    int32_t jag = v[5] * 20 / 100, bleed = v[5] * 3 / 100, sh = v[7] * 16 / 100;   /* (jag: of the radius, 1/1000) */
     vz_seed = 4242u;
     for (t = v[0], k = 0; t <= SP_W; t += v[0], k++) {                 /* the echoes */
         int32_t r = t * 1000 / SP_W, lvl, px0 = 0, py0 = 0, len, mid;
@@ -454,28 +455,28 @@ static void viz_space(const int16_t *v, uint32_t f)
         if (lvl < 1200)
             break;
         n++;
-        if ((r - prev) * SP_RY / 1000 >= 2) {                             /* its ring (rings closer than 2 dots: one) */
-            for (a = 0; a <= 64; a++) {
+        if ((r - prev) * SP_RY / 1000 >= 3) {                          /* its ring (closer than 3 dots: merged); the */
+            for (a = 0; a <= 64; a++) {                                /* first solid, the later ones dotted */
                 int32_t rr = r + (jag && a < 64 ? (int32_t)(vz_rand() % (uint32_t)(jag + 1)) : 0);
                 int32_t xx = sp_x(rr, a), yy = sp_y(rr, a);
                 if (a)
-                    px_line(px0, py0, xx, yy, px_ink, 1);
+                    px_line(px0, py0, xx, yy, px_ink, k ? 2 : 1);
                 px0 = xx;
                 py0 = yy;
             }
             prev = r;
         }
-        for (a = 0; a < bleed * 4; a++) {                              /* VERB: dots bled outward from it */
+        for (a = 0; a < bleed * 3; a++) {                              /* VERB: dots bled outward from it */
             int32_t aa = (int32_t)(vz_rand() % 64u), d = 1 + (int32_t)(vz_rand() % (uint32_t)(bleed + 1));
             px_dot(sp_x(r, aa) + px_sin(aa) * d / 1000, sp_y(r, aa) - px_cos(aa) * d / 1000, px_ink);
         }
-        len = 1 + lvl * 3 / 26000;                                     /* the notch: 3 dots thick, as long as loud */
+        len = 1 + lvl * 3 / 26000;                                     /* the notch: 2 dots thick, as long as loud */
         mid = !sh ? 0 : (k & 1) ? sh : 64 - sh;
         for (a = (mid - len) * 4; a <= (mid + len) * 4; a++) {         /* (quarter steps: no gaps on wide rings) */
             int32_t a0 = a >> 2, q = a & 3;
             int32_t xx = sp_x(r, a0) + (sp_x(r, a0 + 1) - sp_x(r, a0)) * q / 4;
             int32_t yy = sp_y(r, a0) + (sp_y(r, a0 + 1) - sp_y(r, a0)) * q / 4;
-            px_box(xx - 1, yy - 1, 3, 3, px_ink);
+            px_box(xx - 1, yy - 1, 2, 2, px_ink);
         }
     }
     if (v[5])                                                          /* the tail: a dither over the disc */
@@ -484,11 +485,11 @@ static void viz_space(const int16_t *v, uint32_t f)
                 int32_t dx = (x - 60) * 1000 / SP_RX, dy = (y - 18) * 1000 / SP_RY, rho2 = dx * dx + dy * dy, p, h;
                 if (rho2 > 1000 * 1000)
                     continue;
-                p = sp_tail(v, isqrt(rho2) * SP_W / 1000) * v[5] / 100 * 7 / 10;   /* 0..700 of 1000 */
+                p = sp_tail(v, isqrt(rho2) * SP_W / 1000) * v[5] / 100 * 4 / 10;   /* 0..400 of 1000 */
                 h = (int32_t)(((uint32_t)x * 73856093u ^ (uint32_t)y * 19349663u) * 2654435761u >> 22) % 1000;
                 if (h < p)
                     px_dot(x, y, px_ink);
-                else if (p > 300 && h < 2 * p - 300)                   /* thick: it eats into the rings */
+                else if (p > 250 && h < 2 * p - 250)                   /* loud and long: it eats into the rings */
                     px_dot(x, y, px_bg);
             }
     px_box(59, 17, 3, 3, px_ink);                                      /* the dry hit */
