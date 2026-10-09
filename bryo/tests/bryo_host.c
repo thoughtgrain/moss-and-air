@@ -4243,25 +4243,20 @@ static void test_mod(void)
  * hit; an accent is louder; a closed hat chokes the open one */
 static uint32_t drum_hit(uint32_t i, uint32_t acc, uint32_t choke_at, int32_t *out, uint32_t max, int32_t *peak)
 {
-    dv_param_t p;
-    dv_coef_t c;
-    dv_voice_t v;
-    dv_metal_t m;
-    int32_t mb[CTL];
+    dk_knobs_t kn;
+    dk_coef_t c;
+    dk_voice_t v;
     uint32_t n = 0, k;
-    drm_inst_param(i, &p);
-    p.accent = (uint8_t)acc;
-    dv_setup(&c, &p);
-    memset(&m, 0, sizeof m);
-    dv_metal_tune(&m, &c);
-    dv_init(&v, c.type);
-    dv_trigger(&v);
+    drm_knobs_default(&kn);
+    kn.accent = (uint8_t)acc;
+    dk_setup(&c, &DRM_KIT[i], &kn);
+    memset(&v, 0, sizeof v);
+    dk_trigger(&v);
     *peak = 0;
     while (n + CTL <= max) {
         if (n == choke_at)
-            dv_choke(&v);
-        dv_metal_run(&m, mb, CTL);
-        dv_run(&c, &v, mb, out + n, CTL);
+            dk_choke(&v);
+        dk_run(&c, &v, out + n, CTL);
         for (k = 0; k < CTL; k++)
             *peak = abs(out[n + k]) > *peak ? abs(out[n + k]) : *peak;
         n += CTL;
@@ -4289,16 +4284,16 @@ static void test_drum_voices(void)
         drum_hit(i, 127, ~0u, b, 44100u * 12u, &pkb);
         louder &= pkb > pk;
         if (!n || !(pk > 4000 && pk < 30000) || !(pkb > pk))
-            printf("bryo:   (%s: rang out after %u samples, peak %d, accented %d)\n", DRM_INST[i].code, n, pk, pkb);
+            printf("bryo:   (%s: rang out after %u samples, peak %d, accented %d)\n", DRM_KIT[i].code, n, pk, pkb);
     }
-    check("DRUM: each of the 16 instruments rings out to silence (the cymbal in 12 s)", rings);
+    check("DRUM: each of the 16 instruments rings out to silence within 4 s", rings);
     check("..peaks between -18 and -0.8 dBFS, without DC, the same every hit", quiet && nodc && same);
     check("..and an accent makes every one louder", louder);
     n = drum_hit(DI_OH, 0, ~0u, a, 44100u * 12u, &pk);
     choked = drum_hit(DI_OH, 0, CTL * 20u, a, 44100u * 12u, &pk);
     check("the open hat rings past half a second; choked (HH, MB) it stops within 25 ms",
           n > 22050u && choked && choked < CTL * 20u + 1103u &&
-          (DRM_INST[DI_HH].chokes & DRM_INST[DI_MB].chokes) == 1u << DI_OH);
+          (DRM_KIT[DI_HH].chokes & DRM_KIT[DI_MB].chokes) == 1u << DI_OH);
 }
 
 static void test_source_level(void)
