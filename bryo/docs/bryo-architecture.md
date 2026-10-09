@@ -983,6 +983,44 @@ strings) would need a step for SPACE as well (the room at a quarter rate, say), 
 the device's number. The stress run cuts the interrupts in while RESONATOR and SPACE take and give back memory as
 knobs turn, and the books balance (RESONATOR's strings and SPACE's lines are in the check now too).
 
+## Phase 9: the strip shows modulation, as built (2026-10-09)
+
+The PRD's phase 9 asked for modulation arcs on the knobs, moving dots and a summed value. The plan was written
+before the screen became a dot grid, when every knob was going to be a dial; the pictograms are mostly not dials now
+(faders, switches, small graphs), so an arc can't sit on all of them. What I built instead is one element that fits
+every cell: a **rail** under the knob, in the strip's bottom rows, only on a knob something modulates:
+
+| On the rail | What it is |
+| --- | --- |
+| dotted, the whole width | the knob's range |
+| solid | how far its depths can take it from where it's set: an LFO both ways, ADSR, SEQ and FOLLOW the way each depth's sign points, clamped to the range |
+| a tick (dim) | where the knob is set |
+| a 3 x 3 block | where it is now: the value the sound gets, every depth summed. It's read from the ISR's modulated copy (`TPD`), so it's the same number the DSP uses, not a picture of it |
+
+The rest of the strip is as it was: the pictogram and the value still show the knob as set (that's what turning the
+knob changes), the corner mark still says "modulated", and holding a slot's pad still shows its depths.
+
+**Why a band of its own.** The block moves as often as the modulation does, and redrawing the whole strip is 240 x 98
+px, about 30 ms on the 12 MHz link. The rails are a separate 240 x 10 px band with their own signature (positions
+quantised to the rail's 24 dots), so a moving block costs about 3 ms, and only when it actually moves a dot. When the
+strip does redraw (a knob turned, a page changed), it draws the rails with it and takes their signature, so the band
+isn't drawn twice. The test runs an LFO for 1.8 s: 104 block moves across the reach, the strip redrawn 0 times.
+
+**Also in this phase:** LFO RATE with SYNC BPM prints the division it plays at (16BR 8BR 4BR 3BR 2BR 6/4 1BR 3/4 1/2
+3/8 1/4 3/16 1/8 1/8T 1/16 1/32) instead of its 0..127.
+
+**Where:** `ui.c` (`rail_of`, `rails_draw`, `rails_sig`, `draw_rails`), on device and source pages and the channel
+strip; not on a slot's own page (its knobs aren't targets) or with a DRUM instrument held (its own knobs aren't
+either).
+
+**Tested** (`test_rails`): no rail under an unmodulated knob; DRIV's set position and its LFO reach (10 % to 90 % at
+50 % +- 40); the block following the LFO, the band redrawing and the strip not; and the six screens it changes in the
+goldens.
+
+**Not done, on purpose:** the pictures below the strip still draw the knobs as set. Drawing them from the modulated
+values would redraw the 92-px panel at the modulation's rate, which is the cost the rails were designed to avoid; I'd
+want the hardware's numbers before trying it.
+
 ## Projects, as built (2026-10-09)
 
 Phase 8: a project is the whole instrument, saved to flash and brought back. SAVE tapped saves it; PRESETS opens
@@ -1295,9 +1333,9 @@ modulated arrays 5.9 KB of the pool (now 322.4 of 336 KiB). Code about 9 KB on t
 
 - **P-locks** (a step's own depth: a SEQ slot's pad and a white key held, then a knob). The SEQ's step values are
   in; per-step depths are a decision I haven't had an answer on, so `docs/controls.tsv` lists them as proposed.
-- **LFO RATE with SYNC BPM** prints its 0..127, not the division it picked. The strip's format is per knob, not per
-  mode; it's a small change in the strip I'd rather make with phase 9's modulation arcs.
-- **Seeing it move.** The pictures still draw the knobs as set; phase 9 adds the arcs and the moving dot.
+- **LFO RATE with SYNC BPM** printed its 0..127; since phase 9 it prints the division.
+- **Seeing it move.** Since phase 9, a rail under each modulated knob with a block where it is now; the pictures
+  below still draw the knobs as set.
 - **SPRD on PAN, a known consideration** (decided 2026-10-09 to leave it for now). SPRD gives the left and right
   channels their own pan; PAN is a balance (tracks are stereo), so at SPRD 100 the two swing apart in opposite
   directions and each turns its own side down at the same time: the sound pulses (a tremolo) instead of moving.
@@ -1603,7 +1641,7 @@ Each phase ends in something you can flash and hear or see, and each is its own 
 | 7. Modulation (**done** but p-locks, host-verified; see "Modulation, as built") | the 4 engines, hold-and-turn depth, assigning engines, SEQ steps, MONO's clear; p-locks wait on a decision | the PRD's §4 workflow end to end |
 | 7b. DRUM (**done**, host-verified; see "DRUM, as built") | the fourth source: sixteen synthesized instruments, patterns of 2 to 4 bars, ten written rhythms, SEED's versions, STEP's HITS ACC LIVE ERAS | a groove from a rhythm, varied, edited, printed onto a tape |
 | 8. Projects (**done**, host-verified; see "Projects, as built") | save and recall with reels; quick SAVE; the project view; the last project at power-on (user reels came in phase 2, over USB, so no upload tool) | a power cycle brings a session back |
-| 9. Screen (mostly done early: the dot-grid screens) | the modulation arcs on the pictograms, the motion dots, the summed white dot | the PRD's §5 |
+| 9. Screen (**done**, host-verified; see "Phase 9: the strip shows modulation") | the dot-grid screens (early); a rail under each modulated knob: its reach, where it's set, a block where it is now (every depth summed); LFO RATE as a division | the PRD's §5 |
 | 10. Tools + docs | the upload tool for reels, the installer text, a Bryo manual | someone else can use it |
 
 Phases 2 and 7 are the riskiest: the tape format, and whether the modulation sum fits at control rate. If

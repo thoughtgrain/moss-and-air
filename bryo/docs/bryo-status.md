@@ -13,7 +13,7 @@ cite its sections as "PRD 2.2" and so on). Each track is a source (TAPE, SYNTH, 
 GRAIN, RESONATOR, COLOR, SPACE, then a channel strip into the mix and a master compressor. Four modulator slots
 per track move any of it: hold a slot's pad, turn a knob.
 
-**Phases 1 to 8 of 10 are built, with one piece open (p-locks), and verified on the host only.** Nothing has run on
+**Phases 1 to 9 of 10 are built, with one piece open (p-locks), and verified on the host only.** Nothing has run on
 an FM-1 yet. The next real milestone is the hardware checkpoint (`docs/hardware-checkpoint.md`): flash it, read
 the CPU load, listen.
 
@@ -29,7 +29,7 @@ the CPU load, listen.
 | 7 Modulation | done but p-locks: LFO ADSR SEQ FOLLOW, hold-and-turn depths, MONO's clear and undo |
 | 7b DRUM | done: a fourth source, a CR-78-inspired drum machine of Bryo's own sounds, patterns, rhythms and SEED |
 | 8 Projects | done: six slots in flash (A/B), SAVE, the project view, the last one back at power-on; takes kept in user reels |
-| 9 Screen | mostly early: the dot-grid screens; still to come: modulation arcs, moving dots |
+| 9 Screen | done: the dot-grid screens; a rail under each modulated knob (reach, set, a block where it is now) |
 | 10 Tools + docs | not started: reel upload tool, installer text, a manual |
 
 ## The instrument on one page
@@ -125,7 +125,7 @@ Tests and tools:
 | File | What |
 | --- | --- |
 | `tests/run_tests.sh` | everything below that's quick, plus Felucca's kept hardware and installer tests; ends "ALL HOST TESTS PASSED" |
-| `tests/bryo_host.c` | Bryo's chain, input and screens on the host: 504 checks, and every screen rendered |
+| `tests/bryo_host.c` | Bryo's chain, input and screens on the host: 507 checks, and every screen rendered |
 | `tests/bryo_golden.txt`, `ui_golden.py` | each screen's pixel fingerprint |
 | `tests/checkpoint_sim.sh` | the hardware checkpoint on the host: 28 runs rendered to WAV, each one's cost under callgrind, and a stress test with the audio and USB interrupts cutting into the main loop while the memory's books are checked |
 | `tests/mod_audit.sh` | every knob a modulator can move: does it change the sound, does it step at the blocks, what it costs (`--cost`) |
@@ -233,7 +233,6 @@ number.
   COLOR and the channel strip, the S-4's way.
 - **VEL** (ADSR) does nothing: the keys have no velocity, and MIDI in doesn't reach the tracks yet.
 - **FOLLOW's USB source** listens to nothing until the computer's audio comes in outside the record mode.
-- **LFO RATE with SYNC BPM** prints 0..127, not the division it picked (best done with phase 9's strip work).
 - **SEQ steps on TUNE** are a percentage of 48 semitones; a step page in semitones would be friendlier.
 - **The device itself:** the CPU load is unknown (the hardware checkpoint), the USB OUT endpoint (EP4) is untested
   on hardware, macOS might pick Bryo as its default output when plugged in, and the flash size is an estimate.
@@ -249,7 +248,7 @@ number.
 
 1. **The hardware checkpoint** (`docs/hardware-checkpoint.md`): build, flash, read the CPU on the run sheet,
    listen. Everything after depends on those numbers.
-2. **Phase 9, the screen's modulation:** arcs on the pictograms, the moving dots, the summed value.
+2. **Phase 10, tools and docs:** a Bryo manual, the installer's text.
 3. **DRUM by ear:** listen to the kit and the rhythms, tune `DRM_KIT` and `DRM_PRESET`.
 4. Decisions waiting: p-locks, SPRD on PAN, and whether shared aux buses (one reverb all tracks send to) are worth
    a chain rework (ROUT's per-track sends are in).
@@ -280,4 +279,4 @@ About 50 commits over three days, each one a working step (`git log --oneline --
   realistic load runs; GRAIN's shared pool.
 - **2026-10-09:** modulation; TUNE played live; a LEVEL on every source; the modulation audit (RESONATOR's pitch
   glides, fine pitch); fine filter cutoffs; this page; DRUM (its own voice and kit, the source, SEED); sends
-  (ROUT); projects (phase 8).
+  (ROUT); projects (phase 8); the RAM pass; phase 9's rails.

@@ -74,7 +74,7 @@ static struct {
     uint8_t force;                   /* redraw everything next frame */
     uint8_t msg_t;
     char msg[40];
-    uint32_t sig_head, sig_strip, sig_viz, sig_foot;
+    uint32_t sig_head, sig_strip, sig_viz, sig_foot, sig_rail;
 } ui;
 
 enum { PJ_ASK_NONE, PJ_ASK_LOAD, PJ_ASK_SAVE };
@@ -229,6 +229,102 @@ static void draw_head(void)
     px_blit(0);
 }
 
+/* ------------------------------------------------------------- rails --- */
+/* Phase 9: what modulation does to a knob, under its cell in the strip's bottom rows (one ink, a rail of 24 dots):
+ *   dotted      the knob's whole range
+ *   solid       how far its depths can take it from where it's set (an LFO both ways; ADSR, SEQ, FOLLOW the way the
+ *               depth's sign points), clamped to the range
+ *   a tick      where the knob is set
+ *   a block     where it is now: the value the sound gets, every depth summed (the ISR's modulated copy, TPD)
+ * Only on a knob something modulates; the rest of the strip is as it was. The band is 10 px tall and has its own
+ * signature, so the moving block costs a 240 x 10 redraw (about 3 ms of the 12 MHz link) only when it moves a dot,
+ * not the whole strip. */
+#define RAIL_Y 44                    /* the rails' dot row in the strip */
+#define RAIL_W 24                    /* dots */
+
+/* knob c of the page shown: whether a depth reaches it, and its range, set value, reach and live value as rail
+ * positions 0..RAIL_W - 1. 0: no rail */
+static int rail_of(uint32_t c, int32_t *set, int32_t *lo, int32_t *hi, int32_t *now)
+{
+    uint32_t g = page_target(c), k, a, i;
+    const pdesc_t *d;
+    int32_t span, v, rlo, rhi, live;
+    if (g >= MOD_NTGT || !mod_any(sys.sel, g) || !(d = mod_tdesc(g)))
+        return 0;
+    a = mod_tarr(g, &k);
+    v = mod_base(sys.sel, a)[k];
+    live = TPD(sys.sel, a)[k];
+    span = d->max - d->min;
+    rlo = rhi = v;
+    for (i = 0; i < mdl[sys.sel].n; i++) {
+        const mod_dep_t *e = &mdl[sys.sel].e[i];
+        int32_t m = e->d * span / 100;
+        if (e->g != g)
+            continue;
+        if (tp[sys.sel].engine[e->s] == ME_WAVE) {      /* (bipolar) */
+            rlo -= m < 0 ? -m : m;
+            rhi += m < 0 ? -m : m;
+        } else if (m > 0) {
+            rhi += m;
+        } else {
+            rlo += m;
+        }
+    }
+    *set = param_ratio(d, v) * (RAIL_W - 1) / 1000;
+    *lo = param_ratio(d, clamp(rlo, d->min, d->max)) * (RAIL_W - 1) / 1000;
+    *hi = param_ratio(d, clamp(rhi, d->min, d->max)) * (RAIL_W - 1) / 1000;
+    *now = param_ratio(d, clamp(live, d->min, d->max)) * (RAIL_W - 1) / 1000;
+    return 1;
+}
+
+/* the views that have rails: a device or source page, the channel strip */
+static int rails_on(void)
+{
+    return (ui.view == VIEW_PAGE && ui.kind == FOCUS_DEV && !ui.drm_inst) || (ui.view == VIEW_MIXER && ui.chan == CHAN_STRIP);
+}
+
+/* the four rails, their row at y (dots) of the canvas being drawn */
+static void rails_draw(int32_t y)
+{
+    uint32_t c;
+    for (c = 0; c < 4u && rails_on(); c++) {
+        int32_t x = 30 * (int32_t)c + 3, set, lo, hi, now;
+        if (!rail_of(c, &set, &lo, &hi, &now))
+            continue;
+        px_line(x, y + 2, x + RAIL_W - 1, y + 2, px_dim, 2);
+        px_line(x + lo, y + 2, x + hi, y + 2, px_ink, 1);
+        px_line(x + set, y, x + set, y + 4, px_dim, 1);
+        px_box(x + now - 1, y + 1, 3, 3, px_ink);
+    }
+}
+
+static uint32_t rails_sig(void)
+{
+    uint32_t c, h = 2166136261u + ux.theme * 3u + (uint32_t)rails_on();
+    for (c = 0; c < 4u && rails_on(); c++) {
+        int32_t set, lo, hi, now;
+        if (rail_of(c, &set, &lo, &hi, &now))
+            h = (h ^ (uint32_t)(set | lo << 5 | hi << 10 | now << 15 | (int32_t)c << 20)) * 16777619u;
+    }
+    return h;
+}
+
+/* the rails' band alone, when only they've moved (draw_strip draws them with the rest when it redraws) */
+static void draw_rails(void)
+{
+    uint32_t sig;
+    if (!rails_on() || ui.view == VIEW_USBREC)
+        return;
+    sig = rails_sig();
+    if (!ui.force && sig == ui.sig_rail)
+        return;
+    ui.sig_rail = sig;
+    px_colors();
+    px_begin(10);
+    rails_draw(0);
+    px_blit(UI_STRIP_Y + 2 * RAIL_Y);
+}
+
 /* ------------------------------------------------------------- strip --- */
 /* four cells of 30 dots: the knob's pictogram (it shows the value), its label, the value. The page's last-turned
  * knob has its label inverted. A knob a slot modulates has a small mark in its cell's corner; while a slot's pad is
@@ -331,10 +427,19 @@ static void draw_strip(void)
             px_text_c(x, 30, 37, PXF_5, val, dp ? px_ink : px_dim);
             continue;
         }
-        param_format(d, v, val, &unit);
-        str_cpy(val + str_len(val), unit, 4);          /* "-140%", "250MS": at most 5, 29 dots */
+        if (ui.kind == FOCUS_SLOT && ui.view == VIEW_PAGE && tp[sys.sel].engine[ui.slot] == ME_WAVE && ui.page == 0u &&
+            k == 0u && tp[sys.sel].mod[ui.slot][12]) {  /* LFO RATE, SYNC BPM: the division it plays at */
+            static const char *const DIV[16] = {"16BR", "8BR", "4BR", "3BR", "2BR", "6/4", "1BR", "3/4", "1/2",
+                                                "3/8", "1/4", "3/16", "1/8", "1/8T", "1/16", "1/32"};
+            str_cpy(val, DIV[clamp(v, 0, 127) >> 3], sizeof val);
+        } else {
+            param_format(d, v, val, &unit);
+            str_cpy(val + str_len(val), unit, 4);      /* "-140%", "250MS": at most 5, 29 dots */
+        }
         px_text_c(x, 30, 37, PXF_5, val, px_ink);
     }
+    rails_draw(RAIL_Y);                                /* (what modulation does to each knob: draw_rails) */
+    ui.sig_rail = rails_sig();
     px_blit(UI_STRIP_Y);
 }
 
@@ -482,6 +587,7 @@ static void ui_draw(void)
     }
     draw_head();
     draw_strip();
+    draw_rails();
     draw_viz();
     draw_foot();
     if (ui.msg_t && !--ui.msg_t)

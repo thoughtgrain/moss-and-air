@@ -4966,6 +4966,48 @@ static void test_mod_audio(void)
     power_on();
 }
 
+/* phase 9's rails: under a modulated knob, the reach and a block at the value the sound gets, moving as the LFO
+ * does; its own band redraws, not the strip */
+static void test_rails(void)
+{
+    uint32_t f, moves = 0, strip_redraws = 0, seen = 0, sig0, sstrip;
+    int32_t set, lo, hi, now, last = -1, nmin = 99, nmax = -1;
+    power_on();
+    sys.playing = 1;
+    press(B_FX);                                         /* COLOR: DRIV 50, an LFO a beat on it at depth 40 */
+    tp[0].dev[DEV_COLOR][CP_DRIV] = 50;
+    tp[0].mod[0][0] = 100;
+    tp[0].mod[0][12] = 0;
+    mod_nudge(0, 0, MOD_TG(DEV_COLOR, CP_DRIV), 40);
+    ui_draw();
+    check("rails: none under a knob nothing modulates (CRSH)", !rail_of(1, &set, &lo, &hi, &now));
+    check("..DRIV's: set at 50 %, its reach both ways for an LFO (10 % .. 90 %)",
+          rail_of(0, &set, &lo, &hi, &now) && set == 11 && lo == 2 && hi == 20);
+    sstrip = ui.sig_strip;
+    sig0 = ui.sig_rail;
+    for (f = 0; f < 120u; f++) {                         /* 120 frames (~1.8 s), 20 blocks a frame */
+        render(20, 0);
+        ui_draw();
+        rail_of(0, &set, &lo, &hi, &now);
+        if (now != last)
+            moves++;
+        last = now;
+        nmin = now < nmin ? now : nmin;
+        nmax = now > nmax ? now : nmax;
+        strip_redraws += ui.sig_strip != sstrip;
+        sstrip = ui.sig_strip;
+        seen |= ui.sig_rail != sig0;
+    }
+    {
+        char m[128];
+        snprintf(m, sizeof m, "..the block follows the LFO: %u moves over the reach (%d .. %d), the rails redrawn, the "
+                 "strip %u times", moves, nmin, nmax, strip_redraws);
+        check(m, moves > 20u && nmin <= 4 && nmax >= 18 && seen && strip_redraws == 0u);
+    }
+    sys.playing = 0;
+    power_on();
+}
+
 static void test_source_level(void)
 {
     static int32_t a[CTL * 300], b[CTL * 300];
@@ -5328,6 +5370,7 @@ int main(int argc, char **argv)
     test_mod();
     test_mod_engines();
     test_mod_audio();
+    test_rails();
     test_source_level();
     test_drum_voices();
     test_drum();
