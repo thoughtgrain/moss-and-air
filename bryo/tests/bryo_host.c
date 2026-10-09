@@ -4436,6 +4436,67 @@ static void test_mod_engines(void)
     }
     sys.playing = 0;
     power_on();
+    /* the pitch knobs modulate finer than a semitone: an LFO on TUNE at a small depth is vibrato, not a trill */
+    {
+        uint32_t b, fine = 0, f;
+        int32_t lo = 1 << 20, hi = -(1 << 20);
+        power_on();
+        tp[0].src = SRC_SYNTH;
+        tp[0].mod[0][0] = 100;                           /* ~6 Hz */
+        tp[0].mod[0][12] = 0;
+        mod_nudge(0, 0, MOD_TSRC + SRC_SYNTH * NPK + SY_TUNE, 1);   /* 1 % of 48 semitones: about half a semitone */
+        for (b = 0; b < 400u; b++) {
+            static const int32_t zero[CTL];
+            const int32_t *last[NTRK] = {zero, zero, zero, zero};
+            mod_tick(0, 0, last);
+            f = (uint32_t)mod_pitch16(0, FN_SYN, TPD(0, MA_SYN)[SY_TUNE]);
+            fine += (f & 15u) != 0u;
+            lo = (int32_t)f < lo ? (int32_t)f : lo;
+            hi = (int32_t)f > hi ? (int32_t)f : hi;
+        }
+        check("mod: TUNE modulates in 1/16 semitones (vibrato: about +-half a semitone, between the semitones)",
+              fine > 100u && lo >= -9 && lo <= -7 && hi >= 7 && hi <= 9);
+        check("..and reads as the knob x 16 when nothing modulates it", mod_pitch16(1, FN_SYN, 5) == 80);
+        mod_clear(0);                                    /* a SEQ on TUNE: its steps stay on semitones */
+        param_engine(0, 2, ME_SEQ);
+        tp[0].mod[2][0] = 4;
+        tp[0].mod[2][1] = 4;
+        tp[0].steps[2][0] = 15;                          /* 15 % of 48: 7.2 semitones, a fifth */
+        tp[0].steps[2][1] = 21;
+        tp[0].steps[2][2] = 6;
+        tp[0].steps[2][3] = 25;
+        mod_nudge(0, 2, MOD_TSRC + SRC_SYNTH * NPK + SY_TUNE, 100);
+        sys.playing = 1;
+        for (b = 0, fine = 0; b < 800u; b++) {
+            static const int32_t zero[CTL];
+            const int32_t *last[NTRK] = {zero, zero, zero, zero};
+            mod_tick(0, 0, last);
+            f = (uint32_t)mod_pitch16(0, FN_SYN, TPD(0, MA_SYN)[SY_TUNE]);
+            fine += (f & 15u) != 0u;
+        }
+        sys.playing = 0;
+        check("..a SEQ on TUNE lands on semitones (a step is a note)", fine == 0u && f % 16u == 0u);
+    }
+    /* RESONATOR's root glides when PTCH moves (half the way a block), so the strings' read point never jumps */
+    {
+        int32_t r0, r1;
+        power_on();
+        reso_poll();
+        tp[0].dev[DEV_RESO][RP_WET] = 60;
+        reso_poll();
+        reso_poll();
+        reso_poll();
+        reso_poll();
+        render(20, 0);
+        r0 = reso[0].rs16;
+        tp[0].dev[DEV_RESO][RP_PTCH] += 12;
+        render(1, 0);
+        r1 = reso[0].rs16;
+        render(30, 0);
+        check("RESONATOR: PTCH +12 glides there (half the way in a block, all of it soon after)",
+              reso[0].nch > 0u && r1 > r0 && r1 < r0 + 12 * 16 && reso[0].rs16 >= r0 + 12 * 16 - 1);
+        power_on();
+    }
     /* TUNE moves a held note (SYNTH and POLY add it as the voice plays, not when the key went down) */
     {
         static int32_t buf[CTL * 400];

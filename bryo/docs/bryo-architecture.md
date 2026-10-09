@@ -214,7 +214,7 @@ with its mixes. My target for all four tracks, everything on, is **at most 2,000
 | COLOR | 30 | drive table, crush, follower plus noise (measured 180 a track with every knob on, 0 at the defaults: see "COLOR, as built") |
 | SPACE | 80 | delay plus reverb at 22.05 kHz (measured 220 a track with both on: see "SPACE, as built") |
 | Mixer | 60 for all | measured 145 a track with LOW, HIGH and FILT all on (0 at their defaults), the pan 10, the compressor 2: see "The mixer, as built" |
-| Modulators | 10 | control rate (every 32 samples), not per sample (measured 83 for all four tracks modulated the way I'd play them, 5 with none: see "Modulation, as built") |
+| Modulators | 10 | control rate (every 32 samples), not per sample (measured 84 for all four tracks modulated the way I'd play them, 5 with none: see "Modulation, as built") |
 | **Track total** | **~440** | **× 4 = ~1,760**, plus the mixer and compressor ~60 |
 
 The audio ISR's 85% guard stays. Instead of shedding voices it sheds *grains* first (lowers the sounding
@@ -1090,9 +1090,40 @@ and the targets are numbered by NPK: GRAIN..SPACE 0..79, the sources 80..139, th
 **TUNE plays live now.** SYNTH and POLY used to add TUNE to a note when its key went down, so a modulated TUNE
 only reached the next note. The listening examples caught it: a SEQ on TUNE over a held note played one pitch. Now
 the voice adds TUNE every block (SYNTH to its pitch, POLY to its head's step), so a SEQ on TUNE over a held note is
-an arpeggio, and an LFO on it is vibrato. Played normally, nothing changes. One catch: SEQ's steps are 0..100 %
+an arpeggio, and (with the 1/16-semitone pitch below) an LFO on it is vibrato. Played normally, nothing changes. One catch: SEQ's steps are 0..100 %
 and TUNE spans 48 semitones, so a step lands on the nearest semitone (25 % is an octave, 15 % a fifth, 21 % a minor
 seventh); a step page that shows semitones on a TUNE target would be the friendlier way, later.
+
+**How well everything modulates** (2026-10-09, `tests/mod_audit.sh`). I measured every knob a slot can move rather
+than guess: track 1 alone, the knob's device on and the knobs it depends on set, 3 s without and 3 s with an LFO on
+it (1 Hz, depth 50; 100 for a switch), and for SYNTH and POLY once over a played phrase and once over a held note.
+`tests/mod_audit.py` reports how much the sound changes, whether it jumps where the control blocks start (a knob
+applied a block at a time in steps does), and, with `--cost`, the instructions.
+
+- Every knob moves the sound. The ones that seem not to act on their own need what they act on: STRT a LEN under
+  100, GRAIN's OFST a SCAN on POS or DLY, its SCAL some PRND, POLY's DEC a SUS under 100; ROTA acts at the next
+  start, DUB and GAIN while recording; ATK DEC REL VOIC GLID (and POLY's STRT) at the next note. A switch (REV,
+  HALF, WAVE, TYPE, CMOD...) needs a depth of about 70 to flip: the swing has to cross half a step.
+- RESONATOR's PTCH was the one that jumped: the strings' delay changed length a block at a time, and their read
+  point jumped (34 clicks a second on a sweep, a 4.6 dB edge at the blocks' starts). Now the root glides half the
+  way a block and each string reaches its new length sample by sample across the block: no edge, no clicks. A key's
+  root still lands at once (it's a new note, and a pluck). It costs nothing while the pitch holds.
+- The pitch knobs (SYNTH's and POLY's TUNE, RESONATOR's and GRAIN's PTCH) modulate in 1/16 semitones now (`mod_f16`,
+  read through `mod_pitch16`): a knob holds semitones, so an LFO on TUNE used to step, a trill rather than vibrato.
+  Now a small depth is vibrato. A SEQ's steps still land on semitones (a step is a note).
+- I got one thing wrong on the way, and the tool says so in its header. My first pass flagged SYNTH (MIX, CUT, ENV,
+  RES, TUNE) and SPACE's TIME as clicking and buzzing at the blocks' rate. They weren't stepping: a saw's own edges
+  count as clicks, and a moving pitch or filter smears its harmonics into the blocks' frequencies. I smoothed them
+  anyway (MIX, NOIS and DRV ramped, the filter in four steps a block, TIME's target ramped), measured no difference
+  in what the edge test finds, and 25 to 50 more instructions a sample on the groove (runs 18, 19), so I took that
+  back out. The edge test is the one that tells.
+- TAPE's HALF flags as a step: it's a switch, the speed changes at once by design.
+- Cost: a slot with one depth adds about 20 instructions a sample; what the device does with the moving knob comes
+  on top, in proportion (the channel filter switched on, more grains at a higher RATE, more notes overlapping with a
+  longer REL). Nothing costs more just for being modulated.
+- The knobs' own resolution still shows on slow, deep sweeps of a few: CUT moves in semitones (SYNTH's, POLY's,
+  RESONATOR's), LVL in dB. Not a click; a sweep you can count with high resonance. The fine path that pitch uses would
+  carry CUT too, if it's ever heard.
 
 **The clock** is one counter of beats (Q16), counted exactly from the tempo with its remainder carried, reset when
 PLAY starts and running on while stopped, so a synced LFO still moves when you're tweaking a stopped loop.
@@ -1103,16 +1134,16 @@ PLAY starts and running on while stopped, so a synced LFO still moves when you'r
 | --- | --- | ---: | ---: |
 | 1 | four reels, nothing modulated | 934 (929 before) | 5 (the clock) |
 | 19 | the four-track groove, unmodulated | 1,595 | 0 |
-| 24 | the groove modulated the way I'd play it: an LFO a beat on T1's crush, a SEQ on T2's grain size, T1's drums ducking T2's filter through FOLLOW, the ADSR opening T3's synth cutoff, a stereo LFO on T4's pan | 1,788 | 83 |
-| 25 | every slot on every track, 32 depths each (128) | 3,097 | 445 |
+| 24 | the groove modulated the way I'd play it: an LFO a beat on T1's crush, a SEQ on T2's grain size, T1's drums ducking T2's filter through FOLLOW, the ADSR opening T3's synth cutoff, a stereo LFO on T4's pan | 1,793 | 84 |
+| 25 | every slot on every track, 32 depths each (128) | 3,123 | 469 |
 
-So the realistic case costs about 190 on top of the groove: 83 for the modulators and the rest is the devices
+So the realistic case costs about 195 on top of the groove: 84 for the modulators and the rest is the devices
 doing more work because their knobs move (the channel filter re-tuning every block, the synth's cutoff, GRAIN's
 grains at changing sizes). My budget said 10 for the modulators; that was a guess at the summing alone, before
 four engines with curves, interpolation and a clock. The groove modulated stays under the 2,000 I set for a
 realistic four-track scene. Run 25 is the ceiling, and it's not a scene anyone plays: it modulates whatever the
 first 32 targets of each slot are (since the sources' LEVEL pages, NPK 20, those land on other knobs, and more
-devices wake: 3,097, up from 2,858; the modulation itself is the same 445).
+devices wake: 3,123, up from 2,858; the modulation itself 469, 24 of it the pitch knobs' finer path).
 
 **Memory**: the depths and their undo 2.9 KB of main RAM (now 84.4 of 96 KiB, with five pages of knobs); the lists, the slots' state and the
 modulated arrays 5.9 KB of the pool (now 322.4 of 336 KiB). Code about 9 KB on the host measure.

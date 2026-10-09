@@ -118,6 +118,9 @@ They type-check the firmware with clang, run the hardware layer's tests, run Bry
 the host, check every screen against its pixel fingerprint, and test the installer. With a device build they also
 test the update path against the real package.
 
+`tests/mod_audit.sh` (needs numpy; `--cost` adds valgrind) checks how every knob a modulator can move behaves:
+whether it changes the sound, whether it steps at the control blocks, and what it costs.
+
 ## Licence
 
 GPL-3.0-only, like Felucca. See [LICENSE](LICENSE), [LICENSING.md](LICENSING.md) and [NOTICE.md](NOTICE.md).

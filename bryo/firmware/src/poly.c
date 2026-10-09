@@ -32,11 +32,11 @@ static pol_t pol[NTRK];
 static tape_rd_t pol_rd[NTRK][POL_NV] __attribute__((section(".pool")));   /* each voice's block (8 KB in all) */
 
 /* the head's step for a voice's note on track t, Q12 tape samples per output sample: 0.5 at the sound's own pitch.
- * TUNE is added here, every block, so a modulated TUNE moves a held note too (mod.c) */
+ * TUNE is added here, every block, so a modulated TUNE moves a held note too, to 1/16 semitone (mod.c) */
 static int32_t pol_inc(uint32_t t, uint32_t note)
 {
-    int32_t n = clamp((int32_t)note + TPD(t, MA_POL)[PL_TUNE], 0, 127);
-    return (int32_t)(pitch_inc((uint32_t)n * 16u) / (pitch_inc(48u * 16u) >> 11));   /* (C3: the sound's own) */
+    int32_t n16 = clamp((int32_t)note * 16 + mod_pitch16(t, FN_POL, TPD(t, MA_POL)[PL_TUNE]), 0, 127 * 16);
+    return (int32_t)(pitch_inc((uint32_t)n16) / (pitch_inc(48u * 16u) >> 11));   /* (C3: the sound's own) */
 }
 
 static void pol_start(uint32_t t, uint32_t k, uint32_t nv, uint32_t len)

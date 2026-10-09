@@ -357,7 +357,8 @@ static inline int32_t gr_env(const grain_t *g, uint32_t at)
 /* PTCH + a random +-PRND, held to SCAL: 1/16 semitones */
 static int32_t gr_pitch(grain_trk_t *G, const int16_t *p)
 {
-    int32_t st16 = p[GP_PTCH] * 16, sc = clamp(p[GP_SCAL], 0, 4), k, best = 0, bd = 1 << 20;
+    int32_t st16 = mod_pitch16((uint32_t)(G - grain), FN_GRAIN, p[GP_PTCH]), sc = clamp(p[GP_SCAL], 0, 4), k, best = 0;
+    int32_t bd = 1 << 20;                               /* (PTCH to 1/16 semitone when it's modulated: mod.c) */
     if (p[GP_PRND])
         st16 += (int32_t)(gr_rnd(G) % (uint32_t)(p[GP_PRND] * 32 + 1)) - p[GP_PRND] * 16;
     if (!sc)

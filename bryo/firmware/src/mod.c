@@ -43,8 +43,17 @@ static struct {                              /* MONO's clear and SAVE's undo of 
     uint8_t trk, valid;
 } mod_undo_buf;
 
+enum { FN_SYN, FN_POL, FN_RESO, FN_GRAIN, FN_N };   /* the pitch knobs, which modulate finer than the knob (below) */
+/* knob k of array a as a fine pitch (FN_*), or FN_N */
+static inline uint32_t mod_fine_of(uint32_t a, uint32_t k)
+{
+    return a == MA_SYN && k == SY_TUNE ? FN_SYN : a == MA_POL && k == PL_TUNE ? FN_POL : a == DEV_RESO && k == 0u ? FN_RESO
+         : a == DEV_GRAIN && k == 2u ? FN_GRAIN : FN_N;   /* (RESONATOR's and GRAIN's PTCH: knob 1 and 3 of page 1) */
+}
+
 typedef struct {                     /* a depth, ready for the ISR */
-    uint8_t slot, arr, k, tgt;       /* from slot, to knob k of array arr (target tgt) */
+    uint8_t slot, arr, k, tgt;       /* from slot (bits 0..3; bits 4..7: the knob as a pitch, FN_*), to knob k of array
+                                      * arr (target tgt) */
     int16_t lo, hi;                  /* the knob's range */
     int32_t fq;                      /* depth x range, scaled: (out >> 3) x fq >> 19 is the move at out (Q15) */
 } mod_ent_t;
@@ -110,7 +119,7 @@ static void mod_rebuild(uint32_t t)
                 n++;
                 if (!d || L->n >= MOD_MAX)
                     continue;
-                e->slot = (uint8_t)s;
+                e->slot = (uint8_t)(s | mod_fine_of(a, k) << 4);
                 e->arr = (uint8_t)a;
                 e->k = (uint8_t)k;
                 e->tgt = (uint8_t)g;
@@ -296,6 +305,16 @@ static const int16_t *mdv[NTRK][MOD_NARR];     /* what the devices read: mda's a
 #define TPD(t, a) (mdv[t][a])                  /* track t's knob array a (DEV_*, MA_SYN, MA_POL, MA_CH), modulated */
 static int16_t mod_pan_r[NTRK];                /* ISR: the right channel's PAN (SPRD), when the channel is modulated */
 static uint8_t mod_arrs[NTRK];                 /* ISR: the arrays mdv points into mda for */
+
+/* The pitch knobs (semitones) modulate in 1/16 semitones: a knob holds whole semitones, so an LFO on TUNE would
+ * step (a trill, not vibrato). mod_tick keeps each one's modulated pitch finer than the knob, and the voices read it
+ * through mod_pitch16 (the knob x 16 when nothing modulates it). */
+static int32_t mod_f16[NTRK][FN_N];            /* ISR: the modulated pitch, 1/16 semitone */
+static uint8_t mod_fmask[NTRK];                /* ISR: which of them hold one this block */
+static inline int32_t mod_pitch16(uint32_t t, uint32_t f, int32_t knob)
+{
+    return (mod_fmask[t] >> f) & 1u ? mod_f16[t][f] : knob * 16;
+}
 static uint32_t mod_keys_prev[NTRK];
 static volatile uint8_t mod_seam;              /* a bit per track: its tape crossed its loop's start (tape.c) */
 static uint32_t mod_phrase_n;
@@ -610,6 +629,7 @@ static void mod_tick(uint32_t keys, uint32_t sel, const int32_t *const *last)
         uint32_t k = t == sel ? keys : 0u, press = k & ~mod_keys_prev[t], i, a, arrs;
         int loop;
         mod_keys_prev[t] = k;
+        mod_fmask[t] = 0;
         if (!((mod_on >> t) & 1u) && !mod_arrs[t])    /* nothing modulates the track, nor did last block */
             continue;
         L = &mod_l[t][mod_cur[t] & 1u];
@@ -663,11 +683,24 @@ static void mod_tick(uint32_t keys, uint32_t sel, const int32_t *const *last)
         for (i = 0; i < L->n;) {                        /* each target: its depths summed, then clamped once */
             const mod_ent_t *E = &L->e[i];
             int16_t *p = &mda[t][E->arr][E->k];
-            int32_t sum = 0, sumr = 0, g = E->tgt;
-            for (; i < L->n && L->e[i].tgt == g; i++) {
-                const mod_rt_t *m = &mrt[t][L->e[i].slot];
-                sum += ((m->out >> 3) * L->e[i].fq + (1 << 18)) >> 19;
-                sumr += ((m->outr >> 3) * L->e[i].fq + (1 << 18)) >> 19;
+            int32_t sum = 0, sumr = 0, g = E->tgt, s16 = 0;
+            uint32_t fi = E->slot >> 4u;
+            if (fi < FN_N) {                            /* a pitch: 16 times finer too (|fq| < 6,200 here), except a
+                                                         * SEQ's steps, which land on semitones (a step is a note) */
+                for (; i < L->n && L->e[i].tgt == g; i++) {
+                    const mod_rt_t *m = &mrt[t][L->e[i].slot & 15u];
+                    int32_t d = ((m->out >> 3) * L->e[i].fq + (1 << 18)) >> 19;
+                    sum += d;
+                    s16 += m->engine == ME_SEQ + 1u ? d * 16 : ((m->out >> 3) * L->e[i].fq * 16 + (1 << 18)) >> 19;
+                }
+                mod_f16[t][fi] = clamp(*p * 16 + s16, E->lo * 16, E->hi * 16);
+                mod_fmask[t] |= (uint8_t)(1u << fi);
+            } else {
+                for (; i < L->n && L->e[i].tgt == g; i++) {
+                    const mod_rt_t *m = &mrt[t][L->e[i].slot & 15u];
+                    sum += ((m->out >> 3) * L->e[i].fq + (1 << 18)) >> 19;
+                    sumr += ((m->outr >> 3) * L->e[i].fq + (1 << 18)) >> 19;
+                }
             }
             if (g == (int32_t)(MOD_TCH + CH_PAN))
                 mod_pan_r[t] = (int16_t)clamp(*p + sumr, E->lo, E->hi);

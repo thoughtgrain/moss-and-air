@@ -127,7 +127,8 @@ static void syn_voice(uint32_t t, syn_voice_t *v, int32_t *out, uint32_t n)
     }
     e15 = v->env >> 9;
     a1 = e15;
-    pp = clamp(v->p16 + p[SY_TUNE] * 16, 0, 2047);          /* (TUNE as it is now) */
+    pp = clamp(v->p16 + mod_pitch16(t, FN_SYN, p[SY_TUNE]), 0, 2047);   /* (TUNE as it is now, to 1/16 semitone
+                                                                           * when it's modulated: mod.c) */
     inc1 = pitch_inc((uint32_t)pp);
     inc2 = p[SY_DTUN] ? cents_inc(pp, p[SY_DTUN], 0) : inc1;
     cut = (p[SY_CUT] << 8) + p[SY_ENV] * 96 * (e15 >> 7) / 100 + p[SY_KTRK] * (pp - 60 * 16) * 16 / 100;

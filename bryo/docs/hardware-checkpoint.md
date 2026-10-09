@@ -59,11 +59,11 @@ runs 18 to 22 are realistic setups (each played for 6 s, a synth track's keys go
 | 20 | an ambient pad on two tracks: a synth stretched by dense grains into a long reverb, a reel through the strings | 2,077 | 2.2x |
 | 21 | the groove's busiest moment: denser grains, strings, a delay, every channel filtered | 2,439 | 2.6x |
 | 22 | the groove, bounced onto track 4 as it plays | 1,756 | 1.9x |
-| 24 | the groove, modulated: an LFO a beat on the crush, a SEQ on grain size, T1's drums ducking T2's filter (FOLLOW), an ADSR on the bass's cutoff, a stereo LFO on T4's pan | 1,788 | 1.9x |
-| 25 | the groove with every slot on every track, 32 depths each (the most there can be) | 3,097 | 3.3x |
+| 24 | the groove, modulated: an LFO a beat on the crush, a SEQ on grain size, T1's drums ducking T2's filter (FOLLOW), an ADSR on the bass's cutoff, a stereo LFO on T4's pan | 1,793 | 1.9x |
+| 25 | the groove with every slot on every track, 32 depths each (the most there can be) | 3,123 | 3.3x |
 
 Run 24 is run 19 (now 1,595: every run costs about 5 more since the modulation's clock ticks whether or not anything
-is modulated) plus the modulation I'd reach for: 83 of the 190 extra are the modulators, the rest the devices
+is modulated) plus the modulation I'd reach for: 84 of the 195 extra are the modulators, the rest the devices
 re-tuning as their knobs move. Run 25 is the ceiling, not a scene (docs/bryo-architecture.md, "Modulation, as
 built").
 

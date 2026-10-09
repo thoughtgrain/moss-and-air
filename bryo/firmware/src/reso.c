@@ -41,6 +41,9 @@ typedef struct {
     int32_t lp[RS_N];                /* each loop's low-pass */
     int32_t ic1, ic2;                /* the filter in front */
     int32_t root16;                  /* a key's root, 1/16 semitone (0: none, PTCH's; a key's is F1 at least) */
+    int32_t rs16;                    /* the root the strings sound, gliding to the root (0: not yet) */
+    uint32_t dq[RS_N];               /* each string's delay last block, Q8 (0: none): a new one is reached sample by
+                                      * sample across the block, so a moving pitch never jumps the read point */
     int16_t ptch_seen;               /* PTCH when the key was played (turning PTCH takes over again) */
     int32_t wet;                     /* WET last block (ramped across the next), 0..100 */
     uint32_t keys;
@@ -57,7 +60,7 @@ static inline int16_t *rs_line(const reso_t *R, uint32_t k) { return (int16_t *)
 /* the root now, 1/16 semitone */
 static int32_t reso_root16(uint32_t t)
 {
-    return reso[t].root16 > 0 ? reso[t].root16 : TPD(t, DEV_RESO)[RP_PTCH] * 16;
+    return reso[t].root16 > 0 ? reso[t].root16 : mod_pitch16(t, FN_RESO, TPD(t, DEV_RESO)[RP_PTCH]);
 }
 
 /* a period, Q8 samples, for pitch n16 (kept inside a string's line) */
@@ -124,9 +127,18 @@ static void reso_block(uint32_t t, int32_t *l, int32_t *r, uint32_t keys, int pl
                 rs_pluck(R, nstr, R->root16, a, sc);
             break;
         }
-    if (!nstr || (!wet0 && !wet1))                       /* off: the track as it was */
+    if (!nstr || (!wet0 && !wet1)) {                     /* off: the track as it was */
+        R->rs16 = 0;
+        for (k = 0; k < RS_N; k++)
+            R->dq[k] = 0;
         return;
+    }
     root16 = reso_root16(t);
+    if (!R->rs16 || R->root16 > 0)                      /* a key's root lands at once (a pluck is a new note); */
+        R->rs16 = root16;                               /* PTCH, turned or modulated, glides: half the way a block */
+    else
+        R->rs16 += (root16 - R->rs16) / 2;
+    root16 = R->rs16;
     {   /* what excites the strings: the track, mono, through the filter in front (when it does anything) */
         int32_t mode = clamp(p[RP_SLOP], 0, 2);
         tsvf_t flt;
@@ -150,19 +162,42 @@ static void reso_block(uint32_t t, int32_t *l, int32_t *r, uint32_t keys, int pl
         uint32_t pq8 = rs_period_q8(root16 + RS_PART16[sc][k]), comp = ((uint32_t)(32768 - a) << 8) / (uint32_t)a;
         uint32_t dq8 = pq8 > comp + 512u ? pq8 - comp : 512u, di = dq8 >> 8, df = dq8 & 255u, w = R->w;
         int32_t g = rs_gain(pq8 >> 8, t60), lp = R->lp[k], *acc = k & 1u ? acc_o : acc_e;
-        uint32_t rd = w >= di ? w - di : w + RS_LEN - di;
-        for (i = 0; i < n; i++) {
-            uint32_t rp = rd ? rd - 1u : RS_LEN - 1u;
-            int32_t x = d[rd] + (((d[rp] - d[rd]) * (int32_t)df) >> 8), y, z;
-            lp += (a * (x - lp)) >> 15;
-            y = (lp * g) >> 15;
-            z = y + e[i];
-            d[w] = (int16_t)(z > 32767 ? 32767 : z < -32767 ? -32767 : z);
-            acc[i] += y;
-            if (++w == RS_LEN)
-                w = 0;
-            if (++rd == RS_LEN)
-                rd = 0;
+        uint32_t rd = w >= di ? w - di : w + RS_LEN - di, d0 = R->dq[k] ? R->dq[k] : dq8;
+        int32_t dd = (int32_t)dq8 - (int32_t)d0;
+        R->dq[k] = dq8;
+        if (dd) {                                       /* the delay moving: each sample's own read point */
+            int32_t cq = (int32_t)d0 << CTL_LOG2;       /* (n is CTL) */
+            for (i = 0; i < n; i++) {
+                uint32_t cur, rp;
+                int32_t x, y, z;
+                cq += dd;
+                cur = (uint32_t)(cq >> CTL_LOG2);
+                di = cur >> 8;
+                rd = w >= di ? w - di : w + RS_LEN - di;
+                rp = rd ? rd - 1u : RS_LEN - 1u;
+                x = d[rd] + (((d[rp] - d[rd]) * (int32_t)(cur & 255u)) >> 8);
+                lp += (a * (x - lp)) >> 15;
+                y = (lp * g) >> 15;
+                z = y + e[i];
+                d[w] = (int16_t)(z > 32767 ? 32767 : z < -32767 ? -32767 : z);
+                acc[i] += y;
+                if (++w == RS_LEN)
+                    w = 0;
+            }
+        } else {
+            for (i = 0; i < n; i++) {
+                uint32_t rp = rd ? rd - 1u : RS_LEN - 1u;
+                int32_t x = d[rd] + (((d[rp] - d[rd]) * (int32_t)df) >> 8), y, z;
+                lp += (a * (x - lp)) >> 15;
+                y = (lp * g) >> 15;
+                z = y + e[i];
+                d[w] = (int16_t)(z > 32767 ? 32767 : z < -32767 ? -32767 : z);
+                acc[i] += y;
+                if (++w == RS_LEN)
+                    w = 0;
+                if (++rd == RS_LEN)
+                    rd = 0;
+            }
         }
         R->lp[k] = lp;
     }
