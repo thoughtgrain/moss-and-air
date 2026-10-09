@@ -1317,6 +1317,15 @@ held clears and SAVE undoes, once; a SEQ page's keys and KNOB 1). The checkpoint
 slot knobs and clears and undoes while the audio interrupt cuts in, and checks every modulated knob stays in its
 range and every array is read from the right place.
 
+**Modulation reaches the sound (a guard in the suite, 2026-10-09).** test_mod and test_mod_engines check the knob
+values modulation produces; `test_mod_audio` checks the audio. For a knob of each kind (TAPE's SPD, COLOR's DRIV,
+SYNTH's CUT under an ADSR with a note held, POLY's TUNE, DRUM's TUNE under a SEQ, the channel's FILT under FOLLOW),
+1.1 s of track 1 with the depth against the same without: each differs by 2 to 5 dB of the sound for the pitch and
+drive ones (the waves no longer line up), -10 and -15 dB for the filters; and a depth of 0 renders exactly the sound
+without one. It compares the track's own output, before the output stage, because the DC blocker, speaker EQ and
+limiter carry their state over from whatever played before (the first version compared after them and called two
+identical renders different). With the ISR's depth list emptied on purpose, all six fail.
+
 ## DRUM, as built (2026-10-09)
 
 DRUM is the fourth source: a drum machine on a track. I wanted the feel of a CR-78, the preset rhythm box with its

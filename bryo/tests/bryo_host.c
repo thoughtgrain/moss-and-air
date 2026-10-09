@@ -4890,6 +4890,82 @@ static void test_projects(void)
     power_on();
 }
 
+/* Modulation reaches the sound: for a knob of each kind of array (a device, each source, DRUM, the channel) and each
+ * engine, ~1.1 s of track 1 with a slot's depth on it against the same without. The knob values are checked
+ * elsewhere (test_mod, test_mod_engines); this checks the audio itself moves, and that a depth of 0 is exactly the
+ * sound without one. (tests/mod_audit.sh does every target, slowly; this is the quick guard in the suite) */
+static int32_t mz_a[CTL * 1500], mz_b[CTL * 1500];
+static void mz_setup(uint32_t src)
+{
+    power_on();
+    track[1].mute = track[2].mute = track[3].mute = 1;
+    tp[0].src = (uint8_t)src;
+    sys.bpm = 120;
+    sys.playing = 1;
+    sys.keys_live = 1;
+    fm1_in.notes = src == SRC_SYNTH || src == SRC_POLY ? note_bit_of_white(0) : 0u;   /* (a held note) */
+}
+/* track 1's own output (before the output stage, whose DC blocker, EQ and limiter carry their state from whatever
+ * played before: they're not what modulation moves) */
+static void mz_render(int32_t *o)
+{
+    uint32_t b;
+    for (b = 0; b < 1500u; b++) {
+        chain_block(out, CTL);
+        memcpy(o + b * CTL, track_rt[0].last, CTL * sizeof *o);
+    }
+}
+/* the difference modulation makes, in dB against the sound without it (-999: none at all) */
+static double mz_diff(uint32_t src, uint32_t e, uint32_t g, int32_t dep)
+{
+    double sa = 0, sd = 0;
+    uint32_t i;
+    mz_setup(src);
+    mz_render(mz_a);
+    mz_setup(src);
+    param_engine(0, 0, e);
+    if (e == ME_WAVE) {                                  /* the LFO free and quick: several cycles in the window */
+        tp[0].mod[0][0] = 100;
+        tp[0].mod[0][12] = 0;
+    }
+    mod_nudge(0, 0, g, dep);
+    mz_render(mz_b);
+    fm1_in.notes = 0;
+    for (i = 0; i < CTL * 1500u; i++) {
+        double d = (double)mz_b[i] - mz_a[i];
+        sa += (double)mz_a[i] * mz_a[i];
+        sd += d * d;
+    }
+    return sd == 0 ? -999.0 : 10 * log10(sd / (sa + 1));
+}
+
+static void test_mod_audio(void)
+{
+    static const struct {
+        const char *what;
+        uint32_t src, e, g;
+        int32_t dep;
+    } C[] = {
+        {"an LFO on TAPE's SPD (a source knob)", SRC_TAPE, ME_WAVE, MOD_TSRC + SRC_TAPE * NPK + TK_SPD, 40},
+        {"an LFO on COLOR's DRIV (a device)", SRC_TAPE, ME_WAVE, MOD_TG(DEV_COLOR, CP_DRIV), 80},
+        {"an ADSR on SYNTH's CUT, a note held", SRC_SYNTH, ME_ADSR, MOD_TSRC + SRC_SYNTH * NPK + SY_CUT, 60},
+        {"an LFO on POLY's TUNE, a note held", SRC_POLY, ME_WAVE, MOD_TSRC + SRC_POLY * NPK + PL_TUNE, 30},
+        {"a SEQ on DRUM's TUNE, the pattern playing", SRC_DRUM, ME_SEQ, MOD_TSRC + SRC_DRUM * NPK + DM_TUNE, 60},
+        {"a FOLLOW (its own track) on the channel's FILT", SRC_TAPE, ME_FOLLOW, MOD_TCH + CH_FILT, -80},
+    };
+    uint32_t k;
+    char m[128];
+    for (k = 0; k < NELEM(C); k++) {
+        double d = mz_diff(C[k].src, C[k].e, C[k].g, C[k].dep);
+        snprintf(m, sizeof m, "mod reaches the sound: %s (the difference %.2f dB of it)", C[k].what, d);
+        check(m, d > -30.0);
+    }
+    snprintf(m, sizeof m, "..and a depth of 0 is exactly the sound without one (%s)",
+             mz_diff(SRC_TAPE, ME_WAVE, MOD_TG(DEV_COLOR, CP_DRIV), 0) == -999.0 ? "no sample differs" : "SOME DIFFER");
+    check(m, strstr(m, "no sample differs") != 0);
+    power_on();
+}
+
 static void test_source_level(void)
 {
     static int32_t a[CTL * 300], b[CTL * 300];
@@ -5251,6 +5327,7 @@ int main(int argc, char **argv)
     test_mixer();
     test_mod();
     test_mod_engines();
+    test_mod_audio();
     test_source_level();
     test_drum_voices();
     test_drum();

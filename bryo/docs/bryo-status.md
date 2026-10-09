@@ -125,7 +125,7 @@ Tests and tools:
 | File | What |
 | --- | --- |
 | `tests/run_tests.sh` | everything below that's quick, plus Felucca's kept hardware and installer tests; ends "ALL HOST TESTS PASSED" |
-| `tests/bryo_host.c` | Bryo's chain, input and screens on the host: 497 checks, and every screen rendered |
+| `tests/bryo_host.c` | Bryo's chain, input and screens on the host: 504 checks, and every screen rendered |
 | `tests/bryo_golden.txt`, `ui_golden.py` | each screen's pixel fingerprint |
 | `tests/checkpoint_sim.sh` | the hardware checkpoint on the host: 28 runs rendered to WAV, each one's cost under callgrind, and a stress test with the audio and USB interrupts cutting into the main loop while the memory's books are checked |
 | `tests/mod_audit.sh` | every knob a modulator can move: does it change the sound, does it step at the blocks, what it costs (`--cost`) |
