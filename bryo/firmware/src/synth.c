@@ -35,10 +35,11 @@ typedef struct {
 
 static syn_t syn[NTRK];
 
-/* white key k of track t as a pitch, 1/16 semitone */
+/* white key k of track t as a pitch, 1/16 semitone, before TUNE (added as the voice plays, so a modulated TUNE
+ * moves a held note too: mod.c) */
 static int32_t syn_note16(uint32_t t, uint32_t k)
 {
-    int32_t n = 12 * ((int32_t)track[t].octave + 1) + (int32_t)k + TPD(t, MA_SYN)[SY_TUNE];
+    int32_t n = 12 * ((int32_t)track[t].octave + 1) + (int32_t)k;
     return clamp(n, 0, 127) * 16;
 }
 
@@ -95,7 +96,7 @@ static void syn_voice(uint32_t t, syn_voice_t *v, int32_t *out, uint32_t n)
     tsvf_t flt;
     uint32_t wave = (uint32_t)p[SY_WAVE], i, inc1, inc2, ph0 = v->ph[0], ph1 = v->ph[1];
     int32_t e15, a0 = v->amp, a1, cut, m2 = p[SY_MIX] * 327, m1 = 32767 - m2, nz = p[SY_NOIS] * 254;
-    int32_t drv = p[SY_DRV], ic1 = v->ic1, ic2 = v->ic2, nst = v->nst;
+    int32_t drv = p[SY_DRV], ic1 = v->ic1, ic2 = v->ic2, nst = v->nst, pp;
     switch (v->stage) {                                     /* the envelope: one step per block (as Felucca's) */
     case 1:
         v->env += (int32_t)ENV_LIN[p[SY_ATK] & 127];
@@ -126,9 +127,10 @@ static void syn_voice(uint32_t t, syn_voice_t *v, int32_t *out, uint32_t n)
     }
     e15 = v->env >> 9;
     a1 = e15;
-    inc1 = pitch_inc((uint32_t)clamp(v->p16, 0, 2047));
-    inc2 = p[SY_DTUN] ? cents_inc(v->p16, p[SY_DTUN], 0) : inc1;
-    cut = (p[SY_CUT] << 8) + p[SY_ENV] * 96 * (e15 >> 7) / 100 + p[SY_KTRK] * (v->p16 - 60 * 16) * 16 / 100;
+    pp = clamp(v->p16 + p[SY_TUNE] * 16, 0, 2047);          /* (TUNE as it is now) */
+    inc1 = pitch_inc((uint32_t)pp);
+    inc2 = p[SY_DTUN] ? cents_inc(pp, p[SY_DTUN], 0) : inc1;
+    cut = (p[SY_CUT] << 8) + p[SY_ENV] * 96 * (e15 >> 7) / 100 + p[SY_KTRK] * (pp - 60 * 16) * 16 / 100;
     tsvf_coef(&flt, cut, p[SY_RES] * 127 / 100);
     for (i = 0; i < n; i++) {
         int32_t a, b, s, y, k;

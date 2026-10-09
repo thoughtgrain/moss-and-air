@@ -20,6 +20,7 @@ typedef struct {
     int32_t amp;                 /* the last block's level, Q15 */
     uint32_t age;
     uint8_t key, stage;          /* 0 silent, 1 attack, 2 decay and sustain, 3 release */
+    uint8_t note;                /* the key's note at its octave when it went down (TUNE is added as it plays) */
 } pol_voice_t;
 
 typedef struct {
@@ -30,10 +31,11 @@ typedef struct {
 static pol_t pol[NTRK];
 static tape_rd_t pol_rd[NTRK][POL_NV] __attribute__((section(".pool")));   /* each voice's block (8 KB in all) */
 
-/* the head's step for white key k on track t, Q12 tape samples per output sample: 0.5 at the sound's own pitch */
-static int32_t pol_inc(uint32_t t, uint32_t k)
+/* the head's step for a voice's note on track t, Q12 tape samples per output sample: 0.5 at the sound's own pitch.
+ * TUNE is added here, every block, so a modulated TUNE moves a held note too (mod.c) */
+static int32_t pol_inc(uint32_t t, uint32_t note)
 {
-    int32_t n = clamp(12 * ((int32_t)track[t].octave + 1) + (int32_t)k + TPD(t, MA_POL)[PL_TUNE], 0, 127);
+    int32_t n = clamp((int32_t)note + TPD(t, MA_POL)[PL_TUNE], 0, 127);
     return (int32_t)(pitch_inc((uint32_t)n * 16u) / (pitch_inc(48u * 16u) >> 11));   /* (C3: the sound's own) */
 }
 
@@ -62,7 +64,8 @@ static void pol_start(uint32_t t, uint32_t k, uint32_t nv, uint32_t len)
         v->env = 0;
     }
     v->pos = (int32_t)(len * (uint32_t)TPD(t, MA_POL)[PL_STRT] / 100u) << 12;
-    v->inc = pol_inc(t, k);
+    v->note = (uint8_t)clamp(12 * ((int32_t)track[t].octave + 1) + (int32_t)k, 0, 127);
+    v->inc = pol_inc(t, v->note);
     v->key = (uint8_t)k;
     v->stage = 1;
     v->age = ++s->age;
@@ -99,6 +102,7 @@ static void pol_voice(uint32_t t, pol_voice_t *v, tape_rd_t *rd, const tape_view
     }
     e15 = v->env >> 9;
     a1 = e15;
+    v->inc = pol_inc(t, v->note);                           /* (TUNE as it is now) */
     if ((uint32_t)((pos + v->inc * (int32_t)n) >> 12) >= vw->len) {   /* the sound's end: fade out, done */
         a1 = 0;
         v->stage = 0;

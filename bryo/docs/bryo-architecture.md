@@ -1079,6 +1079,13 @@ modulation is per track, and those aren't.
   Only PAN uses it, as we agreed: with SPRD the left and right channels get their own pan positions, so the sound
   moves across instead of just sideways. Every other target takes the left output.
 
+**TUNE plays live now.** SYNTH and POLY used to add TUNE to a note when its key went down, so a modulated TUNE
+only reached the next note. The listening examples caught it: a SEQ on TUNE over a held note played one pitch. Now
+the voice adds TUNE every block (SYNTH to its pitch, POLY to its head's step), so a SEQ on TUNE over a held note is
+an arpeggio, and an LFO on it is vibrato. Played normally, nothing changes. One catch: SEQ's steps are 0..100 %
+and TUNE spans 48 semitones, so a step lands on the nearest semitone (25 % is an octave, 15 % a fifth, 21 % a minor
+seventh); a step page that shows semitones on a TUNE target would be the friendlier way, later.
+
 **The clock** is one counter of beats (Q16), counted exactly from the tempo with its remainder carried, reset when
 PLAY starts and running on while stopped, so a synced LFO still moves when you're tweaking a stopped loop.
 

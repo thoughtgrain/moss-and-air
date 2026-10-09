@@ -4391,6 +4391,46 @@ static void test_mod_engines(void)
     }
     sys.playing = 0;
     power_on();
+    /* TUNE moves a held note (SYNTH and POLY add it as the voice plays, not when the key went down) */
+    {
+        static int32_t buf[CTL * 400];
+        uint32_t src, i;
+        for (src = SRC_SYNTH; src <= SRC_SYNTH; src++) {
+            uint32_t up0 = 0, up1 = 0;
+            int16_t *tune = src == SRC_SYNTH ? &tp[0].syn[SY_TUNE] : &tp[0].pol[PL_TUNE];
+            power_on();
+            tp[0].src = (uint8_t)src;
+            track[1].mute = track[2].mute = track[3].mute = 1;
+            fm1_in.notes = note_bit_of_white(0);
+            render(100, 0);
+            render(400, buf);
+            for (i = 1; i < CTL * 400u; i++)
+                up0 += buf[i - 1] < 0 && buf[i] >= 0;
+            *tune = 12;
+            render(20, 0);
+            render(400, buf);
+            for (i = 1; i < CTL * 400u; i++)
+                up1 += buf[i - 1] < 0 && buf[i] >= 0;
+            fm1_in.notes = 0;
+            if (src == SRC_SYNTH)
+                check("SYNTH: TUNE +12 on a held note: an octave up (TUNE is live, so it can be modulated)",
+                      up0 > 20u && up1 * 10u > up0 * 17u && up1 * 10u < up0 * 23u);
+        }
+        {                                                /* POLY: the voice's head steps twice as fast */
+            int32_t i0;
+            power_on();
+            tp[0].src = SRC_POLY;
+            fm1_in.notes = note_bit_of_white(0);
+            render(4, 0);
+            i0 = pol[0].v[0].inc;
+            tp[0].pol[PL_TUNE] = 12;
+            render(1, 0);
+            fm1_in.notes = 0;
+            check("POLY: TUNE +12 on a held note: an octave up", i0 > 0 && pol[0].v[0].stage &&
+                                                                 pol[0].v[0].inc >= 2 * i0 - 2 && pol[0].v[0].inc <= 2 * i0 + 2);
+        }
+        power_on();
+    }
 }
 
 int main(int argc, char **argv)
