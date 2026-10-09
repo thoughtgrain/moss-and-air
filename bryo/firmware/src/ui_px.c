@@ -934,7 +934,7 @@ static void px_picto(uint32_t kind, int32_t x, int32_t y, const pdesc_t *d, int3
 static const uint8_t DEV_PK[NDEV][NPK] = {
     {PK_START, PK_LENGTH, PK_SPEED, PK_LAYERS,       /* TAPE: STRT LEN SPD DUB */
      PK_FADE, PK_TOGGLE, PK_TOGGLE, PK_FADER,        /*       XFAD REV HALF GAIN */
-     PK_SRC, PK_CLOCK, PK_NONE, PK_NONE},            /*       REEL ROTA */
+     PK_SRC, PK_CLOCK, PK_FADER, PK_NONE},           /*       REEL ROTA LVL */
     {PK_SQUARE, PK_DOTS, PK_KNOB, PK_BOWTIE,         /* GRAIN: SIZE RATE PTCH SPRD */
      PK_MIX, PK_NOISE, PK_WINDOW, PK_DOTS,           /*        WET SPRY CONT REV */
      PK_PATTERN, PK_SCALE, PK_VAR, PK_NONE,          /*        PATN SCAL PRND */
@@ -952,12 +952,13 @@ static const uint8_t SYN_PK[NPK] = {
     PK_OSC, PK_DETUNE, PK_MIX, PK_NOISE,             /* SYNTH: WAVE DTUN MIX NOIS */
     PK_CUTOFF, PK_RES, PK_ENVAMT, PK_KTRK,           /*        CUT RES ENV KTRK */
     PK_ATTACK, PK_DECAY, PK_SUSTAIN, PK_RELEASE,     /*        ATK DEC SUS REL */
-    PK_VOICES, PK_SLEW, PK_DRIVE, PK_KNOB};          /*        VOIC GLID DRV TUNE */
+    PK_VOICES, PK_SLEW, PK_DRIVE, PK_KNOB,           /*        VOIC GLID DRV TUNE */
+    PK_FADER};                                       /*        LVL */
 static const uint8_t POL_PK[NPK] = {
     PK_SRC, PK_START, PK_KNOB, PK_VOICES,            /* POLY: REEL STRT TUNE VOIC */
     PK_ATTACK, PK_DECAY, PK_SUSTAIN, PK_RELEASE,     /*       ATK DEC SUS REL */
     PK_CUTOFF, PK_RES, PK_SLOPE, PK_ENVAMT,          /*       CUT RES TYPE ENV */
-    PK_NONE, PK_NONE, PK_NONE, PK_NONE};
+    PK_FADER};                                       /*       LVL */
 /* the pictograms of device d's knobs on track t (the source: the chosen source's) */
 static const uint8_t *dev_pk(uint32_t t, uint32_t d)
 {

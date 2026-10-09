@@ -325,7 +325,7 @@ static double run(int n, char *say, size_t sz)
             param_engine(1, 3, ME_FOLLOW);               /* ..and T1's drums ducking its filter (FOLLOW T1) */
             tp[1].mod[3][0] = 1;
             mod_nudge(1, 3, MOD_TCH + CH_FILT, -40);
-            mod_nudge(2, 1, MOD_TSRC + SRC_SYNTH * 16u + SY_CUT, 35);   /* T3: the ADSR opening the synth's cutoff */
+            mod_nudge(2, 1, MOD_TSRC + SRC_SYNTH * NPK + SY_CUT, 35);   /* T3: the ADSR opening the synth's cutoff */
             tp[3].mod[0][11] = 50;                       /* T4: an LFO with SPRD on PAN, slow */
             tp[3].mod[0][0] = 30;
             tp[3].mod[0][12] = 0;

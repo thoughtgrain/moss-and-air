@@ -48,7 +48,7 @@
 #define TAPE_DECLICK 88              /* the shortest fade (a jump, start and stop): 2 ms at 44.1 kHz */
 
 /* the knobs (param.c DEV_P[DEV_SRC]) */
-enum { TK_STRT, TK_LEN, TK_SPD, TK_DUB, TK_FADE, TK_REV, TK_HALF, TK_GAIN, TK_REEL, TK_ROTA };
+enum { TK_STRT, TK_LEN, TK_SPD, TK_DUB, TK_FADE, TK_REV, TK_HALF, TK_GAIN, TK_REEL, TK_ROTA, TK_LVL };
 
 typedef struct {                     /* a reel in flash (bryo_reels.h REELS_INIT) */
     const char *name;

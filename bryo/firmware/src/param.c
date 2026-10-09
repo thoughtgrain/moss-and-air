@@ -36,7 +36,7 @@ static char uslot_name[USLOT_N][6];  /* their names (reel.c uslot_names) */
 static const char *const N_REEL[1u + NREEL + USLOT_N] = {"TAPE", REEL_NAMES_INIT, uslot_name[0], uslot_name[1],
                                                          uslot_name[2], uslot_name[3], uslot_name[4], uslot_name[5]};
 
-#define NPK 16u                  /* knobs a device or engine can have: up to four pages of four */
+#define NPK 20u                  /* knobs a device or engine can have: up to five pages of four */
 
 static const char *const DEV_NAME[NDEV] = {"TAPE", "GRAIN", "RESONATOR", "COLOR", "SPACE"};
 
@@ -58,8 +58,9 @@ static const pdesc_t DEV_P[NDEV][NPK] = {
         {"XFAD", 0, 100, 10, F_MS}, {"REV", 0, 1, 0, F_ENUM, N_OFFON},
         {"HALF", 0, 1, 0, F_ENUM, N_OFFON}, {"GAIN", -12, 12, 0, F_DB},
         /* 3: what the track plays: its own tape, a factory reel or one of your reels (in flash; REC copies it onto
-         * the tape); ROTATE: where in the loop playing (and slice 1) starts against the transport */
-        {"REEL", 0, NREEL + USLOT_N, 0, F_ENUM, N_REEL}, {"ROTA", 0, 99, 0, F_PCT}, {""}, {""}},
+         * the tape); ROTATE: where in the loop playing (and slice 1) starts against the transport; LVL: what the
+         * track hears of its tape (the S-4's LEVEL, on every source's last page; REC's GAIN is what goes on) */
+        {"REEL", 0, NREEL + USLOT_N, 0, F_ENUM, N_REEL}, {"ROTA", 0, 99, 0, F_PCT}, {"LVL", -24, 6, 0, F_DB}, {""}},
     {   /* GRAIN (the S-4's MOSAIC) */
         {"SIZE", 5, 500, 80, F_MS}, {"RATE", 0, 100, 40, F_PCT},
         {"PTCH", -24, 24, 0, F_ST}, {"SPRD", 0, 100, 30, F_PCT},
@@ -115,7 +116,7 @@ static const char *const SRC_NAME[NSRC] = {"TAPE", "SYNTH", "POLY"};
  * way a synth's panel reads left to right: the oscillators, the filter, the envelope (one ADSR for the level and,
  * by ENV, the cutoff), then how the keys play it. */
 enum { SY_WAVE, SY_DTUN, SY_MIX, SY_NOIS, SY_CUT, SY_RES, SY_ENV, SY_KTRK, SY_ATK, SY_DEC, SY_SUS, SY_REL, SY_VOIC,
-       SY_GLID, SY_DRV, SY_TUNE };
+       SY_GLID, SY_DRV, SY_TUNE, SY_LVL };
 #define SYN_NV 3u                /* voices per track */
 static const pdesc_t SYN_P[NPK] = {
     /* OSC: two oscillators of the same wave, the second DTUN cents up and MIX of the blend; white noise */
@@ -127,12 +128,14 @@ static const pdesc_t SYN_P[NPK] = {
     /* VOICE: how many keys sound at once (1: one voice, legato), the glide between notes, drive before the filter,
      * the tuning in semitones */
     {"VOIC", 1, SYN_NV, SYN_NV, F_NUM}, {"GLID", 0, 127, 0, F_TIME}, {"DRV", 0, 100, 0, F_PCT},
-    {"TUNE", -24, 24, 0, F_ST}};
+    {"TUNE", -24, 24, 0, F_ST},
+    /* LEVEL: what the track hears of the synth (every source's last page, as the S-4's LEVEL) */
+    {"LVL", -24, 6, 0, F_DB}, {""}, {""}, {""}};
 
 /* POLY (poly.c): a sound played at the keys' pitches, up to four at once, each through its own envelope and filter.
  * The sound is any reel choice: a factory reel, one of yours, or this track's own tape (record into it, then play it
  * across the keys). White key 1 at OCT 3 plays it as it was recorded. */
-enum { PL_REEL, PL_STRT, PL_TUNE, PL_VOIC, PL_ATK, PL_DEC, PL_SUS, PL_REL, PL_CUT, PL_RES, PL_TYPE, PL_ENV };
+enum { PL_REEL, PL_STRT, PL_TUNE, PL_VOIC, PL_ATK, PL_DEC, PL_SUS, PL_REL, PL_CUT, PL_RES, PL_TYPE, PL_ENV, PL_LVL };
 #define POL_NV 4u                /* voices per track */
 static const pdesc_t POL_P[NPK] = {
     /* SAMPLE: which sound, where in it a note starts, the tuning, how many notes at once */
@@ -143,7 +146,8 @@ static const pdesc_t POL_P[NPK] = {
     /* FILTER: each voice's state-variable filter, and how far its envelope moves the cutoff */
     {"CUT", 0, 127, 127, F_HZ}, {"RES", 0, 100, 0, F_PCT}, {"TYPE", 0, 2, 0, F_ENUM, N_SLOP},
     {"ENV", -100, 100, 0, F_BIPCT},
-    {""}, {""}, {""}, {""}};
+    /* LEVEL: what the track hears of POLY's voices */
+    {"LVL", -24, 6, 0, F_DB}, {""}, {""}, {""}};
 
 /* an unused knob on a page (no label) */
 static int pdesc_empty(const pdesc_t *d) { return !d->label || !d->label[0]; }

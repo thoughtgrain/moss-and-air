@@ -180,7 +180,7 @@ static uint32_t page_target(uint32_t c)
     if (ui.view != VIEW_PAGE || ui.kind != FOCUS_DEV)
         return MOD_NTGT;
     c += 4u * ui.page;
-    return ui.dev == DEV_SRC ? MOD_TSRC + (tp[sys.sel].src % NSRC) * 16u + c : MOD_TG(ui.dev, c);
+    return ui.dev == DEV_SRC ? MOD_TSRC + (tp[sys.sel].src % NSRC) * NPK + c : MOD_TG(ui.dev, c);
 }
 
 /* the focused page is a SEQ slot's (the white keys pick its steps) */

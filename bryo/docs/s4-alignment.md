@@ -64,7 +64,7 @@ architecture doc already plans TAPE, SYNTH and POLY.
 | SOS (bipolar) | DUB (-100..100, **done**) | A balance between the loop and the input. At 0 both are kept whole: plain sound on sound. Toward +100 the input fades and the loop stays; at +100 REC changes nothing (it doesn't even re-encode). Toward -100 the loop fades on each pass under the input; at -100 the input replaces it. So -50 with nothing coming in halves the loop every pass: the tape-loop decay people use SOS for. *(Unverified: whether the S-4's negative half is the same.)* |
 | XFADE | XFAD (**done**) | the same idea (the seam's crossfade). Four letters on the strip. |
 | ROTATE | ROTA (**done**, page 3 beside REEL) | Where in the loop window playing starts, and where slice 1 is counted from, against the transport. The seam's crossfade stays where it was, so rotating never adds a click. A slice can now run over the seam, so a slice played while stopped ends after its length rather than at a position. |
-| LEVEL | GAIN (record gain) | Different jobs. The mixer fader is the S-4's LEVEL. Keep GAIN. |
+| LEVEL | GAIN (record gain), and now LVL | Different jobs: GAIN is what REC puts on the tape. The S-4 has a LEVEL on every source (TAPE, POLY, DISC), so Bryo now does too: LVL on each source's last page (TAPE 3, SYNTH 5, POLY 4), -24..+6 dB, a modulation target. Keep GAIN. **Done (2026-10-09).** |
 | FREE / SYNC timing | none | In SYNC, START and LENGTH are in beats and bars. That needs the sequencer clock (phase 7), so I'll note it there. |
 | none | REV, HALF | Bryo's own (OP5 and OP6 flip them). Keep. |
 

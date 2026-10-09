@@ -159,9 +159,9 @@ Why:
 | SYNTH | 576 | 4 tracks × 3 voices of oscillator and filter state (.bss) |
 | POLY | 8,288 | 4 tracks × 4 voices × a 256-sample block reader (pool), plus 448 B of voice state (.bss) |
 | The drive | 17,340 | the FAT, root and write cache of the USB drive (the 36 KB WAV inbox is gone: a WAV lands in shared memory) |
-| Modulation | 2,324 main RAM + 5,600 pool | the depths (a byte per slot per target) and MONO's undo in main RAM; the ISR's lists, the slots' state and the modulated knob arrays in the pool |
+| Modulation | 2,882 main RAM + 5,856 pool | the depths (a byte per slot per target) and MONO's undo in main RAM; the ISR's lists, the slots' state and the modulated knob arrays in the pool |
 
-Measured now (KiB, 32-bit build): the pool holds 322.2 of 336 (13.8 spare; build.py keeps 8), main RAM's .bss 83.5
+Measured now (KiB, 32-bit build): the pool holds 322.4 of 336 (13.6 spare; build.py keeps 8), main RAM's .bss 84.4
 of 96. The USB record mode's two rings first went into main RAM and took it to 92.2, too close to the stack, so
 they live in the pool's room that was kept for USB audio in.
 
@@ -1038,7 +1038,7 @@ modulation is per track, and those aren't.
 
 **How it runs**, and why it's built this way:
 
-- The main loop owns the depths (`mdep`, a byte per slot per target). Every change rebuilds the track's list of the
+- The main loop owns the depths (`mdep`, a byte per slot per target: 144 targets). Every change rebuilds the track's list of the
   depths that aren't 0, sorted by target, into the half of a double buffer the ISR isn't reading, then flips one
   byte. The ISR can't be interrupted by the main loop, so it always sees a whole list, old or new, and never a half
   edited one. Each entry carries the knob's range and its depth already multiplied by it, so the ISR's work per
@@ -1079,6 +1079,14 @@ modulation is per track, and those aren't.
   Only PAN uses it, as we agreed: with SPRD the left and right channels get their own pan positions, so the sound
   moves across instead of just sideways. Every other target takes the left output.
 
+**A LEVEL on every source** (2026-10-09). The S-4 puts a LEVEL on each of its sources; Bryo had the mixer fader
+(not a modulation target) and COLOR's LVL (one per track, after GRAIN and RESONATOR). Now every source's last page
+ends with LVL, -24 to +6 dB like COLOR's: TAPE 3 (REEL ROTA LVL), SYNTH 5, POLY 4. It's applied as the source is
+mixed into the track (`chain_source`), ramped across the block, and skipped at 0 dB so nothing changes until it's
+turned. A SYNTH or POLY track prints onto its tape after it (what you hear is what goes on); a TAPE track's REC
+still records at GAIN. SYNTH's four pages were full, so a device or engine can now have five pages (NPK 20, from 16),
+and the targets are numbered by NPK: GRAIN..SPACE 0..79, the sources 80..139, the channel 140..143.
+
 **TUNE plays live now.** SYNTH and POLY used to add TUNE to a note when its key went down, so a modulated TUNE
 only reached the next note. The listening examples caught it: a SEQ on TUNE over a held note played one pitch. Now
 the voice adds TUNE every block (SYNTH to its pitch, POLY to its head's step), so a SEQ on TUNE over a held note is
@@ -1096,17 +1104,18 @@ PLAY starts and running on while stopped, so a synced LFO still moves when you'r
 | 1 | four reels, nothing modulated | 934 (929 before) | 5 (the clock) |
 | 19 | the four-track groove, unmodulated | 1,595 | 0 |
 | 24 | the groove modulated the way I'd play it: an LFO a beat on T1's crush, a SEQ on T2's grain size, T1's drums ducking T2's filter through FOLLOW, the ADSR opening T3's synth cutoff, a stereo LFO on T4's pan | 1,788 | 83 |
-| 25 | every slot on every track, 32 depths each (128) | 2,858 | 447 |
+| 25 | every slot on every track, 32 depths each (128) | 3,097 | 445 |
 
 So the realistic case costs about 190 on top of the groove: 83 for the modulators and the rest is the devices
 doing more work because their knobs move (the channel filter re-tuning every block, the synth's cutoff, GRAIN's
 grains at changing sizes). My budget said 10 for the modulators; that was a guess at the summing alone, before
 four engines with curves, interpolation and a clock. The groove modulated stays under the 2,000 I set for a
 realistic four-track scene. Run 25 is the ceiling, and it's not a scene anyone plays: it modulates whatever the
-first 32 targets of each slot are.
+first 32 targets of each slot are (since the sources' LEVEL pages, NPK 20, those land on other knobs, and more
+devices wake: 3,097, up from 2,858; the modulation itself is the same 445).
 
-**Memory**: the depths and their undo 2.3 KB of main RAM (now 83.5 of 96 KiB); the lists, the slots' state and the
-modulated arrays 5.6 KB of the pool (now 322.2 of 336 KiB). Code about 9 KB on the host measure.
+**Memory**: the depths and their undo 2.9 KB of main RAM (now 84.4 of 96 KiB, with five pages of knobs); the lists, the slots' state and the
+modulated arrays 5.9 KB of the pool (now 322.4 of 336 KiB). Code about 9 KB on the host measure.
 
 **What's still open:**
 

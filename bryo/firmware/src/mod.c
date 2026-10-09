@@ -9,8 +9,8 @@
  *              by target, into the buffer the ISR isn't reading, then flips mod_cur[t] (one byte). The ISR can't
  *              be interrupted by the main loop, so it always reads a whole list.
  *   audio ISR  once per control block, before any track renders (mod_tick): the clock, then for each track with a
- *              list, the slots the list uses, then a copy of each knob array the list touches (a device's 16, a
- *              source's 16, the channel's 4) with its depths added. The device code reads its knobs through
+ *              list, the slots the list uses, then a copy of each knob array the list touches (a device's 20, a
+ *              source's 20, the channel's 4) with its depths added. The device code reads its knobs through
  *              TPD(t, array), which points at that copy, or at tp[t]'s own array when nothing modulates it. So a
  *              track without modulation, or an array without depths, reads exactly what it always read.
  *
@@ -18,10 +18,10 @@
  * multiply, a shift and a clamp. The ISR's state lives in the pool; the depths themselves (what a project will save)
  * in main RAM.
  *
- * The targets are numbered so a depth table is one flat array per slot:
- *   0..63    GRAIN, RESONATOR, COLOR, SPACE: (device - 1) x 16 + knob
- *   64..111  the sources: TAPE, SYNTH, POLY: 64 + source x 16 + knob (each source keeps its own depths)
- *   112..115 the channel strip: LOW HIGH FILT PAN
+ * The targets are numbered so a depth table is one flat array per slot (NPK = 20 knobs an array):
+ *   0..79    GRAIN, RESONATOR, COLOR, SPACE: (device - 1) x NPK + knob
+ *   80..139  the sources: TAPE, SYNTH, POLY: 80 + source x NPK + knob (each source keeps its own depths)
+ *   140..143 the channel strip: LOW HIGH FILT PAN
  * The reel choices (TAPE's REEL, POLY's REEL) aren't targets: the main loop prepares memory for the reel a track
  * plays, so the ISR mustn't switch it.
  *
@@ -29,10 +29,10 @@
  * way: depth's sign says which). AMT scales a slot, OFS shifts it. SPRD is a second, right-hand output; only PAN
  * uses it (the left and right channels then pan apart), the other targets take the left one. */
 
-#define MOD_NTGT 116u
-#define MOD_TSRC 64u
-#define MOD_TCH 112u
-#define MOD_TG(d, k) (((d) - 1u) * 16u + (k))   /* device d's (GRAIN..SPACE) knob k as a target */
+#define MOD_TSRC (4u * NPK)
+#define MOD_TCH (7u * NPK)
+#define MOD_NTGT (7u * NPK + NCH)
+#define MOD_TG(d, k) (((d) - 1u) * NPK + (k))   /* device d's (GRAIN..SPACE) knob k as a target */
 #define MOD_MAX 32u                  /* depths that aren't 0, per track (the main loop refuses more) */
 enum { MA_SYN = NDEV, MA_POL, MA_CH, MOD_NARR };   /* the knob arrays: dev[DEV_*], then SYNTH's, POLY's, the channel */
 
@@ -63,11 +63,11 @@ static volatile uint8_t mod_on;              /* the tracks with a list, a bit ea
 static const pdesc_t *mod_tdesc(uint32_t g)
 {
     const pdesc_t *d;
-    uint32_t k = g % 16u;
+    uint32_t k = g % NPK;
     if (g < MOD_TSRC)
-        d = &DEV_P[1u + g / 16u][k];
+        d = &DEV_P[1u + g / NPK][k];
     else if (g < MOD_TCH)
-        d = (g - MOD_TSRC) / 16u == SRC_TAPE ? &DEV_P[DEV_SRC][k] : (g - MOD_TSRC) / 16u == SRC_SYNTH ? &SYN_P[k] : &POL_P[k];
+        d = (g - MOD_TSRC) / NPK == SRC_TAPE ? &DEV_P[DEV_SRC][k] : (g - MOD_TSRC) / NPK == SRC_SYNTH ? &SYN_P[k] : &POL_P[k];
     else if (g < MOD_NTGT)
         d = &CH_P[g - MOD_TCH];
     else
@@ -78,10 +78,10 @@ static const pdesc_t *mod_tdesc(uint32_t g)
 /* target g's knob array (MA_* / DEV_*) and its place in it */
 static uint32_t mod_tarr(uint32_t g, uint32_t *k)
 {
-    uint32_t s = (g - MOD_TSRC) / 16u;
-    *k = g < MOD_TCH ? g % 16u : g - MOD_TCH;
+    uint32_t s = (g - MOD_TSRC) / NPK;
+    *k = g < MOD_TCH ? g % NPK : g - MOD_TCH;
     if (g < MOD_TSRC)
-        return 1u + g / 16u;
+        return 1u + g / NPK;
     if (g < MOD_TCH)
         return s == SRC_TAPE ? DEV_SRC : s == SRC_SYNTH ? MA_SYN : MA_POL;
     return MA_CH;

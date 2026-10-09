@@ -18,8 +18,8 @@ context	control	gesture	action	status	phase	source
 any	POT_MASTER	turn	master output level (digital gain after the mix; USB follows unless USB LEVEL FIXED)	now	-	PRD 2.1
 any	BTN_OCTDN	combo	held with OCT+ for 5 s: UPDATE MODE countdown from 2 s, letting go cancels	now	-	kept
 power-on	BTN_OCTDN	combo	held with OCT+ at power-on: HARDWARE CALIBRATION (press each button, turn each encoder)	now	-	kept
-page	BTN_HOME	press	focus the track's source (TAPE, SYNTH or POLY); again: its next page (TAPE 2, TAPE 3; SYNTH's FILTER, AMP, VOICE; POLY's ENV, FILTER), round	now	-	PRD 2.2
-page	BTN_HOME	tap	on a POLY track, again while its page is up: the next page (SAMPLE, ENV, FILTER)	now	-	change
+page	BTN_HOME	press	focus the track's source (TAPE, SYNTH or POLY); again: its next page (TAPE 2, TAPE 3; SYNTH's FILTER, AMP, VOICE, LEVEL; POLY's ENV, FILTER, LEVEL), round. Every source's last page has LVL (-24..+6 dB: what the track hears of it, the S-4's LEVEL)	now	-	PRD 2.2
+page	BTN_HOME	tap	on a POLY track, again while its page is up: the next page (SAMPLE, ENV, FILTER, LEVEL)	now	-	change
 page	BTN_EDIT	press	focus GRAIN; again: GRAIN 2 (WET SPRY CONT REV), GRAIN 3 (WARP PATN SCAL PRND); again: RESONATOR, RESONATOR 2 (CUT RES SLOP SCAL); again: GRAIN	now	-	PRD 2.2
 page	BTN_FX	press	focus COLOR; again: COLOR 2 (NDEC NTON CMOD WET), COLOR 3 (LVL); again: SPACE, SPACE 2 (DLY VERB TONE SPRD), SPACE 3 (PRE)	now	-	PRD 2.2
 page	BTN_LFO	tap	modulator slot 1's page as the pad is let go (default engine LFO, SIN); again: its next page (4: shape, refine, place, timing). Held, it sets depths instead (slot-held)	now	-	PRD 2.2

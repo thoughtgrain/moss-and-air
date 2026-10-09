@@ -107,7 +107,8 @@ static void viz_tape(const int16_t *v, uint32_t f)
      * strip's pictogram above, so the sound gets the rows they took here. */
     int32_t r0 = 6, r1 = 114, rw = r1 - r0, top = 10, bot = 35, mid = 23, amp = 12, k, x;
     int32_t x0 = r0 + v[0] * rw / 100, x1 = x0 + v[1] * rw / 100;
-    int32_t sp = v[2] * (v[5] ? -1 : 1) / (v[6] ? 2 : 1), gain = db_x1000(v[7]);   /* REV, HALF; GAIN */
+    int32_t sp = v[2] * (v[5] ? -1 : 1) / (v[6] ? 2 : 1), gain = db_x1000(v[7]) * db_x1000(v[TK_LVL]) / 1000;   /* REV,
+                                                                                * HALF; GAIN, LVL */
     int32_t fw = 1 + v[4] * 8 / 100;                   /* XFAD (drawn wider than to scale, so it shows) */
     tape_view_t tv;
     uint32_t nb;
@@ -156,8 +157,33 @@ static void viz_tape(const int16_t *v, uint32_t f)
         vz_label(x1, "OUT", f == 1u);
     if (f == 3u || f == 2u)
         vz_label(60, f == 3u ? "DUB" : "SPD", 1);   /* (SPD's turn still names it: the playhead's side shows REV) */
-    if (f >= 4u && f < 12u)
+    if (f >= 4u && f < NPK && !pdesc_empty(&DEV_P[DEV_SRC][f]))
         vz_ktag(78, DLBL - 1, &DEV_P[DEV_SRC][f], v[f]);
+}
+
+/* a source's LEVEL page (SYNTH 5, POLY 4): the dB scale from -24 to +6, the level as a bar along it, 0 dB marked */
+static void vz_level(int32_t db, const pdesc_t *d, int on)
+{
+    int32_t x, k, y0 = DMID - 5, y1 = DMID + 5, xl = DX0 + (clamp(db, -24, 6) + 24) * DW / 30, xz = DX0 + 24 * DW / 30;
+    px_frame(DX0, y0, DW + 1, y1 - y0 + 1, px_dim, 2);
+    px_box(DX0 + 1, y0 + 2, xl - DX0, y1 - y0 - 3, px_ink);
+    for (x = xz, k = y0 - 4; k <= y1 + 3; k += 2)                     /* 0 dB: where the source is as it plays */
+        px_dot(x, k, px_ink);
+    for (k = -24; k <= 6; k += 6) {                                   /* the scale */
+        char b[6];
+        x = DX0 + (k + 24) * DW / 30;
+        px_line(x, y1 + 2, x, y1 + 3, px_dim, 1);
+        if (k > 0) {
+            b[0] = '+';
+            fmt_int(b + 1, k);
+        } else {
+            fmt_int(b, k);
+        }
+        px_text(clamp(x - px_text_w(PXF_3, b) / 2, 1, 118 - px_text_w(PXF_3, b)), DLBL, PXF_3, b, px_dim);
+    }
+    px_text(DX0, DY0, PXF_3, "LEVEL", px_ink);
+    if (on)
+        vz_ktag(118, DY0 - 1, d, db);
 }
 
 /* ------------------------------------------------------------- GRAIN --- */
@@ -802,6 +828,8 @@ static void viz_synth(const int16_t *v, uint32_t f)
         a[3] = v[SY_REL];
         a[10] = 100;                                  /* (AMT 100, OFS 0: the envelope as it is) */
         viz_adsr(a, f < 4u ? f : 0xFFu);
+    } else if (ui.page >= 4u) {
+        vz_level(v[SY_LVL], &SYN_P[SY_LVL], f == SY_LVL);
     } else {
         static const char NOTE[12][3] = {"C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"};
         int32_t lo = 12 * ((int32_t)track[sys.sel].octave + 1) + v[SY_TUNE], hi = lo + 15, nv = v[SY_VOIC];
@@ -903,6 +931,8 @@ static void viz_poly(const int16_t *v, uint32_t f)
         a[3] = v[PL_REL];
         a[10] = 100;
         viz_adsr(a, f >= 4u && f < 8u ? f - 4u : 0xFFu);
+    } else if (ui.page >= 3u) {
+        vz_level(v[PL_LVL], &POL_P[PL_LVL], f == PL_LVL);
     } else {
         vz_filter(v[PL_CUT], v[PL_RES], clamp(v[PL_TYPE], 0, 2), v[PL_ENV], 0, f < NPK ? f % 4u : 0xFFu, POL_P + 8,
                   v + 8, 3u);

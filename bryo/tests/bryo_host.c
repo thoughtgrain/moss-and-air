@@ -641,10 +641,12 @@ static void screens_in(const char *pal)
     turn(1, 1);
     turn(3, 6);
     shot(pal, "tape2");
-    press(B_HOME);                                       /* TAPE 3: REEL KEYS, ROTA 25 % (playing starts there) */
+    press(B_HOME);                                       /* TAPE 3: REEL KEYS, ROTA 25 % (playing starts there), LVL -6 */
     turn(0, 1);
     turn(1, 25);
+    turn(2, -6);
     shot(pal, "tape3");
+    turn(2, 6);
     press(B_HOME);
     sys.playing = 1;                                     /* the head running, then REC armed */
     render(600, 0);
@@ -676,7 +678,10 @@ static void screens_in(const char *pal)
     turn(2, 60);
     turn(3, -5);
     shot(pal, "synth_voice");
-    hold(B_HOME);                                        /* POLY: its three pages */
+    press(B_HOME);                                       /* LEVEL: -9 dB */
+    turn(0, -9);
+    shot(pal, "synth_level");
+    hold(B_HOME);                                        /* POLY: its four pages */
     host_enc[panel.enc[EN_SELECT]] = 1;
     ui_input();
     let_go(B_HOME);
@@ -695,6 +700,9 @@ static void screens_in(const char *pal)
     turn(2, 2);
     turn(3, 40);
     shot(pal, "poly_filter");
+    press(B_HOME);                                       /* LEVEL: +4 dB */
+    turn(0, 4);
+    shot(pal, "poly_level");
     hold(B_HOME);                                        /* back to TAPE (round past POLY) */
     host_enc[panel.enc[EN_SELECT]] = 1;
     ui_input();
@@ -1409,7 +1417,7 @@ static void test_synth(void)
     let_go(B_HOME);
     p = tp[0].syn;
     check("HOME held + SELECT: track 1's source is SYNTH, its pages and name follow", tp[0].src == SRC_SYNTH &&
-          !strcmp(dev_name(0, DEV_SRC), "SYNTH") && pdesc_pages(dev_p(0, DEV_SRC)) == 4u && ui.page == 0 &&
+          !strcmp(dev_name(0, DEV_SRC), "SYNTH") && pdesc_pages(dev_p(0, DEV_SRC)) == 5u && ui.page == 0 &&
           dev_v(0, DEV_SRC) == p && !strcmp(dev_p(0, DEV_SRC)[0].label, "WAVE"));
     {
         int32_t pk = 0;
@@ -1665,8 +1673,8 @@ static void test_poly(void)
     ui_input();
     let_go(B_HOME);
     p = tp[0].pol;
-    check("HOME held + SELECT: POLY, three pages (SAMPLE ENV FILTER), its own knobs", tp[0].src == SRC_POLY &&
-          !strcmp(dev_name(0, DEV_SRC), "POLY") && pdesc_pages(dev_p(0, DEV_SRC)) == 3u && dev_v(0, DEV_SRC) == p &&
+    check("HOME held + SELECT: POLY, four pages (SAMPLE ENV FILTER LEVEL), its own knobs", tp[0].src == SRC_POLY &&
+          !strcmp(dev_name(0, DEV_SRC), "POLY") && pdesc_pages(dev_p(0, DEV_SRC)) == 4u && dev_v(0, DEV_SRC) == p &&
           p[PL_REEL] == 1);
     {
         int32_t q = 0;
@@ -3974,7 +3982,7 @@ static void test_mod(void)
     render(4, 0);
     check("mod: no depths, every track reads its own knobs (nothing copied)", TPD(0, DEV_GRAIN) == tp[0].dev[DEV_GRAIN] && TPD(3, MA_CH) == tp[3].ch);
     check("mod: the reel choices can't be targets", mod_nudge(0, 0, MOD_TSRC + TK_REEL, 50) == -128 &&
-                                                    mod_nudge(0, 0, MOD_TSRC + SRC_POLY * 16u + PL_REEL, 50) == -128);
+                                                    mod_nudge(0, 0, MOD_TSRC + SRC_POLY * NPK + PL_REEL, 50) == -128);
     check("..nor an empty knob", mod_nudge(0, 0, MOD_TG(DEV_SPACE, 15), 50) == -128);
 
     /* LFO slot 1 (SIN, FREE): depth 100 swings PAN across its whole range; 50: half of it */
@@ -4228,6 +4236,43 @@ static void test_mod(void)
     power_on();
 }
 
+/* each source's LVL (its last page): -12 dB is a quarter of the sound, on TAPE, SYNTH and POLY alike; a target */
+static void test_source_level(void)
+{
+    static int32_t a[CTL * 300], b[CTL * 300];
+    static const char *const NAME[NSRC] = {"TAPE LVL -12 dB: a quarter of the track's sound",
+                                           "SYNTH LVL -12 dB: a quarter", "POLY LVL -12 dB: a quarter"};
+    uint32_t src;
+    for (src = 0; src < NSRC; src++) {
+        int16_t *lv = src == SRC_TAPE ? &tp[0].dev[DEV_SRC][TK_LVL] : src == SRC_SYNTH ? &tp[0].syn[SY_LVL] : &tp[0].pol[PL_LVL];
+        int32_t pa, pb;
+        power_on();
+        tp[0].src = (uint8_t)src;
+        track[1].mute = track[2].mute = track[3].mute = 1;
+        sys.playing = src == SRC_TAPE;
+        fm1_in.notes = src == SRC_TAPE ? 0u : note_bit_of_white(0);
+        render(100, 0);
+        render(300, a);
+        power_on();                                      /* the same again, from power-on, at -12 dB */
+        tp[0].src = (uint8_t)src;
+        track[1].mute = track[2].mute = track[3].mute = 1;
+        sys.playing = src == SRC_TAPE;
+        fm1_in.notes = src == SRC_TAPE ? 0u : note_bit_of_white(0);
+        *lv = -12;
+        render(100, 0);
+        render(300, b);
+        fm1_in.notes = 0;
+        pa = peak_of(a, CTL * 300u);
+        pb = peak_of(b, CTL * 300u);
+        check(NAME[src], pa > 2000 && pb * 100 > pa * 22 && pb * 100 < pa * 28);
+    }
+    check("..and LVL can be modulated (a target on every source)",
+          mod_tdesc(MOD_TSRC + SRC_TAPE * NPK + TK_LVL) && mod_tdesc(MOD_TSRC + SRC_SYNTH * NPK + SY_LVL) &&
+          mod_tdesc(MOD_TSRC + SRC_POLY * NPK + PL_LVL));
+    sys.playing = 0;
+    power_on();
+}
+
 /* the engines' switches, one block at a time through mod_tick (track 1, GRAIN WET from 0 at depth 100: the value is
  * the slot's output in %) */
 static int32_t mod_step(uint32_t keys)
@@ -4456,6 +4501,7 @@ int main(int argc, char **argv)
     test_mixer();
     test_mod();
     test_mod_engines();
+    test_source_level();
     test_input();
     test_settings();
     palette_set(UI_GREY_INDEX);                          /* (the screens are one ink now, whatever the palette) */

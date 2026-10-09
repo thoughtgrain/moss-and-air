@@ -40,7 +40,7 @@ What works on the panel now (every control, in every context, with what's planne
 
 | Control | What it does |
 | --- | --- |
-| HOME | the track's source (TAPE, SYNTH or POLY); again for its next page (TAPE 2, TAPE 3: REEL and ROTATE; SYNTH's FILTER, AMP, VOICE; POLY's ENV, FILTER) |
+| HOME | the track's source (TAPE, SYNTH or POLY); again for its next page (TAPE 2, TAPE 3: REEL, ROTATE and LVL; SYNTH's FILTER, AMP, VOICE, LEVEL; POLY's ENV, FILTER, LEVEL). LVL, on every source's last page, is what the track hears of it, and can be modulated |
 | HOME held + SELECT | the track's source: TAPE, SYNTH or POLY (each keeps its own knobs) |
 | EDIT | GRAIN; again: GRAIN 2, GRAIN 3, GRAIN 4 (SCAN WARP OFST FDBK), RESONATOR, RESONATOR 2 |
 | FX | COLOR; again: COLOR 2, COLOR 3, SPACE, SPACE 2, SPACE 3 |

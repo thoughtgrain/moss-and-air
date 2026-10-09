@@ -2,7 +2,8 @@
 /* Bryo: the four tracks, rendered by the audio ISR one control block (CTL samples) at a time.
  *
  * Each track starts with its source (source.c): its TAPE (tape.c: the loop plays while the transport runs, the
- * white keys play its 16 slices), SYNTH or POLY (the white keys play notes). REC records onto the tape either way.
+ * white keys play its 16 slices), SYNTH or POLY (the white keys play notes), at the source's LVL. REC records onto
+ * the tape either way.
  * Then GRAIN (grain.c: grains of a live buffer of the source, or of the tape, blended by WET), from which the track
  * is stereo. Then RESONATOR (reso.c: four tuned strings the track rings through), COLOR (color.c: drive, crush,
  * noise, tilt) and SPACE (space.c: the delay and the room). Then the track's channel strip, its level and its pan
@@ -24,6 +25,7 @@ typedef struct {                     /* ISR only */
                                       * rendered at all (its heads wait where they were) */
     int32_t last[CTL];               /* the last block's output, after level and mute (what REC hears) */
     int32_t src_g[NSRC];             /* each source's share of the track, Q15: 2 ms ramps when the source changes */
+    int32_t src_lv[NSRC];            /* each source's LVL as last applied, Q10 (1024: 0 dB), ramped block to block */
 } track_rt_t;
 
 static track_rt_t track_rt[NTRK];
@@ -36,6 +38,7 @@ static void chain_init(void)
         track[t].level = 100;
         track[t].octave = 3;
         track_rt[t].src_g[SRC_TAPE] = 32767;
+        track_rt[t].src_lv[SRC_TAPE] = track_rt[t].src_lv[SRC_SYNTH] = track_rt[t].src_lv[SRC_POLY] = 1024;
         track_rt[t].act = 32767;
     }
     mod_init();
@@ -62,6 +65,14 @@ static void chain_source(uint32_t t, uint32_t keys, const int32_t *rin, int32_t 
         }
         SOURCES[e].render(t, e == cur ? keys : 0u, e == SRC_TAPE ? rec : 0, o, n);
         rt->src_g[e] = g1;
+        {                                               /* the source's LVL (its last page), ramped; 0 dB: untouched */
+            int32_t l0 = rt->src_lv[e], l1 = db_q10(e == SRC_TAPE ? TPD(t, DEV_SRC)[TK_LVL] : e == SRC_SYNTH ?
+                                                    TPD(t, MA_SYN)[SY_LVL] : TPD(t, MA_POL)[PL_LVL]);
+            rt->src_lv[e] = l1;
+            if (l0 != 1024 || l1 != 1024)
+                for (i = 0; i < n; i++)
+                    o[i] = (o[i] * (l0 + (((l1 - l0) * (int32_t)i) >> CTL_LOG2))) >> 10;
+        }
         for (i = 0; i < n; i++)                         /* (in 32 bits: POLY's four voices sum past 16) */
             s[i] += ((o[i] >> 2) * ((g0 + (((g1 - g0) * (int32_t)i) >> CTL_LOG2)) >> 1)) >> 12;
     }
