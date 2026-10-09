@@ -17,6 +17,7 @@ typedef struct {
     int16_t min, max, def;
     uint8_t fmt;
     const char *const *names;    /* F_ENUM: a name per value, min..max (at most 4 letters) */
+    uint8_t nomod;               /* 1: not a modulation target (a choice the main loop acts on, or a view's state) */
 } pdesc_t;
 
 /* the names of the switch-like values */
@@ -109,8 +110,8 @@ static const pdesc_t DEV_P[NDEV][NPK] = {
 /* The source engines: what starts a track's chain (docs/bryo-architecture.md, "Source engines"). TAPE's knobs are
  * DEV_P[DEV_SRC]; each other source has its own table, and each track keeps every source's values, so switching
  * back and forth loses nothing. */
-enum { SRC_TAPE, SRC_SYNTH, SRC_POLY, NSRC };
-static const char *const SRC_NAME[NSRC] = {"TAPE", "SYNTH", "POLY"};
+enum { SRC_TAPE, SRC_SYNTH, SRC_POLY, SRC_DRUM, NSRC };
+static const char *const SRC_NAME[NSRC] = {"TAPE", "SYNTH", "POLY", "DRUM"};
 
 /* SYNTH (synth.c): a small subtractive voice from Felucca's ANALOG engine, up to three per track. Four pages, the
  * way a synth's panel reads left to right: the oscillators, the filter, the envelope (one ADSR for the level and,
@@ -148,6 +149,45 @@ static const pdesc_t POL_P[NPK] = {
     {"ENV", -100, 100, 0, F_BIPCT},
     /* LEVEL: what the track hears of POLY's voices */
     {"LVL", -24, 6, 0, F_DB}, {""}, {""}, {""}};
+
+/* DRUM (drum.c): a drum machine. Sixteen synthesized instruments on the white keys, played from a pattern of 2..4
+ * bars of sixteenths. Four pages: the PATTERN (a written rhythm to start from, its length, swing, how hard an
+ * accented step hits), how each pass VARIES from it (SEED picks a version; 0 plays it as written), the KIT (every
+ * instrument at once) and STEP (the instrument the keys write, the bar they show, what pressing a key does). PATN,
+ * LEN, INST, BAR and MODE aren't modulation targets: PATN writes the pattern when turned, the rest are the page's
+ * own state. */
+enum { DM_PATN, DM_LEN, DM_SWNG, DM_ACNT, DM_SEED, DM_VARY, DM_FILL, DM_EVOL, DM_TUNE, DM_DECY, DM_TONE, DM_DRV,
+       DM_INST, DM_BAR, DM_MODE, DM_LVL };
+enum { DMODE_HITS, DMODE_ACC, DMODE_LIVE, DMODE_ERAS };
+#define DRM_NPRESET 10u
+#define DRM_NBAR 4u
+static const char *const N_DPATN[DRM_NPRESET] = {"ROCK", "DISC", "FUNK", "SHFL", "BOSA", "RMBA", "CHA", "BGIN",
+                                                 "TNGO", "MRCH"};
+static const char *const N_DINST[16] = {"BD", "SD", "CP", "RS", "LC", "LB", "HB", "CL",
+                                        "CB", "MA", "TB", "GU", "HH", "OH", "MB", "CY"};
+static const char *const N_DMODE[4] = {"HITS", "ACC", "LIVE", "ERAS"};
+static const char *const N_EVOL[5] = {"OFF", "1", "2", "4", "8"};
+static const pdesc_t DRM_P[NPK] = {
+    /* PATTERN: a written rhythm (turned: it replaces the pattern; SAVE held undoes), the bars it loops, swing on
+     * the off-sixteenths, an accented step's extra punch */
+    {"PATN", 0, DRM_NPRESET - 1, 0, F_ENUM, N_DPATN, 1}, {"LEN", 2, DRM_NBAR, 2, F_NUM, 0, 1},
+    {"SWNG", 0, 100, 0, F_PCT}, {"ACNT", 0, 100, 60, F_PCT},
+    /* VARY: the version (0: as written), how far it strays, the chance of a fill in the last bar, a new version
+     * every EVOL loops */
+    {"SEED", 0, 200, 0, F_NUM}, {"VARY", 0, 100, 40, F_PCT}, {"FILL", 0, 100, 25, F_PCT},
+    {"EVOL", 0, 4, 0, F_ENUM, N_EVOL},
+    /* KIT: every instrument's pitch (semitones), decay (-100: a quarter, +100: four times), brightness, drive */
+    {"TUNE", -12, 12, 0, F_ST}, {"DECY", -100, 100, 0, F_BIPCT}, {"TONE", -100, 100, 0, F_BIPCT},
+    {"DRV", 0, 100, 0, F_PCT},
+    /* STEP: the instrument the keys write (HOME held + a white key picks it too), the bar they show (OCT- / OCT+),
+     * what a key does (HITS, ACC: toggles that step; LIVE: plays and writes at the nearest step; ERAS: held, wipes
+     * its instrument as the playhead passes), and the level (every source's last page) */
+    {"INST", 0, 15, 0, F_ENUM, N_DINST, 1}, {"BAR", 1, DRM_NBAR, 1, F_NUM, 0, 1},
+    {"MODE", 0, 3, 0, F_ENUM, N_DMODE, 1}, {"LVL", -24, 6, 0, F_DB}};
+/* an instrument's own knobs (a white key held on PATTERN, VARY or KIT: KNOB 1..4 are that instrument's) */
+enum { DIN_TUNE, DIN_DECY, DIN_LVL, DIN_TONE, NDIN };
+static const pdesc_t DRI_P[NDIN] = {
+    {"TUNE", -12, 12, 0, F_ST}, {"DECY", -100, 100, 0, F_BIPCT}, {"LVL", -24, 6, 0, F_DB}, {"TONE", -100, 100, 0, F_BIPCT}};
 
 /* an unused knob on a page (no label) */
 static int pdesc_empty(const pdesc_t *d) { return !d->label || !d->label[0]; }
@@ -236,6 +276,10 @@ typedef struct {
     uint8_t recin;               /* what REC records onto the tape (RIN_*: the routing view) */
     int16_t syn[NPK];            /* SYNTH's knobs (TAPE's are dev[DEV_SRC]) */
     int16_t pol[NPK];            /* POLY's */
+    int16_t drm[NPK];            /* DRUM's */
+    uint16_t dpat[DRM_NBAR][16]; /* DRUM's pattern: per bar and step, the instruments that hit (a bit each) */
+    uint16_t dacc[DRM_NBAR];     /* .. the accented steps of each bar (a bit each) */
+    int16_t dins[16][NDIN];       /* .. each instrument's own TUNE DECY LVL TONE */
 } track_params_t;
 static track_params_t tp[NTRK];
 
@@ -257,15 +301,17 @@ static const pdesc_t *dev_p(uint32_t t, uint32_t d)
 {
     if (d != DEV_SRC || tp[t].src == SRC_TAPE)
         return DEV_P[d];
-    return tp[t].src == SRC_SYNTH ? SYN_P : POL_P;
+    return tp[t].src == SRC_SYNTH ? SYN_P : tp[t].src == SRC_POLY ? POL_P : DRM_P;
 }
 static int16_t *dev_v(uint32_t t, uint32_t d)
 {
     if (d != DEV_SRC || tp[t].src == SRC_TAPE)
         return tp[t].dev[d];
-    return tp[t].src == SRC_SYNTH ? tp[t].syn : tp[t].pol;
+    return tp[t].src == SRC_SYNTH ? tp[t].syn : tp[t].src == SRC_POLY ? tp[t].pol : tp[t].drm;
 }
 static const char *dev_name(uint32_t t, uint32_t d) { return d == DEV_SRC ? SRC_NAME[tp[t].src % NSRC] : DEV_NAME[d]; }
+
+static void drm_defaults(uint32_t t);   /* drum.c: the pattern a DRUM track starts with */
 
 /* slot s of track t runs engine e: its knobs start from that engine's defaults */
 static void param_engine(uint32_t t, uint32_t s, uint32_t e)
@@ -292,7 +338,9 @@ static void param_defaults(void)
         for (k = 0; k < NPK; k++) {
             tp[t].syn[k] = SYN_P[k].def;
             tp[t].pol[k] = pdesc_empty(&POL_P[k]) ? 0 : POL_P[k].def;
+            tp[t].drm[k] = DRM_P[k].def;
         }
+        drm_defaults(t);
         tp[t].pol[PL_REEL] = (int16_t)(t < NREEL ? t + 1u : 1u);       /* POLY starts on the track's reel too */
         tp[t].dev[DEV_SRC][8] = (int16_t)(t < NREEL ? t + 1u : 0u);   /* track n plays reel n to start */
         for (s = 0; s < NSLOT; s++) {

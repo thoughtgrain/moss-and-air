@@ -143,6 +143,10 @@ static void power_on(void)
     memset(&tape_undo, 0, sizeof tape_undo);
     memset(syn, 0, sizeof syn);
     memset(pol, 0, sizeof pol);
+    memset(drm_rt, 0, sizeof drm_rt);
+    memset(&drm_undo_buf, 0, sizeof drm_undo_buf);
+    memset(drm_dirty, 0, sizeof drm_dirty);
+    drm_rq_w = drm_rq_r = 0;
     memset(&sys, 0, sizeof sys);
     memset(&fm1_in, 0, sizeof fm1_in);
     panel = PANEL_DEFAULT;
@@ -191,6 +195,14 @@ static uint32_t note_bit_of_white(uint32_t w)
         if (KEY_WHITE[n] == w)
             return 1u << n;
     return 0;
+}
+
+static uint32_t note_of_white(uint32_t w)              /* white key w's note (fm1_in.notes bit) */
+{
+    uint32_t n;
+    for (n = 0; n < 27u && KEY_WHITE[n] != w; n++)
+        ;
+    return n;
 }
 
 static int32_t peak_of(const int32_t *x, uint32_t n)
@@ -705,7 +717,37 @@ static void screens_in(const char *pal)
     press(B_HOME);                                       /* LEVEL: +4 dB */
     turn(0, 4);
     shot(pal, "poly_level");
-    hold(B_HOME);                                        /* back to TAPE (round past POLY) */
+    hold(B_HOME);                                        /* DRUM: its four pages */
+    host_enc[panel.enc[EN_SELECT]] = 1;
+    ui_input();
+    let_go(B_HOME);
+    shot(pal, "drum");                                   /* PATTERN: ROCK's two bars, the first shown */
+    sys.playing = 1;                                     /* playing: the playhead, three sixteenths in */
+    render(3u * 172u + 20u, 0);
+    shot(pal, "drum_playing");
+    sys.playing = 0;
+    render(4, 0);
+    press(B_HOME);                                       /* VARY: SEED 7 at VARY 80: what this version changes */
+    turn(0, 7);
+    turn(1, 40);
+    shot(pal, "drum_vary");
+    press(B_HOME);                                       /* KIT: the instrument STEP picks (BD), DECY +30 */
+    turn(1, 30);
+    shot(pal, "drum_kit");
+    fm1_in.notes = note_bit_of_white(4);                 /* the low conga held: its own knobs, TUNE -3 */
+    turn(0, -3);
+    shot(pal, "drum_inst");
+    fm1_in.notes = 0;
+    ui_input();
+    press(B_HOME);                                       /* STEP: the snare's row of bar 1 */
+    hold(B_HOME);
+    key_edge(note_of_white(1));
+    let_go(B_HOME);
+    shot(pal, "drum_step");
+    turn(2, 2);                                          /* MODE LIVE: the grid, named */
+    shot(pal, "drum_live");
+    turn(2, -2);
+    hold(B_HOME);                                        /* back to TAPE (round past DRUM) */
     host_enc[panel.enc[EN_SELECT]] = 1;
     ui_input();
     let_go(B_HOME);
@@ -4296,27 +4338,286 @@ static void test_drum_voices(void)
           (DRM_KIT[DI_HH].chokes & DRM_KIT[DI_MB].chokes) == 1u << DI_OH);
 }
 
+/* DRUM on track 1, the others muted: the instruments it strikes over `blocks` blocks (a count each), and the block
+ * of each of its first 64 strikes */
+static uint32_t drum_hits[16], drum_at[64], drum_nat;
+static void drum_run(uint32_t blocks)
+{
+    uint32_t b, j;
+    for (b = 0; b < blocks; b++) {
+        uint32_t n0 = drm_rt[0].n;
+        uint8_t before[DRM_NV];
+        uint32_t age[DRM_NV];
+        for (j = 0; j < DRM_NV; j++) {
+            before[j] = drm_rt[0].inst[j];
+            age[j] = drm_rt[0].age[j];
+        }
+        chain_block(out, CTL);
+        if (drm_rt[0].n != n0)
+            for (j = 0; j < DRM_NV; j++)
+                if (drm_rt[0].age[j] != age[j] || drm_rt[0].inst[j] != before[j]) {
+                    drum_hits[drm_rt[0].inst[j] & 15u]++;
+                    if (drum_nat < 64u)
+                        drum_at[drum_nat++] = b;
+                }
+    }
+}
+static void drum_reset(void)
+{
+    memset(drum_hits, 0, sizeof drum_hits);
+    drum_nat = 0;
+}
+/* the hits of a pattern as written, per instrument */
+static void drum_count(uint32_t t, uint32_t *n)
+{
+    uint32_t b, s, i;
+    for (i = 0; i < 16u; i++)
+        n[i] = 0;
+    for (b = 0; b < (uint32_t)tp[t].drm[DM_LEN]; b++)
+        for (s = 0; s < 16u; s++)
+            for (i = 0; i < 16u; i++)
+                n[i] += (tp[t].dpat[b][s] >> i) & 1u;
+}
+
+static void test_drum(void)
+{
+    uint32_t want[16], i, b, s, v, ok, same, kept, foreign, differs;
+    int16_t *p;
+    char m[96];
+    power_on();
+    tp[0].src = SRC_DRUM;
+    track[1].mute = track[2].mute = track[3].mute = 1;
+    p = tp[0].drm;
+    check("DRUM: a track starts on ROCK, two bars; PATN, LEN, INST, BAR, MODE aren't modulation targets; SEED is",
+          tp[0].drm[DM_PATN] == 0 && tp[0].drm[DM_LEN] == 2 && tp[0].dpat[0][0] == (1u << DI_BD | 1u << DI_HH) &&
+          !mod_tdesc(MOD_TSRC + SRC_DRUM * NPK + DM_PATN) && !mod_tdesc(MOD_TSRC + SRC_DRUM * NPK + DM_LEN) &&
+          !mod_tdesc(MOD_TSRC + SRC_DRUM * NPK + DM_INST) && !mod_tdesc(MOD_TSRC + SRC_DRUM * NPK + DM_MODE) &&
+          mod_tdesc(MOD_TSRC + SRC_DRUM * NPK + DM_SEED) && mod_tdesc(MOD_TSRC + SRC_DRUM * NPK + DM_SWNG));
+
+    /* two bars at 120 BPM: 4 s, 5512.5 blocks; a sixteenth is 172.3 blocks */
+    sys.bpm = 120;
+    sys.playing = 1;
+    drum_reset();
+    drum_run(5512);
+    drum_count(0, want);
+    for (ok = 1, i = 0; i < 16u; i++)
+        ok &= drum_hits[i] == want[i];
+    snprintf(m, sizeof m, "two bars of ROCK as written: BD %u SD %u HH %u OH %u hits (written %u %u %u %u)",
+             drum_hits[DI_BD], drum_hits[DI_SD], drum_hits[DI_HH], drum_hits[DI_OH], want[DI_BD], want[DI_SD],
+             want[DI_HH], want[DI_OH]);
+    check(m, ok);
+    check("..on the grid: the third strike (the hat on step 3) 2 sixteenths after the first, to the block",
+          drum_nat > 3u && drum_at[0] == 0u && (drum_at[2] == 344u || drum_at[2] == 345u));
+    sys.playing = 0;
+    render(2, 0);
+    p[DM_SWNG] = 100;                                    /* SWNG 100: the off-sixteenths a third of a step late */
+    tp[0].dpat[0][1] = 1u << DI_CL;
+    sys.playing = 1;
+    drum_reset();
+    drum_run(400);
+    check("SWNG 100: step 2 (an off-sixteenth) sounds a third of a step late: 229 blocks, not 172",
+          drum_nat >= 3u && drum_at[2] >= 228u && drum_at[2] <= 230u);
+    sys.playing = 0;
+    render(2, 0);
+    drm_load(0, 0);
+    p[DM_SWNG] = 0;
+
+    /* SEED: versions */
+    p[DM_VARY] = 100;
+    p[DM_FILL] = 100;
+    for (same = 1, kept = 1, foreign = 0, differs = 0, v = 1; v <= 200u; v++)
+        for (b = 0; b < 2u; b++)
+            for (s = 0; s < 16u; s++) {
+                drm_hits_t h, h2, h0;
+                uint32_t w = tp[0].dpat[b][s];
+                drm_step(0, p, v, b, s, &h);
+                drm_step(0, p, v, b, s, &h2);
+                drm_step(0, p, 0, b, s, &h0);
+                same &= h.hit == h2.hit && h.soft == h2.soft && h.acc == h2.acc && h0.hit == w;
+                differs += h.hit != w;
+                if (!(b == 1u && s >= 8u))                /* (outside a fill's reach) */
+                    kept &= (h.hit & w & (1u << DI_BD | 1u << DI_SD)) == (w & (1u << DI_BD | 1u << DI_SD));
+                foreign |= h.hit & ~(1u << DI_BD | 1u << DI_SD | 1u << DI_HH | 1u << DI_OH | 1u << DI_CY);
+            }
+    check("SEED: a version plays the same every time; SEED 0 is the pattern as written", same);
+    snprintf(m, sizeof m, "..200 versions at VARY 100: %u steps differ, the backbone (BD SD) never dropped", differs);
+    check(m, differs > 400u && kept);
+    check("..and nothing the pattern doesn't use comes in (ROCK: no cowbell, no conga)", !foreign);
+    drm_load(0, 4);                                      /* BOSA: no snare, no cymbal */
+    for (foreign = 0, v = 1; v <= 200u; v++)
+        for (b = 0; b < 2u; b++)
+            for (s = 0; s < 16u; s++) {
+                drm_hits_t h;
+                drm_step(0, p, v, b, s, &h);
+                foreign |= h.hit & (1u << DI_SD | 1u << DI_CY | 1u << DI_CP);
+            }
+    check("..BOSA's fills roll on the rim: no snare, no clap, no crash in 200 versions", !foreign);
+    drm_load(0, 5);                                      /* RMBA: low conga and high bongo, no low bongo */
+    for (foreign = 0, differs = 0, v = 1; v <= 200u; v++)
+        for (b = 0; b < 2u; b++)
+            for (s = 0; s < 16u; s++) {
+                drm_hits_t h;
+                drm_step(0, p, v, b, s, &h);
+                foreign |= h.hit & ~(1u << DI_BD | 1u << DI_LC | 1u << DI_HB | 1u << DI_CL | 1u << DI_MA);
+                differs += ((h.hit ^ tp[0].dpat[b][s]) & DRM_CONGAS) != 0;
+            }
+    snprintf(m, sizeof m, "..RMBA: the congas vary (%u steps in 200 versions), runs and moves stay on its two drums",
+             differs);
+    check(m, !foreign && differs > 200u);
+    check("DECY: x2 every 50 % (-100: a quarter, +25: 1.5 times, +100: four times)", drm_scale(-100) == 64u &&
+          drm_scale(25) == 384u && drm_scale(100) == 1024u && drm_scale(0) == 256u);
+    p[DM_SEED] = 5;
+    p[DM_EVOL] = 1;
+    check("EVOL 1: a new version every loop (SEED 5: 5, 6, 7); OFF: always 5; SEED 0: as written",
+          drm_version(p, 0) == 5u && drm_version(p, 2) == 7u && (p[DM_EVOL] = 0, drm_version(p, 9) == 5u) &&
+          (p[DM_SEED] = 0, drm_version(p, 9) == 0u));
+    p[DM_VARY] = 40;
+    p[DM_FILL] = 25;
+
+    drm_load(0, 0);                                      /* seven instruments on one step: five voices, the oldest */
+    for (b = 0; b < 2u; b++)                             /* taken (the last five struck ring) */
+        for (s = 0; s < 16u; s++)
+            tp[0].dpat[b][s] = 0;
+    tp[0].dpat[0][0] = 0x7Fu;
+    memset(drm_rt, 0, sizeof drm_rt);
+    sys.playing = 1;
+    render(1, 0);
+    for (ok = 1, i = 0; i < DRM_NV; i++)
+        ok &= drm_rt[0].inst[i] >= 2u && drm_rt[0].inst[i] <= 6u && (drm_rt[0].v[i].live || drm_rt[0].v[i].trig);
+    check("seven instruments on one step: the five voices hold the last five struck", ok);
+    sys.playing = 0;
+    render(2, 0);
+
+    /* the page: PATN, POLY's clear, SAVE's undo, STEP's keys, OCT, HOME + key */
+    power_on();
+    tp[0].src = SRC_DRUM;
+    p = tp[0].drm;
+    turn(0, 1);
+    check("PATN turned: DISC written over the pattern (four on the floor)", tp[0].dpat[0][4] & (1u << DI_BD) &&
+          tp[0].dpat[0][2] & (1u << DI_OH) && !strcmp(ui.msg, "DISC WRITTEN"));
+    press(B_HOME);
+    press(B_HOME);
+    press(B_HOME);
+    check("HOME tapped: VARY, KIT, STEP (the page turns as HOME is let go)", ui.page == 3u);
+    key_edge(note_of_white(1));
+    check("STEP (HITS): white key 2 toggles step 2 of bar 1 for INST (BD)", tp[0].dpat[0][1] == (1u << DI_BD));
+    hold(B_HOME);
+    key_edge(note_of_white(1));
+    let_go(B_HOME);
+    check("HOME held + white key 2: INST is SD, heard; the page stays", p[DM_INST] == DI_SD && ui.page == 3u &&
+          drm_aud[0] == DI_SD + 1u);
+    press(B_OCTUP);
+    key_edge(note_of_white(2));
+    check("OCT+: bar 2; key 3 writes the snare there; OCT+ again stays at LEN", p[DM_BAR] == 2 &&
+          (tp[0].dpat[1][2] & (1u << DI_SD)) && (press(B_OCTUP), p[DM_BAR] == 2));
+    turn(2, 1);
+    key_edge(note_of_white(5));
+    check("MODE ACC: key 6 accents step 6 of bar 2", (tp[0].dacc[1] >> 5) & 1u);
+    turn(2, -1);
+    key_edge(black_note(BK_POLY));
+    fm1_in.notes = 1u << black_note(BK_POLY);
+    fm1_ms += 600;
+    ui_input();
+    fm1_in.notes = 0;
+    check("POLY held: the pattern cleared", !tp[0].dpat[0][0] && !tp[0].dpat[1][2] && ui.undo == UNDO_DRUM);
+    hold(B_SAVE);
+    fm1_ms += 1000;
+    ui_input();
+    let_go(B_SAVE);
+    check("SAVE held: it comes back, edits and all", tp[0].dpat[0][1] == (1u << DI_BD) && (tp[0].dpat[1][2] & (1u << DI_SD)));
+    press(B_HOME);                                       /* PATTERN: PATN over the edited pattern, SAVE undoes it */
+    turn(0, 1);
+    check("PATN over an edited pattern: FUNK, and the edit kept for SAVE", tp[0].drm[DM_PATN] == 2 &&
+          drm_undo_buf.valid && !strcmp(ui.msg, "FUNK WRITTEN. HOLD SAVE: UNDO"));
+    hold(B_SAVE);
+    fm1_ms += 1000;
+    ui_input();
+    let_go(B_SAVE);
+    check("..SAVE held: the edited one back", tp[0].dpat[0][1] == (1u << DI_BD));
+    tp[0].drm[DM_LEN] = 4;                               /* PATN while STEP shows bar 4: back inside its two bars */
+    tp[0].drm[DM_BAR] = 4;
+    drm_load(0, 0);
+    check("PATN while bar 4 is shown: BAR follows LEN down to 2", tp[0].drm[DM_BAR] == 2);
+    for (b = 0; b < DRM_NBAR; b++)
+        for (s = 0; s < 16u; s++)
+            tp[0].dpat[b][s] = 0;
+    fm1_in.notes = 1u << black_note(BK_POLY);
+    key_edge(black_note(BK_POLY));
+    fm1_ms += 600;
+    ui_input();
+    fm1_in.notes = 0;
+    check("POLY held on an empty pattern: says so; SAVE then has nothing to undo",
+          !strcmp(ui.msg, "THE PATTERN IS EMPTY") && drm_undo() == -1);
+    fm1_in.notes = note_bit_of_white(4);                 /* an instrument held: its own knobs */
+    ui_input();
+    turn(2, -24);
+    check("PATTERN, the low conga held: KNOB 3 is its own LVL (-24 dB); the box names it",
+          ui.drm_inst == DI_LC + 1u && tp[0].dins[DI_LC][DIN_LVL] == -24 && page_target(2) == MOD_NTGT);
+    fm1_in.notes = 0;
+    ui_input();
+    check("..let go: the page's own knobs again", !ui.drm_inst && ui_page(2, (int16_t **)&p) == &DRM_P[DM_SWNG]);
+
+    /* LIVE and ERAS, playing */
+    power_on();
+    tp[0].src = SRC_DRUM;
+    track[1].mute = track[2].mute = track[3].mute = 1;
+    p = tp[0].drm;
+    press(B_HOME);
+    press(B_HOME);
+    press(B_HOME);
+    turn(2, 2);
+    sys.bpm = 120;
+    sys.playing = 1;
+    drum_reset();
+    drum_run(172u * 4u + 150u);                          /* just before step 5 (late in step 4) */
+    fm1_in.notes = note_bit_of_white(7);                 /* the claves, pressed late: written on step 5 */
+    ui_input();
+    drum_run(2);
+    fm1_in.notes = 0;
+    ui_input();
+    drm_poll();
+    drum_run(100);                                       /* step 5 passes: not struck twice */
+    check("LIVE: a key late in step 4 sounds now and is written on step 5, not struck again there",
+          (tp[0].dpat[0][5] & (1u << DI_CL)) && drum_hits[DI_CL] == 1u && drm_dirty[0]);
+    turn(2, 1);
+    fm1_in.notes = note_bit_of_white(12);                /* ERAS: the hat held for a bar */
+    ui_input();
+    drum_run(172u * 16u);
+    fm1_in.notes = 0;
+    ui_input();
+    drm_poll();
+    for (ok = 1, s = 0; s < 16u; s++)
+        ok &= !(tp[0].dpat[0][s] & (1u << DI_HH)) || !(tp[0].dpat[1][s] & (1u << DI_HH));
+    check("ERAS: the hi-hat held through a bar: wiped where the playhead passed, and silent", ok &&
+          (tp[0].dpat[0][0] & (1u << DI_BD)));
+    sys.playing = 0;
+    render(2, 0);
+    power_on();
+}
+
 static void test_source_level(void)
 {
     static int32_t a[CTL * 300], b[CTL * 300];
     static const char *const NAME[NSRC] = {"TAPE LVL -12 dB: a quarter of the track's sound",
-                                           "SYNTH LVL -12 dB: a quarter", "POLY LVL -12 dB: a quarter"};
+                                           "SYNTH LVL -12 dB: a quarter", "POLY LVL -12 dB: a quarter",
+                                           "DRUM LVL -12 dB: a quarter (its pattern playing)"};
     uint32_t src;
     for (src = 0; src < NSRC; src++) {
-        int16_t *lv = src == SRC_TAPE ? &tp[0].dev[DEV_SRC][TK_LVL] : src == SRC_SYNTH ? &tp[0].syn[SY_LVL] : &tp[0].pol[PL_LVL];
+        int16_t *lv = src == SRC_TAPE ? &tp[0].dev[DEV_SRC][TK_LVL] : src == SRC_SYNTH ? &tp[0].syn[SY_LVL]
+                    : src == SRC_POLY ? &tp[0].pol[PL_LVL] : &tp[0].drm[DM_LVL];
         int32_t pa, pb;
         power_on();
         tp[0].src = (uint8_t)src;
         track[1].mute = track[2].mute = track[3].mute = 1;
-        sys.playing = src == SRC_TAPE;
-        fm1_in.notes = src == SRC_TAPE ? 0u : note_bit_of_white(0);
+        sys.playing = src == SRC_TAPE || src == SRC_DRUM;
+        fm1_in.notes = src == SRC_TAPE || src == SRC_DRUM ? 0u : note_bit_of_white(0);
         render(100, 0);
         render(300, a);
         power_on();                                      /* the same again, from power-on, at -12 dB */
         tp[0].src = (uint8_t)src;
         track[1].mute = track[2].mute = track[3].mute = 1;
-        sys.playing = src == SRC_TAPE;
-        fm1_in.notes = src == SRC_TAPE ? 0u : note_bit_of_white(0);
+        sys.playing = src == SRC_TAPE || src == SRC_DRUM;
+        fm1_in.notes = src == SRC_TAPE || src == SRC_DRUM ? 0u : note_bit_of_white(0);
         *lv = -12;
         render(100, 0);
         render(300, b);
@@ -4327,7 +4628,7 @@ static void test_source_level(void)
     }
     check("..and LVL can be modulated (a target on every source)",
           mod_tdesc(MOD_TSRC + SRC_TAPE * NPK + TK_LVL) && mod_tdesc(MOD_TSRC + SRC_SYNTH * NPK + SY_LVL) &&
-          mod_tdesc(MOD_TSRC + SRC_POLY * NPK + PL_LVL));
+          mod_tdesc(MOD_TSRC + SRC_POLY * NPK + PL_LVL) && mod_tdesc(MOD_TSRC + SRC_DRUM * NPK + DM_LVL));
     sys.playing = 0;
     power_on();
 }
@@ -4657,6 +4958,7 @@ int main(int argc, char **argv)
     test_mod_engines();
     test_source_level();
     test_drum_voices();
+    test_drum();
     test_input();
     test_settings();
     palette_set(UI_GREY_INDEX);                          /* (the screens are one ink now, whatever the palette) */

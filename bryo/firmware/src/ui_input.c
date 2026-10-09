@@ -22,7 +22,11 @@
  *                  stopped: as it's let go). Held a second while stopped: the USB record mode (usbrec.c): REC
  *                  starts and stops the take, the white keys pick its track, REC again puts it there, HOME goes
  *                  back a step
- *   OCT- / OCT+    the white keys' octave
+ *   OCT- / OCT+    the white keys' octave (a DRUM track: the bar STEP shows)
+ *   DRUM           HOME turns its pages as it's let go; held + a white key: STEP's instrument (heard). On PATTERN,
+ *                  VARY and KIT the white keys play the kit, and one held makes KNOB 1..4 its own TUNE DECY LVL
+ *                  TONE; on STEP they toggle the bar's steps (HITS, ACC), or play and write (LIVE), or wipe (ERAS).
+ *                  POLY held clears the pattern (SAVE held: undo)
  *   KNOB 1..4      the four values on screen; SELECT: the tempo
  *   black OP1..OP4 track mutes
  * What the later phases add (p-locks, the views behind PRESETS, the other black keys) slots into the same
@@ -171,13 +175,21 @@ static void slot_up(void)
         focus_slot(s);
 }
 
+/* the focused page is a DRUM track's (its source page) */
+static int drm_page(void)
+{
+    return ui.view == VIEW_PAGE && ui.kind == FOCUS_DEV && ui.dev == DEV_SRC && tp[sys.sel].src == SRC_DRUM;
+}
+/* .. its STEP page */
+static int drm_step_page(void) { return drm_page() && ui.page == 3u; }
+
 /* the target (mod.c) knob c of the page shown can be modulated as, or MOD_NTGT: none (a slot's page, the levels,
  * the master, the routing) */
 static uint32_t page_target(uint32_t c)
 {
     if (ui.view == VIEW_MIXER && ui.chan == CHAN_STRIP)
         return MOD_TCH + c;
-    if (ui.view != VIEW_PAGE || ui.kind != FOCUS_DEV)
+    if (ui.view != VIEW_PAGE || ui.kind != FOCUS_DEV || ui.drm_inst)   /* (an instrument's own knobs: none) */
         return MOD_NTGT;
     c += 4u * ui.page;
     return ui.dev == DEV_SRC ? MOD_TSRC + (tp[sys.sel].src % NSRC) * NPK + c : MOD_TG(ui.dev, c);
@@ -246,8 +258,13 @@ static void usbrec_open(void)
 static void on_button(uint32_t b)
 {
     switch (b) {
-    case B_HOME:                                        /* TAPE, its page 2 */
-        pad_devices(DEV_SRC, DEV_SRC);
+    case B_HOME:                                        /* TAPE, its page 2 (DRUM: as it's let go) */
+        if (drm_page()) {
+            ui.home_held = 1;
+            ui.home_used = 0;
+        } else {
+            pad_devices(DEV_SRC, DEV_SRC);
+        }
         break;
     case B_EDIT:                                        /* GRAIN's pages, RESONATOR's; on the mixer: the channel */
         if (ui.view == VIEW_MIXER) {                    /* (held: while held; tapped: latched; tapped again: off) */
@@ -294,12 +311,15 @@ static void on_button(uint32_t b)
         ui.save_t0 = fm1_ms;
         break;
     case B_OCTDN:
-        if (track[sys.sel].octave > 1u)
-            track[sys.sel].octave--;
-        break;
     case B_OCTUP:
-        if (track[sys.sel].octave < 6u)
+        if (tp[sys.sel].src == SRC_DRUM) {              /* a DRUM track: the bar STEP shows */
+            int16_t *bp = &tp[sys.sel].drm[DM_BAR];
+            *bp = (int16_t)clamp(*bp + (b == B_OCTUP ? 1 : -1), 1, tp[sys.sel].drm[DM_LEN]);
+        } else if (b == B_OCTDN && track[sys.sel].octave > 1u) {
+            track[sys.sel].octave--;
+        } else if (b == B_OCTUP && track[sys.sel].octave < 6u) {
             track[sys.sel].octave++;
+        }
         break;
     default:
         break;
@@ -321,10 +341,11 @@ static void on_black(uint32_t k)
         ui.mono_held = 1;
         ui.mono_t0 = fm1_ms;
         ui_message("KEEP HOLDING MONO TO CLEAR MODULATION");
-    } else if (k == BK_POLY) {                          /* held HOLD: clear the focused track's tape */
+    } else if (k == BK_POLY) {                          /* held HOLD: clear the focused track's tape (DRUM: its
+                                                         * pattern) */
         ui.poly_held = 1;
         ui.poly_t0 = fm1_ms;
-        ui_message("KEEP HOLDING POLY TO CLEAR THE TAPE");
+        ui_message(tp[sys.sel].src == SRC_DRUM ? "KEEP HOLDING POLY TO CLEAR THE PATTERN" : "KEEP HOLDING POLY TO CLEAR THE TAPE");
     }
 }
 
@@ -338,6 +359,14 @@ static void hold_keys(void)
         if (!((fm1_in.notes >> k) & 1u)) {
             ui.poly_held = 0;
             ui.msg_t = 1;                               /* (the message ends next frame) */
+        } else if ((uint32_t)(fm1_ms - ui.poly_t0) >= 500u && tp[sys.sel].src == SRC_DRUM) {
+            ui.poly_held = 0;
+            if (drm_clear(sys.sel)) {
+                ui_message("PATTERN CLEARED. HOLD SAVE: UNDO");
+                ui.undo = UNDO_DRUM;
+            } else {
+                ui_message("THE PATTERN IS EMPTY");
+            }
         } else if ((uint32_t)(fm1_ms - ui.poly_t0) >= 500u) {
             char m[40] = "TRACK ";
             ui.poly_held = 0;
@@ -406,7 +435,8 @@ static void hold_keys(void)
             ui_message("SAVE: PROJECTS ARRIVE IN PHASE 8");
         } else if ((uint32_t)(fm1_ms - ui.save_t0) >= hold) {
             ui.save_held = 0;
-            ui_message((ui.undo == UNDO_MOD ? mod_undo() : tape_undo_clear()) >= 0 ? "CLEAR UNDONE" : "NOTHING TO UNDO");
+            ui_message((ui.undo == UNDO_MOD ? mod_undo() : ui.undo == UNDO_DRUM ? drm_undo() : tape_undo_clear()) >= 0
+                       ? "CLEAR UNDONE" : "NOTHING TO UNDO");
         }
     }
 }
@@ -445,6 +475,18 @@ static void on_knob(uint32_t c, int32_t d)
         tp[c].recin = (uint8_t)v;
     else
         *vp = v;
+    if (p == &DRM_P[DM_PATN]) {                         /* PATN: its rhythm written (an edited pattern kept) */
+        char m[40];
+        int kept = drm_dirty[sys.sel];
+        drm_patn(sys.sel, (uint32_t)v);
+        str_cpy(m, N_DPATN[v % (int32_t)DRM_NPRESET], 8);
+        str_cpy(m + str_len(m), kept ? " WRITTEN. HOLD SAVE: UNDO" : " WRITTEN", 28);
+        if (kept)
+            ui.undo = UNDO_DRUM;
+        ui_message(m);
+    } else if (p == &DRM_P[DM_LEN] && tp[sys.sel].drm[DM_BAR] > v) {   /* (the bar shown stays in the pattern) */
+        tp[sys.sel].drm[DM_BAR] = v;
+    }
     ui.hot = (uint8_t)c;
     ui.hot_t = 33;
     ui.last = (uint8_t)c;
@@ -519,9 +561,31 @@ static void ui_input(void)
     hold_keys();
     if (ui.glo_held && (((released >> panel.btn[B_GLO]) & 1u) || !((fm1_in.buttons >> panel.btn[B_GLO]) & 1u)))
         glo_up();
+    if (ui.home_held && !((fm1_in.buttons >> panel.btn[B_HOME]) & 1u)) {   /* HOME let go (DRUM): the next page */
+        ui.home_held = 0;
+        if (!ui.home_used && drm_page())
+            pad_devices(DEV_SRC, DEV_SRC);
+    }
     ui.steps_held = (uint16_t)(seq_page() ? white_keys(fm1_in.notes) : 0u);
-    sys.keys_live = (uint8_t)(!ui.glo_held && !seq_page());   /* under GLO the white keys pick the track, on a SEQ
-                                                               * page the steps: they don't play */
+    {                                                   /* DRUM: STEP's mode; an instrument held on the other pages */
+        uint32_t w = white_keys(fm1_in.notes), m = drm_step_page() ? (uint32_t)tp[sys.sel].drm[DM_MODE] : DMODE_HITS;
+        sys.drum_mode = (uint8_t)(m == DMODE_LIVE || m == DMODE_ERAS ? m : DMODE_HITS);
+        if (drm_page() && !drm_step_page() && !ui.home_held && !ui.glo_held && w) {
+            for (k = 0; !((w >> k) & 1u); k++)
+                ;
+            if (ui.drm_inst != k + 1u)
+                ui.last = 0xFF;
+            ui.drm_inst = (uint8_t)(k + 1u);
+        } else {
+            if (ui.drm_inst)
+                ui.last = 0xFF;
+            ui.drm_inst = 0;
+        }
+    }
+    sys.keys_live = (uint8_t)(!ui.glo_held && !seq_page() && !ui.home_held &&
+                              !(drm_step_page() && sys.drum_mode == DMODE_HITS));   /* under GLO the white keys pick
+                                                                * the track, on a SEQ page the steps, on DRUM's STEP
+                                                                * (HITS, ACC) the bar's steps: they don't play */
     sys.keys_grain = (uint8_t)(ui.view == VIEW_PAGE && ui.kind == FOCUS_DEV && ui.dev == DEV_GRAIN);
     sys.keys_reso = (uint8_t)(ui.view == VIEW_PAGE && ui.kind == FOCUS_DEV && ui.dev == DEV_RESO);
     for (k = 0; k < 27u; k++)
@@ -531,6 +595,13 @@ static void ui_input(void)
             } else if (ui.glo_held && KEY_WHITE[k] < sys.ntrk) {
                 sys.sel = KEY_WHITE[k];                  /* GLO + white key 1..TRACKS: the track */
                 ui.glo_used = 1;
+            } else if (ui.home_held && drm_page()) {     /* DRUM, HOME + a white key: STEP's instrument, heard */
+                tp[sys.sel].drm[DM_INST] = KEY_WHITE[k];
+                drm_aud[sys.sel] = (uint8_t)(KEY_WHITE[k] + 1u);
+                ui.home_used = 1;
+                ui.last = 0xFF;
+            } else if (drm_step_page() && sys.drum_mode == DMODE_HITS && !ui.glo_held) {
+                drm_toggle(sys.sel, KEY_WHITE[k]);      /* STEP (HITS, ACC): the step toggled */
             }
         }
     for (k = 0; k < 4u; k++)
@@ -556,10 +627,11 @@ static void ui_input(void)
             }
         } else if (ui.view == VIEW_PAGE && ui.kind == FOCUS_DEV && ui.dev == DEV_SRC &&
                    ((fm1_in.buttons >> panel.btn[B_HOME]) & 1u)) {
-            /* HOME held + SELECT: the track's source (TAPE, SYNTH); each keeps its own knobs */
+            /* HOME held + SELECT: the track's source (TAPE, SYNTH, POLY, DRUM); each keeps its own knobs */
             tp[sys.sel].src = (uint8_t)(((int32_t)tp[sys.sel].src + d % (int32_t)NSRC + (int32_t)NSRC) % (int32_t)NSRC);
             ui.page = 0;
             ui.last = 0xFF;
+            ui.home_used = 1;
         } else if (ui.glo_held) {                       /* GLO held + SELECT: TRACKS (how many are in use), as a pad
                                                          * held + SELECT picks that pad's thing elsewhere */
             chain_tracks((int32_t)sys.ntrk + d);

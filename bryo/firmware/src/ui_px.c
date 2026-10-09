@@ -959,12 +959,18 @@ static const uint8_t POL_PK[NPK] = {
     PK_ATTACK, PK_DECAY, PK_SUSTAIN, PK_RELEASE,     /*       ATK DEC SUS REL */
     PK_CUTOFF, PK_RES, PK_SLOPE, PK_ENVAMT,          /*       CUT RES TYPE ENV */
     PK_FADER};                                       /*       LVL */
+static const uint8_t DRM_PK[NPK] = {
+    PK_PATTERN, PK_LENGTH, PK_SWING, PK_FADER,       /* DRUM: PATN LEN SWNG ACNT */
+    PK_DOTS, PK_VAR, PK_STAIRS, PK_LOOP,             /*       SEED VARY FILL EVOL */
+    PK_KNOB, PK_DECAY, PK_TONE, PK_DRIVE,            /*       TUNE DECY TONE DRV */
+    PK_SRC, PK_STEPS, PK_SRC, PK_FADER};             /*       INST BAR MODE LVL */
+static const uint8_t DRI_PK[NDIN] = {PK_KNOB, PK_DECAY, PK_FADER, PK_TONE};   /* an instrument: TUNE DECY LVL TONE */
 /* the pictograms of device d's knobs on track t (the source: the chosen source's) */
 static const uint8_t *dev_pk(uint32_t t, uint32_t d)
 {
     if (d != DEV_SRC || tp[t].src == SRC_TAPE)
         return DEV_PK[d];
-    return tp[t].src == SRC_SYNTH ? SYN_PK : POL_PK;
+    return tp[t].src == SRC_SYNTH ? SYN_PK : tp[t].src == SRC_POLY ? POL_PK : DRM_PK;
 }
 static const uint8_t CH_PK[NCH] = {PK_SHELF_LO, PK_SHELF_HI, PK_FILTER, PK_PAN};
 static const uint8_t MS_PK[NMS] = {PK_KNOB, PK_ATTACK, PK_RELEASE, PK_MIX};   /* the master compressor */

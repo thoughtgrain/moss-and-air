@@ -61,7 +61,9 @@ static void setup(uint32_t g)
     sys.keys_live = 1;
     sys.sel = 0;
     tp[0].dev[DEV_SRC][TK_REEL] = 2;                 /* KEYS: tonal and rhythmic */
-    tp[0].src = a == MA_SYN ? SRC_SYNTH : a == MA_POL ? SRC_POLY : SRC_TAPE;
+    tp[0].src = a == MA_SYN ? SRC_SYNTH : a == MA_POL ? SRC_POLY : a == MA_DRM ? SRC_DRUM : SRC_TAPE;
+    if (a == MA_DRM && k != DM_SEED)                 /* (a version for VARY, FILL and EVOL to act on) */
+        tp[0].drm[DM_SEED] = 5;
     if (a == DEV_GRAIN)
         tp[0].dev[DEV_GRAIN][GP_WET] = 60;
     if (a == DEV_RESO)

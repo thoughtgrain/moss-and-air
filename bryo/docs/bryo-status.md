@@ -9,7 +9,7 @@ code wins, and this page needs fixing.
 
 Bryo is replacement firmware for the M-VAVE FM-1, forked from Felucca 1.0.3 (`b22a24b`). It turns the FM-1 into
 a four-track sound-sculpting instrument after the PRD (my product spec, which lives outside this repo; the docs
-cite its sections as "PRD 2.2" and so on). Each track is a source (TAPE, SYNTH or POLY) through a fixed chain:
+cite its sections as "PRD 2.2" and so on). Each track is a source (TAPE, SYNTH, POLY or DRUM) through a fixed chain:
 GRAIN, RESONATOR, COLOR, SPACE, then a channel strip into the mix and a master compressor. Four modulator slots
 per track move any of it: hold a slot's pad, turn a knob.
 
@@ -27,6 +27,7 @@ the CPU load, listen.
 | 5 COLOR + SPACE | done |
 | 6 Mixer + routing | done: channel strips (LOW HIGH FILT PAN), master compressor; routing is REC IN |
 | 7 Modulation | done but p-locks: LFO ADSR SEQ FOLLOW, hold-and-turn depths, MONO's clear and undo |
+| 7b DRUM | done: a fourth source, a CR-78-inspired drum machine of Bryo's own sounds, patterns, rhythms and SEED |
 | 8 Projects | not started: save and recall with reels |
 | 9 Screen | mostly early: the dot-grid screens; still to come: modulation arcs, moving dots |
 | 10 Tools + docs | not started: reel upload tool, installer text, a manual |
@@ -36,23 +37,28 @@ the CPU load, listen.
 ```
  per track (x4):
    source ─► GRAIN ─► RESONATOR ─► COLOR ─► SPACE ─► channel (LOW HIGH FILT, level, PAN) ─┐
-   TAPE | SYNTH | POLY      (stereo from GRAIN on)                                         │
+   TAPE | SYNTH | POLY | DRUM   (stereo from GRAIN on)                                     │
      ▲ REC IN: what REC prints onto the tape (the others, one track, itself)               ▼
      └──────────────────────────────────────────── sum ─► master compressor ─► MASTER ─► out
  four modulator slots per track: LFO | ADSR | SEQ | FOLLOW, each with a depth to any knob
 ```
 
 - **Pages and knobs.** KNOB 1 to 4 always edit the four values on screen. HOME is the source (its pages: TAPE 3,
-  SYNTH 5, POLY 4, each ending with LVL); EDIT is GRAIN then RESONATOR; FX is COLOR then SPACE; LFO ENV SEQ ARP are
+  SYNTH 5, POLY 4, DRUM 4, each ending with LVL); EDIT is GRAIN then RESONATOR; FX is COLOR then SPACE; LFO ENV SEQ ARP are
   the slots; GLO is the mixer (EDIT there: the channel, then MASTER); ALGORITHM turned is REC IN. A pad held +
   SELECT picks that pad's thing (HOME: the source; a slot: its engine; GLO: TRACKS). Every control in every
   context is in `docs/controls.tsv`, checked by `tests/controls_check.py`.
 - **Modulation.** A slot's pad tapped opens its page as you let go; held, KNOB 1 to 4 set its depth to the knobs on
   the page shown (the strip shows the depths while it's held; a modulated knob gets a mark). MONO held half a
   second clears the track's depths; SAVE held undoes the last clear (tape or modulation).
-- **The keys.** White keys play slices (TAPE) or notes (SYNTH, POLY), set RESONATOR's root on its page, move
-  GRAIN's cursor on its page, and pick SEQ steps on a SEQ page. Black keys: OP1 to OP4 mute, OP5 reverse, OP6 half
+- **The keys.** White keys play slices (TAPE), notes (SYNTH, POLY) or the drum kit (DRUM: on its STEP page they
+  write steps, accents, live hits, or wipe), set RESONATOR's root on its page, move GRAIN's cursor on its page, and
+  pick SEQ steps on a SEQ page. Black keys: OP1 to OP4 mute, OP5 reverse, OP6 half
   speed, MONO and POLY clear (held), 0 freezes GRAIN.
+- **DRUM.** Sixteen synthesized instruments on the white keys, a pattern of 2 to 4 bars, ten written rhythms
+  (PATN), and SEED: any value but 0 plays a version that varies the pattern the way a player would (the backbone
+  kept, ghost notes, the hats thinning and filling, fills at the end), the same version every time. OCT- / OCT+ pick
+  the bar; POLY held clears the pattern.
 - **The USB record mode.** Stopped, REC held a second: the FM-1 plays the computer and records it; trim, level,
   fades, then a white key picks the track.
 
@@ -72,7 +78,8 @@ One core, no RTOS. Three contexts, and the rules between them are most of the ar
 **Memory.** Sound lives in one pool of 152 chunks (28 s of tape-format sound: `mem.c`) handed out by use: tapes as
 long as what's on them, GRAIN's live buffers, RESONATOR's strings and SPACE's lines while they're on. Nothing is
 set aside per track. When it runs short: a cleared tape's chunks first, then a parked track's tape, then the end of
-the longest tape. Main RAM holds 84.4 of 96 KiB (.bss), the pool 322.4 of 336 KiB (2026-10-09, 32-bit build).
+the longest tape. Main RAM holds 86.7 of 96 KiB (.bss), the pool 326.2 of 336 KiB (2026-10-09 with DRUM, 32-bit
+build: the firmware preprocessed, its inline assembly taken out, compiled `-m32 -Os`, `size -A`).
 
 **Parameters.** `param.c` holds every knob as an integer in its own range (`tp[t]`), with a descriptor (name,
 range, format) per knob. Up to 20 knobs a device or engine, in pages of four. The main loop writes them; the ISR
@@ -98,6 +105,7 @@ Felucca's `felucca.c` did); `tests/bryo_host.c` includes the same files for the 
 | `mem.c` | the shared sound memory: chunks and owners |
 | `tape.c` | TAPE: ADPCM tapes, reels, the head, REC and overdub, clear and undo |
 | `synth.c`, `poly.c`, `source.c` | SYNTH, POLY, and the source table |
+| `drum_voice.c`, `drum.c` | DRUM: the one synthesizer every instrument shares; the kit, the rhythms, SEED's versions, the player |
 | `grain.c` | GRAIN: the live buffer, the scheduler, the shared pool of grains |
 | `reso.c`, `color.c`, `space.c` | RESONATOR, COLOR, SPACE |
 | `mixer.c` | the channel strips and the master compressor |
@@ -112,9 +120,9 @@ Tests and tools:
 | File | What |
 | --- | --- |
 | `tests/run_tests.sh` | everything below that's quick, plus Felucca's kept hardware and installer tests; ends "ALL HOST TESTS PASSED" |
-| `tests/bryo_host.c` | Bryo's chain, input and screens on the host: 435 checks, and every screen rendered |
+| `tests/bryo_host.c` | Bryo's chain, input and screens on the host: 466 checks, and every screen rendered |
 | `tests/bryo_golden.txt`, `ui_golden.py` | each screen's pixel fingerprint |
-| `tests/checkpoint_sim.sh` | the hardware checkpoint on the host: 25 runs rendered to WAV, each one's cost under callgrind, and a stress test with the audio and USB interrupts cutting into the main loop while the memory's books are checked |
+| `tests/checkpoint_sim.sh` | the hardware checkpoint on the host: 28 runs rendered to WAV, each one's cost under callgrind, and a stress test with the audio and USB interrupts cutting into the main loop while the memory's books are checked |
 | `tests/mod_audit.sh` | every knob a modulator can move: does it change the sound, does it step at the blocks, what it costs (`--cost`) |
 | `tests/controls_check.py`, `coverage.py` | the controls map; line coverage of Bryo's files |
 | `tools/gen_reels.py`, `gen_tables.py` | the factory reels; the generated tables (`build/gen/`) |
@@ -123,7 +131,7 @@ Tests and tools:
 
 ```sh
 tests/run_tests.sh                       # the host suite (C compiler, Python with Pillow and fontTools)
-sh tests/checkpoint_sim.sh 20            # the 25 runs, their cost (valgrind), 20 s of interrupt stress
+sh tests/checkpoint_sim.sh 20            # the 28 runs, their cost (valgrind), 20 s of interrupt stress
 sh tests/mod_audit.sh [--cost]           # how modulation behaves, knob by knob (numpy)
 python3 tests/ui_golden.py update tests/bryo_golden.txt build/bryo_ui   # after a deliberate screen change
 ./build.sh                               # the device image: needs JieLi's toolchain and SDK (BUILDING.md)
@@ -146,6 +154,9 @@ measure the device here. Where it stands (`checkpoint_sim.sh`, 2026-10-09):
 | 21 | the groove's busiest moment | 2,454 |
 | 23 | GRAIN at its densest on one track | 2,986 |
 | 25 | every slot on every track, 128 depths | 3,127 |
+| 26 | DRUM busy alone (FUNK, VARY 100, FILL 100, long decays), the others plain reels | 1,301 |
+| 27 | the groove with a DRUM track in place of its drum reel | 1,885 |
+| 28 | four DRUM tracks at once, every voice (20) | 2,474 |
 | 15 | everything on, all four tracks | 4,877 |
 
 My target for a realistic four-track scene is 2,000; the device's real ratio of host instructions to CPU load is
@@ -172,7 +183,7 @@ number.
 ## Decisions, and why (the ones that shape everything)
 
 - **2026-10-07: a source per track, a fixed chain after it.** The PRD's chain stays fixed; what starts it is an
-  interface (`source_t`), so adding a source doesn't touch the devices. TAPE, SYNTH and POLY so far.
+  interface (`source_t`), so adding a source doesn't touch the devices. TAPE, SYNTH, POLY and DRUM so far.
 - **2026-10-07: tapes are IMA ADPCM, mono, 22.05 kHz.** Four times the time per byte of 16-bit, cheap to decode
   in the ISR; the decoded quality suits a sound-sculpting instrument.
 - **2026-10-07: the screen is a dot grid** (2 x 2 px dots, one ink), drawn per region only when it changes.
@@ -191,6 +202,13 @@ number.
   cost 7 KB of main RAM.
 - **2026-10-09: every source has a LEVEL** on its last page, as the S-4 does; that needed five pages a device
   (NPK 20).
+- **2026-10-09: DRUM's sounds and rhythms are Bryo's own.** CR-78-inspired in the instrument list and the
+  character, written from scratch: one data-driven voice, a patch row per instrument. A first pass reused
+  Felucca's drum voices; I replaced them so the kit is ours. "CR-78" stays in the docs, never on screen.
+- **2026-10-09: SEED is a pure function of (version, bar, step, instrument).** No state, so the same SEED always
+  plays the same thing, the screen can draw what will play, and an LFO or SEQ on SEED just picks versions. Each
+  instrument varies by its role (the backbone kept, the time thinned and filled, the colour ornamented), and only
+  with instruments the pattern already uses.
 - **2026-10-09: pitches and filter cutoffs modulate finer than their knobs** (1/256 of a step), so vibrato and
   resonant sweeps glide; a SEQ's steps on a pitch still land on semitones.
 
@@ -208,6 +226,10 @@ number.
   on hardware, macOS might pick Bryo as its default output when plugged in, and the flash size is an estimate.
 - **The channel's FILT bottoms out near -29 dB** at its lowest corner (the filter's precision); inaudible under
   the passband, but it isn't infinite.
+- **DRUM's kit is voiced by measurement** (pitch, level, decay) and waits on a listen: the hats and maracas are
+  bright (energy to 17 kHz), the bass drum sits low for a small speaker, the cymbal rings 9 s at its design.
+- **DRUM's FILL and EVOL** read "no change" in the modulation audit: they act at the pattern's end, past its 3 s
+  window. Not a fault, but the audit can't see them.
 - Still open from the plan: what the white keys do on a SYNTH track while GRAIN's page is up (they play notes).
 
 ## What's next
@@ -216,7 +238,8 @@ number.
    listen. Everything after depends on those numbers.
 2. **Phase 8, projects:** save and recall a session with its reels (the flash layout is in the architecture doc).
 3. **Phase 9, the screen's modulation:** arcs on the pictograms, the moving dots, the summed value.
-4. Decisions waiting: p-locks, SPRD on PAN.
+4. **DRUM by ear:** listen to the kit and the rhythms, tune `DRM_KIT` and `DRM_PRESET`.
+5. Decisions waiting: p-locks, SPRD on PAN.
 
 ## Where the details are
 
@@ -243,4 +266,4 @@ About 50 commits over three days, each one a working step (`git log --oneline --
   checkpoint's run sheet and its host simulation; RESONATOR, COLOR, SPACE; the USB record mode; the mixer;
   realistic load runs; GRAIN's shared pool.
 - **2026-10-09:** modulation; TUNE played live; a LEVEL on every source; the modulation audit (RESONATOR's pitch
-  glides, fine pitch); fine filter cutoffs; this page.
+  glides, fine pitch); fine filter cutoffs; this page; DRUM (its own voice and kit, the source, SEED).

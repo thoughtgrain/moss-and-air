@@ -13,7 +13,7 @@ import re
 import sys
 from pathlib import Path
 
-CONTEXTS = {"any", "power-on", "page", "page:tape", "page:grain", "page:resonator", "page:color", "page:space",
+CONTEXTS = {"any", "power-on", "page", "page:tape", "page:grain", "page:resonator", "page:color", "page:space", "page:drum",
             "page:slot", "mixer", "glo-held", "slot-held", "slot-held+step", "project-view", "routing-view",
             "usb-record"}
 GESTURES = {"press", "tap", "hold", "release", "turn", "hold-turn", "combo"}

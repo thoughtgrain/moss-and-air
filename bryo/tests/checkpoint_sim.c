@@ -368,6 +368,38 @@ static double run(int n, char *say, size_t sz)
                  "the strings (%u grains)", sounding());
         return 6;
     }
+    case 26: case 27: case 28: {                         /* DRUM: busy alone (26); the groove's drums as a DRUM
+                                                          * track (27); four DRUM tracks, every voice (28) */
+        uint32_t t, nt = n == 28 ? NTRK : 1u;
+        static const uint8_t PAT[NTRK] = {2, 5, 6, 7};    /* FUNK, RMBA, CHA, BGIN */
+        sys.bpm = 132;
+        for (t = 0; t < nt; t++) {
+            tp[t].src = SRC_DRUM;
+            drm_load(t, n == 27 ? 4u : PAT[t]);
+            tp[t].drm[DM_SEED] = (int16_t)(9 + t);
+            tp[t].drm[DM_VARY] = n == 27 ? 50 : 100;
+            tp[t].drm[DM_FILL] = n == 27 ? 40 : 100;
+            tp[t].drm[DM_EVOL] = 1;
+            tp[t].drm[DM_DECY] = n == 27 ? 0 : 60;      /* (longer tails: more voices ringing at once) */
+        }
+        if (n == 27) {                                   /* the groove's other tracks, as run 19 */
+            tp[0].dev[DEV_COLOR][CP_CRSH] = 30;
+            tp[1].dev[DEV_GRAIN][GP_WET] = 50;
+            tp[1].ch[CH_PAN] = -40;
+            tp[2].src = SRC_SYNTH;
+            tp[2].ch[CH_FILT] = -30;
+            tp[3].dev[DEV_SPACE][SP_VERB] = 40;
+            tp[3].ch[CH_PAN] = 40;
+            mst[MS_AMT] = 30;
+            play_phrase(2, 6);
+        } else {
+            play(6);
+        }
+        snprintf(say, sz, "%s", n == 26 ? "DRUM alone: FUNK at VARY 100, FILL 100, EVOL 1, long decays, the others plain reels"
+                 : n == 27 ? "the groove with track 1 a DRUM track (BOSA, SEED 9, VARY 50) instead of a drum reel"
+                 : "four DRUM tracks, busy rhythms at VARY 100 with long decays: every voice there is (20)");
+        return 6;
+    }
     case 23:                                             /* GRAIN dense on one track alone: the whole pool, 32 */
         tp[0].dev[DEV_GRAIN][GP_WET] = 100;
         tp[0].dev[DEV_GRAIN][GP_RATE] = 100;
@@ -693,7 +725,7 @@ int main(int argc, char **argv)
         int n;
         wav_cap = 25u * 44100u * 2u;
         wav_buf = malloc(wav_cap * sizeof *wav_buf);
-        for (n = 1; n <= 25; n++) {
+        for (n = 1; n <= 28; n++) {
             char path[512];
             wav_n = wav_clip = 0;
             run(n, say, sizeof say);

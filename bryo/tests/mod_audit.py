@@ -16,7 +16,7 @@
 import csv, glob, os, re, sys
 import numpy as np
 
-DEV = {'0': 'TAPE', '1': 'GRAIN', '2': 'RESO', '3': 'COLOR', '4': 'SPACE', '5': 'SYNTH', '6': 'POLY', '7': 'CHAN'}
+DEV = {'0': 'TAPE', '1': 'GRAIN', '2': 'RESO', '3': 'COLOR', '4': 'SPACE', '5': 'SYNTH', '6': 'POLY', '7': 'DRUM', '8': 'CHAN'}
 
 
 def load(p):

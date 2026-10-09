@@ -61,6 +61,9 @@ runs 18 to 22 are realistic setups (each played for 6 s, a synth track's keys go
 | 22 | the groove, bounced onto track 4 as it plays | 1,756 | 1.9x |
 | 24 | the groove, modulated: an LFO a beat on the crush, a SEQ on grain size, T1's drums ducking T2's filter (FOLLOW), an ADSR on the bass's cutoff, a stereo LFO on T4's pan | 1,793 | 1.9x |
 | 25 | the groove with every slot on every track, 32 depths each (the most there can be) | 3,123 | 3.3x |
+| 26 | DRUM busy alone: FUNK at VARY 100, FILL 100, EVOL 1, long decays; the others plain reels | 1,301 | 1.4x |
+| 27 | the groove with track 1 a DRUM track (BOSA, SEED 9, VARY 50) in place of its drum reel | 1,885 | 2.0x |
+| 28 | four DRUM tracks, busy rhythms at VARY 100 with long decays: every voice there is (20) | 2,474 | 2.6x |
 
 Run 24 is run 19 (now 1,595: every run costs about 5 more since the modulation's clock ticks whether or not anything
 is modulated) plus the modulation I'd reach for: 84 of the 195 extra are the modulators, the rest the devices
@@ -123,6 +126,8 @@ Write down the CPU reading for each, and anything you hear.
 | 19 | GLO, EDIT: each track's LOW +6, FILT -40, PAN apart; EDIT again: MASTER, AMT 60 | the channels shaped and placed, the mix glued, the meter moving | CPU; does the compressor pump? |
 | 20 | Power-cycle, PLAY. Track 1 on COLOR: hold LFO, turn KNOB 2 (CRSH) to +40 %, let go. Tap LFO, LFO 4: SYNC BPM. Hold ENV on GRAIN 2, KNOB 1 (WET) +80 %; play a white key | the crush breathing in time; grains swelling in on each key and on each loop | CPU; does the crush step audibly (zipper), or glide? |
 | 21 | On the mixer's channel page, hold LFO and turn KNOB 4 (PAN) to +60 %; tap LFO, LFO 3: SPRD 100 | the track moving across the stereo field, left and right apart | does it sound wide, or just wobbly? |
+| 22 | Power-cycle. Track 1 to DRUM (hold HOME, turn SELECT), PLAY. Tap each white key; then HOME (VARY), SEED 10, FILL 80 | ROCK; each instrument on its key; the beat varying, a fill every other loop or so | CPU; how the kit sounds on the speaker (the bass drum, the hats' brightness); do the steps sit in time? |
+| 23 | Tracks 2 to 4 to DRUM too, each its own PATN (run 28's case) | four drum machines at once | CPU at the most voices there can be |
 
 ## What I'll do with the numbers
 

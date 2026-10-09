@@ -2,7 +2,8 @@
 /* Bryo: the four tracks, rendered by the audio ISR one control block (CTL samples) at a time.
  *
  * Each track starts with its source (source.c): its TAPE (tape.c: the loop plays while the transport runs, the
- * white keys play its 16 slices), SYNTH or POLY (the white keys play notes), at the source's LVL. REC records onto
+ * white keys play its 16 slices), SYNTH or POLY (the white keys play notes) or DRUM (drum.c: its pattern; the
+ * white keys play the kit), at the source's LVL. REC records onto
  * the tape either way.
  * Then GRAIN (grain.c: grains of a live buffer of the source, or of the tape, blended by WET), from which the track
  * is stereo. Then RESONATOR (reso.c: four tuned strings the track rings through), COLOR (color.c: drive, crush,
@@ -39,6 +40,8 @@ static void chain_init(void)
         track[t].octave = 3;
         track_rt[t].src_g[SRC_TAPE] = 32767;
         track_rt[t].src_lv[SRC_TAPE] = track_rt[t].src_lv[SRC_SYNTH] = track_rt[t].src_lv[SRC_POLY] = 1024;
+        track_rt[t].src_lv[SRC_DRUM] = 1024;
+        drm_now[t] = 0xFF;
         track_rt[t].act = 32767;
     }
     mod_init();
@@ -67,7 +70,8 @@ static void chain_source(uint32_t t, uint32_t keys, const int32_t *rin, int32_t 
         rt->src_g[e] = g1;
         {                                               /* the source's LVL (its last page), ramped; 0 dB: untouched */
             int32_t l0 = rt->src_lv[e], l1 = db_q10(e == SRC_TAPE ? TPD(t, DEV_SRC)[TK_LVL] : e == SRC_SYNTH ?
-                                                    TPD(t, MA_SYN)[SY_LVL] : TPD(t, MA_POL)[PL_LVL]);
+                                                    TPD(t, MA_SYN)[SY_LVL] : e == SRC_POLY ? TPD(t, MA_POL)[PL_LVL]
+                                                    : TPD(t, MA_DRM)[DM_LVL]);
             rt->src_lv[e] = l1;
             if (l0 != 1024 || l1 != 1024)
                 for (i = 0; i < n; i++)
@@ -212,6 +216,7 @@ static void chain_tracks(int32_t n)
 static void chain_poll(void)
 {
     tape_poll();
+    drm_poll();
     grain_poll();
     reso_poll();
     space_poll();

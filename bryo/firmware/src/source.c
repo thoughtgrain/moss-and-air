@@ -22,4 +22,5 @@ static const source_t SOURCES[NSRC] = {
     {tape_block},                /* TAPE: its loop, the keys play its 16 slices (tape.c) */
     {syn_block},                 /* SYNTH: the keys play notes (synth.c) */
     {pol_block},                 /* POLY: the keys play a sound at their pitches (poly.c) */
+    {drm_block},                 /* DRUM: its pattern, the keys play the kit (drum.c) */
 };

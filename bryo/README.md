@@ -19,9 +19,12 @@ REC records it, and TRACKS (GLO held + SELECT) switches tracks off to give the r
 this repository). The loop window, speed, reverse and half speed work; the white keys play 16 slices of the loop;
 REC records the other tracks onto the focused track's tape (or one chosen track, or itself: REC IN, turn ALGORITHM),
 with DUB for sound on sound; holding the POLY key clears
-a tape and holding SAVE undoes it. A track can also start with SYNTH or POLY instead (hold HOME, turn SELECT):
+a tape and holding SAVE undoes it. A track can also start with SYNTH, POLY or DRUM instead (hold HOME, turn SELECT):
 SYNTH is a small subtractive synth, up to three voices; POLY plays any reel (or the track's own tape) across the
-keys, up to four notes, each with its own envelope and filter. REC prints either onto the track's tape. GRAIN
+keys, up to four notes, each with its own envelope and filter; DRUM is a drum machine (CR-78-inspired, every sound
+synthesized and Bryo's own): sixteen instruments on the white keys, a pattern of 2 to 4 bars from ten written
+rhythms, and SEED, which plays a varied version of the pattern the way a player would. REC prints any of them onto
+the track's tape. GRAIN
 makes sound now: turn its WET up and it keeps the last bars of the track's sound in a live buffer and granulates
 them, stretched, held at a spot or delayed (SCAN); the 0 black key held freezes the buffer into a loop. RESONATOR
 makes sound too: four tuned strings the track rings through (PTCH, SCAL's chord), and on its page the white keys set
@@ -41,8 +44,8 @@ What works on the panel now (every control, in every context, with what's planne
 
 | Control | What it does |
 | --- | --- |
-| HOME | the track's source (TAPE, SYNTH or POLY); again for its next page (TAPE 2, TAPE 3: REEL, ROTATE and LVL; SYNTH's FILTER, AMP, VOICE, LEVEL; POLY's ENV, FILTER, LEVEL). LVL, on every source's last page, is what the track hears of it, and can be modulated |
-| HOME held + SELECT | the track's source: TAPE, SYNTH or POLY (each keeps its own knobs) |
+| HOME | the track's source (TAPE, SYNTH, POLY or DRUM); again for its next page (TAPE 2, TAPE 3: REEL, ROTATE and LVL; SYNTH's FILTER, AMP, VOICE, LEVEL; POLY's ENV, FILTER, LEVEL). LVL, on every source's last page, is what the track hears of it, and can be modulated |
+| HOME held + SELECT | the track's source: TAPE, SYNTH, POLY or DRUM (each keeps its own knobs) |
 | EDIT | GRAIN; again: GRAIN 2, GRAIN 3, GRAIN 4 (SCAN WARP OFST FDBK), RESONATOR, RESONATOR 2 |
 | FX | COLOR; again: COLOR 2, COLOR 3, SPACE, SPACE 2, SPACE 3 |
 | LFO ENV SEQ ARP, tapped | modulator slots 1 to 4 (the page opens as you let go); again for the slot's next page |
@@ -59,11 +62,11 @@ What works on the panel now (every control, in every context, with what's planne
 | REC | arm the focused track: while playing it records onto its tape the other tracks (TAPE) or its own sound (SYNTH, POLY); a reel is copied on first |
 | SAVE, held | undo the last clear (the tape, or the track's modulation) |
 | OCT− / OCT+ | the white keys' octave |
-| White keys | TAPE: the 16 slices of the focused track's loop (stopped: the slice plays once); SYNTH, POLY: notes, a semitone apart from C |
+| White keys | TAPE: the 16 slices of the focused track's loop (stopped: the slice plays once); SYNTH, POLY: notes, a semitone apart from C; DRUM: the kit (on STEP: steps, accents, live hits, or held to wipe) |
 | Black keys OP1 to OP4 | track mutes |
 | Black keys OP5, OP6 | the focused tape's reverse and half speed |
 | Black key MONO, held 0.5 s | clear the focused track's modulation (every depth; the slots' own knobs stay) |
-| Black key POLY, held 0.5 s | clear the focused track's tape |
+| Black key POLY, held 0.5 s | clear the focused track's tape (a DRUM track: its pattern) |
 | Black key 0 | GRAIN's freeze: held, while it's held; tapped, latched until the next tap |
 | SCL | nothing yet (proposed: hold for the system menu) |
 

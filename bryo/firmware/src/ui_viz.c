@@ -9,6 +9,8 @@
  *
  *   SYNTH      per page: the oscillators' cycles, the filter's response, the envelope, the keys and voices
  *   POLY       per page: the sound with STRT and the keys' range, the envelope, the filter with its TYPE
+ *   DRUM       PATTERN, VARY: the bar as a grid of what this pass plays (written, left out, added); KIT: the
+ *              instrument's sound; STEP: the instrument's row of the bar
  *   TAPE       the whole tape's sound, large, lit inside the loop window (STRT, LEN, bracketed) with its 16 slices
  *              ticked under it; the playhead over it (stopped: where playing starts, moved by ROTA)
  *   GRAIN      the grains as they sound: where each reads (across), its pitch (up), its stretch of the sound
@@ -940,6 +942,189 @@ static void viz_poly(const int16_t *v, uint32_t f)
     }
 }
 
+/* -------------------------------------------------------------- DRUM --- */
+static const char *const DRM_LONG[DRM_NINST] = {"BASS DRUM", "SNARE", "CLAP", "RIM SHOT", "LOW CONGA", "LOW BONGO",
+                                                "HIGH BONGO", "CLAVES", "COWBELL", "MARACAS", "TAMBOURINE", "GUIRO",
+                                                "HI-HAT", "OPEN HAT", "METAL BEAT", "CYMBAL"};
+
+/* the bar a DRUM page shows: the one playing, else the one STEP shows */
+static uint32_t vz_drm_bar(const int16_t *v)
+{
+    uint32_t len = (uint32_t)clamp(v[DM_LEN], 2, (int32_t)DRM_NBAR), now = drm_now[sys.sel];
+    return sys.playing && now != 0xFFu ? (now >> 4) % len : (uint32_t)clamp(v[DM_BAR] - 1, 0, (int32_t)len - 1);
+}
+
+/* PATTERN, VARY, STEP in LIVE or ERAS: the bar as a grid, a row per instrument the pattern uses (up to five, left
+ * to right on the keys; spaced out when there are fewer), its code at the left, the 16 steps in groups of four. What this pass plays: a hit as written
+ * solid; one this version leaves out, a dot; one it adds, hollow (a quiet one: small). The accented steps marked over
+ * the grid, the playhead under it, the bars at the right (the shown one filled). */
+static uint32_t vz_drm_grid(const int16_t *v, uint32_t bar)
+{
+    uint32_t len = (uint32_t)clamp(v[DM_LEN], 2, (int32_t)DRM_NBAR), used = 0, now = drm_now[sys.sel], b, s, i, row = 0;
+    uint32_t ver = drm_version(v, sys.playing ? drm_pass[sys.sel] : 0u), more = 0, nrow = 0;
+    int32_t pitch;
+    drm_hits_t h[16];
+    for (b = 0; b < len; b++)
+        for (s = 0; s < 16u; s++)
+            used |= tp[sys.sel].dpat[b][s];
+    for (s = 0; s < 16u; s++)
+        drm_step(sys.sel, v, ver, bar, s, &h[s]);
+    for (s = 0; s < 16u; s++)                                         /* (a version can bring in its crash) */
+        used |= h[s].hit;
+    for (i = 0; i < DRM_NINST; i++)
+        nrow += (used >> i) & 1u;
+    pitch = nrow <= 3u ? 9 : nrow == 4u ? 7 : 6;
+    for (s = 0; s < 16u; s++) {                                       /* the accents, over the steps */
+        int32_t x = 12 + (int32_t)s * 6 + (int32_t)(s / 4u);
+        if (h[s].acc)
+            px_box(x, DY0, 4, 2, px_ink);
+        if (sys.playing && now != 0xFFu && now == bar * 16u + s)      /* the playhead, under them */
+            px_box(x - 1, DY1 + 1, 6, 2, px_ink);
+    }
+    for (i = 0; i < DRM_NINST; i++) {
+        int32_t y = DY0 + 4 + (int32_t)row * pitch;
+        if (!((used >> i) & 1u))
+            continue;
+        if (row == 5u) {
+            more++;
+            continue;
+        }
+        px_text(DX0, y, PXF_3, DRM_KIT[i].code, px_ink);
+        for (s = 0; s < 16u; s++) {
+            int32_t x = 12 + (int32_t)s * 6 + (int32_t)(s / 4u);
+            uint32_t w = (tp[sys.sel].dpat[bar][s] >> i) & 1u, p = (h[s].hit >> i) & 1u;
+            if (p && (h[s].soft >> i) & 1u)
+                px_frame(x + 1, y + 1, 2, 2, px_ink, 1);
+            else if (p && w)
+                px_box(x, y, 4, 4, px_ink);
+            else if (p)
+                px_frame(x, y, 4, 4, px_ink, 1);
+            else if (w)
+                px_dot(x + 1, y + 1, px_ink);
+            else
+                px_dot(x + 1, y + 2, px_dim);
+        }
+        row++;
+    }
+    if (!used)
+        px_text_c(12, 100, DY0 + 14, PXF_3, "EMPTY: WRITE IT ON STEP", px_dim);
+    for (b = 0; b < len; b++)                                         /* the bars */
+        if (b == bar)
+            px_box(113, DY0 + 4 + (int32_t)b * 8, 4, 6, px_ink);
+        else
+            px_frame(113, DY0 + 4 + (int32_t)b * 8, 4, 6, px_dim, 1);
+    return more;                                                      /* (instruments past five: how many) */
+}
+
+/* KIT, or an instrument held: its sound, struck as the pattern would strike it (rendered off line through its
+ * voice: what you see is what plays), the peaks over up to 0.74 s, its name */
+static void vz_drm_sound(const int16_t *v, uint32_t i)
+{
+    static dk_coef_t c;
+    static dk_voice_t vo;
+    uint8_t pk[128];
+    const int16_t *in = tp[sys.sel].dins[i];
+    dk_knobs_t k;
+    int32_t y[CTL], mid = 15, x;
+    uint32_t nch = 0, j, m;
+    k.tune = (int16_t)(clamp(v[DM_TUNE] + in[DIN_TUNE], -24, 24) * 16);
+    k.dscale = (uint16_t)drm_scale(v[DM_DECY] + in[DIN_DECY]);
+    k.bright = (int16_t)clamp((v[DM_TONE] + in[DIN_TONE]) * 127 / 100, -127, 127);
+    k.level = (uint16_t)(db_q10(clamp(in[DIN_LVL], -24, 6)) * 100 / 1024);
+    k.accent = 0;
+    k.drive = (uint8_t)(clamp(v[DM_DRV], 0, 100) * 127 / 100);
+    dk_setup(&c, &DRM_KIT[i], &k);
+    memset(&vo, 0, sizeof vo);
+    dk_trigger(&vo);
+    while (nch < 128u && (vo.live || vo.trig)) {                      /* 256 samples a chunk */
+        int32_t a = 0;
+        for (j = 0; j < 8u; j++) {
+            dk_run(&c, &vo, y, CTL);
+            for (m = 0; m < CTL; m++)
+                a = y[m] > a ? y[m] : -y[m] > a ? -y[m] : a;
+        }
+        pk[nch++] = (uint8_t)clamp(a * 16 / 16384, 0, 16);
+    }
+    px_line(DX0, mid, DX1, mid, px_dim, 2);
+    for (x = DX0; x <= DX1; x++) {
+        uint32_t ch = (uint32_t)(x - DX0) * 128u / (uint32_t)(DW + 1);
+        int32_t a = ch < nch ? pk[ch] : 0;
+        if (a)
+            px_box(x, mid - a, 1, 2 * a + 1, px_ink);
+    }
+    {
+        char b[24];
+        str_cpy(b, DRM_KIT[i].code, 3);
+        str_cpy(b + 2, " ", 2);
+        str_cpy(b + 3, DRM_LONG[i], 16);
+        px_text(DX0, DLBL, PXF_3, b, px_ink);
+        px_text(DX1 - px_text_w(PXF_3, "0.74S") + 1, DY0, PXF_3, "0.74S", px_dim);
+    }
+}
+
+/* DRUM's pages: PATTERN and VARY the bar's grid, KIT the instrument's sound (STEP's, or the one held), STEP the
+ * instrument's row of the bar large (LIVE, ERAS: the grid) */
+static void viz_drum(const int16_t *v, uint32_t f)
+{
+    uint32_t bar = vz_drm_bar(v), i = (uint32_t)clamp(v[DM_INST], 0, 15), s, more = 0;
+    char b[24];
+    if (ui.drm_inst) {                                                /* an instrument held: its sound, its knobs */
+        vz_drm_sound(v, (ui.drm_inst - 1u) & 15u);
+        if (ui.last < NDIN)
+            vz_ktag(118, DLBL - 1, &DRI_P[ui.last], tp[sys.sel].dins[(ui.drm_inst - 1u) & 15u][ui.last]);
+        return;
+    }
+    if (ui.page == 2u) {
+        vz_drm_sound(v, i);
+        if (f >= 8u && f < 12u)
+            vz_ktag(118, DLBL - 1, &DRM_P[f], v[f]);
+        return;
+    }
+    if (ui.page == 3u && v[DM_MODE] != DMODE_LIVE && v[DM_MODE] != DMODE_ERAS) {   /* STEP: the instrument's row */
+        uint32_t row = tp[sys.sel].dpat[bar][0], acc = tp[sys.sel].dacc[bar], now = drm_now[sys.sel];
+        for (s = 0; s < 16u; s++) {
+            int32_t x = DX0 + 1 + (int32_t)s * 7 + (int32_t)(s / 4u) * 2;
+            row = tp[sys.sel].dpat[bar][s];
+            if ((acc >> s) & 1u)
+                px_box(x, DY0 + 2, 5, 2, v[DM_MODE] == DMODE_ACC ? px_ink : px_dim);
+            if ((row >> i) & 1u)
+                px_box(x, DY0 + 6, 5, 20, v[DM_MODE] == DMODE_ACC ? px_dim : px_ink);
+            else
+                px_frame(x, DY0 + 6, 5, 20, px_dim, 2);
+            if (sys.playing && now == bar * 16u + s)
+                px_box(x - 1, DY0 + 28, 7, 2, px_ink);
+            if (!(s & 3u)) {
+                char n[4];
+                fmt_int(n, (int32_t)s + 1);
+                px_text(x, DY1 - 1, PXF_3, n, px_dim);
+            }
+        }
+    } else {
+        more = vz_drm_grid(v, bar);
+    }
+    str_cpy(b, ui.page == 1u ? "SEED " : N_DPATN[clamp(v[DM_PATN], 0, (int32_t)DRM_NPRESET - 1)], 8);
+    if (ui.page == 1u) {
+        if (v[DM_SEED] > 0)
+            fmt_int(b + 5, (int32_t)drm_version(v, sys.playing ? drm_pass[sys.sel] : 0u));
+        else
+            str_cpy(b + 5, "OFF", 4);
+    }
+    if (ui.page == 3u)
+        str_cpy(b, DRM_KIT[i].code, 3);
+    str_cpy(b + str_len(b), "  BAR ", 7);
+    fmt_int(b + str_len(b), (int32_t)bar + 1);
+    if (more) {                                                       /* (rows the grid had no room for) */
+        str_cpy(b + str_len(b), "  +", 4);
+        fmt_int(b + str_len(b), (int32_t)more);
+    }
+    px_text(DX0, DLBL, PXF_3, b, px_ink);
+    if (f < NPK && !pdesc_empty(&DRM_P[f]))
+        vz_ktag(118, DLBL - 1, &DRM_P[f], v[f]);
+    else if (ui.page == 3u)
+        px_text(118 - px_text_w(PXF_3, N_DMODE[clamp(v[DM_MODE], 0, 3)]), DLBL, PXF_3, N_DMODE[clamp(v[DM_MODE], 0, 3)],
+                px_ink);
+}
+
 /* FOLLOW: the envelope of a sound: what the source track plays, from its tape's peaks, dim; GAIN
  * scales what goes in, RISE and FALL are how fast the envelope (solid) climbs and drops, HOLD samples it on the
  * tempo's divisions (steps), AMT and OFS place it, SPRD the right channel dotted */
@@ -1549,6 +1734,17 @@ static uint32_t viz_sig(void)
             h = (h ^ (uint32_t)(uint8_t)tp[sys.sel].steps[ui.slot][k]) * 16777619u + ui.steps_held * 7u;
     if (ui.kind == FOCUS_DEV && ui.dev == DEV_SRC)                     /* the source; the keys' range: the octave */
         h = (h ^ (tp[sys.sel].src * 7u + track[sys.sel].octave * 131u)) * 16777619u;
+    if (ui.kind == FOCUS_DEV && ui.dev == DEV_SRC && tp[sys.sel].src == SRC_DRUM) {   /* DRUM: the pattern, the
+                                                                                     * playhead, an instrument held */
+        const track_params_t *P = &tp[sys.sel];
+        for (k = 0; k < DRM_NBAR * 16u; k++)
+            h = (h ^ P->dpat[k >> 4][k & 15u]) * 16777619u;
+        for (k = 0; k < DRM_NBAR; k++)
+            h = (h ^ P->dacc[k]) * 16777619u;
+        for (k = 0; k < DRM_NINST * NDIN; k++)
+            h = (h ^ (uint32_t)(P->dins[k / NDIN][k % NDIN] + 32768)) * 16777619u;
+        h = (h ^ (ui.drm_inst + (sys.playing ? drm_now[sys.sel] * 31u + drm_pass[sys.sel] * 7919u : 0u))) * 16777619u;
+    }
     if (ui.kind == FOCUS_DEV && ui.dev == DEV_SRC && tp[sys.sel].src == SRC_POLY)   /* POLY on the track's tape */
         h = (h ^ (tape_ver[sys.sel] * 31u)) * 16777619u;
     if (ui.kind == FOCUS_DEV && ((ui.dev == DEV_SRC && tp[sys.sel].src == SRC_TAPE) || ui.dev == DEV_GRAIN))   /* the tape, the head */
@@ -1611,6 +1807,8 @@ static void draw_viz(void)
                     viz_synth(v, f);
                 else if (tp[sys.sel].src == SRC_POLY)
                     viz_poly(v, f);
+                else if (tp[sys.sel].src == SRC_DRUM)
+                    viz_drum(v, f);
                 else
                     viz_tape(v, f);
                 break;

@@ -100,6 +100,9 @@ sound-making front end stays open, and a new engine is one file plus one table r
   filter, envelope), trimmed to a few voices. White keys are chromatic, and OCT−/OCT+ shift octaves.
 - **POLY:** a sound played across the keys, up to four notes at once, each through its own ADSR and filter
   (see "POLY, as built").
+- **DRUM:** a drum machine, CR-78-inspired and built from scratch: sixteen synthesized instruments on the white
+  keys, a pattern of 2 to 4 bars, written rhythms to start from, and SEED, which plays a varied version of the
+  pattern (see "DRUM, as built").
 - **Later engines:** to be defined; each is one file plus a row in the `source_t` table.
 
 Any source's output can still be printed onto the track's tape with REC, so every track keeps a tape
@@ -163,10 +166,12 @@ Why:
 | SYNTH | 576 | 4 tracks × 3 voices of oscillator and filter state (.bss) |
 | POLY | 8,288 | 4 tracks × 4 voices × a 256-sample block reader (pool), plus 448 B of voice state (.bss) |
 | The drive | 17,340 | the FAT, root and write cache of the USB drive (the 36 KB WAV inbox is gone: a WAV lands in shared memory) |
-| Modulation | 2,882 main RAM + 5,856 pool | the depths (a byte per slot per target) and MONO's undo in main RAM; the ISR's lists, the slots' state and the modulated knob arrays in the pool |
+| Modulation | 3,282 main RAM + 6,016 pool | the depths (a byte per slot per target) and MONO's undo in main RAM; the ISR's lists, the slots' state and the modulated knob arrays in the pool |
+| DRUM | 3,700 pool + 1,650 main RAM | 4 tracks × 5 voices (a voice's coefficients and state, 176 B) in the pool; each track's pattern, accents and the instruments' own knobs (304 B a track), the undo and the screen's render in main RAM |
 
-Measured now (KiB, 32-bit build): the pool holds 322.4 of 336 (13.6 spare; build.py keeps 8), main RAM's .bss 84.4
-of 96. The USB record mode's two rings first went into main RAM and took it to 92.2, too close to the stack, so
+Measured now (KiB, 32-bit build, 2026-10-09 with DRUM): the pool holds 326.2 of 336 (9.8 spare; build.py keeps 8),
+main RAM's .bss 86.7 of 96. DRUM's voices first sat in main RAM and took it to 90.3; they're ISR-only state, so
+they moved to the pool with the rest of it. The USB record mode's two rings first went into main RAM and took it to 92.2, too close to the stack, so
 they live in the pool's room that was kept for USB audio in.
 
 What gives way when memory runs short: chunks come off a cleared tape first, then a parked track's tape (TRACKS),
@@ -1186,6 +1191,118 @@ held clears and SAVE undoes, once; a SEQ page's keys and KNOB 1). The checkpoint
 slot knobs and clears and undoes while the audio interrupt cuts in, and checks every modulated knob stays in its
 range and every array is read from the right place.
 
+## DRUM, as built (2026-10-09)
+
+DRUM is the fourth source: a drum machine on a track. I wanted the feel of a CR-78, the preset rhythm box with its
+soft, round, slightly toy-like kit, so the instrument list and the character come from there. The sounds, the
+synthesis and the rhythms are Bryo's own, written from scratch: no samples, no copied circuits, and no code or
+values from Felucca's drum engine. (The first pass carried Felucca's voice code with three types added; I replaced
+it outright because the kit should be ours.) "CR" or "CR-78" only ever appears in the docs, never on screen.
+
+**The kit.** Sixteen instruments, one per white key, left to right: BD SD CP RS LC LB HB CL CB MA TB GU HH OH MB CY
+(bass drum, snare, clap, rim shot, low conga, low bongo, high bongo, claves, cowbell, maracas, tambourine, guiro,
+hi-hat, open hat, metal beat, cymbal). The hi-hat and the metal beat cut the open hat short (1.5 ms), the way one
+pedal would. The user picked more sounds over spare keys: accent isn't a key, it's ACNT on PATTERN and the ACC
+mode on STEP.
+
+**One voice, sixteen patches.** `drum_voice.c` is a single small synthesizer every instrument shares; each
+instrument is one row of numbers in `drum.c` (`DRM_KIT`). I went data-driven on purpose: tuning the kit is editing a
+table, not code, and every instrument costs the same code path. A voice has three optional layers:
+
+- **TONE**: one or two sine partials (the second at a ratio and level), struck: the pitch starts BEND above and
+  falls back with its own time, the body decays from the strike. The bass drum, the congas and bongos, the rim
+  and the claves live here.
+- **NOISE**: white noise, a metal bank (four square waves at inharmonic ratios, or a bell's two a flat fifth
+  apart), or a mix, through one filter (low, band or high) under three envelopes: a rise subtracted from the rest
+  (maracas swell in), a fast HIT that BURSTS can re-strike (the clap's hands, the guiro's teeth, the tambourine's
+  jingles) and a slow TAIL that can wait for the last burst (the clap's room).
+- **DRIVE**: a soft clip with its small-signal level kept.
+
+The envelopes pick their form by range: the fast ones are per-sample Q15 products (`e = e k >> 15`, which always
+reaches zero); the slow ones are Q30 per control block, ramped linearly inside it, because a per-sample Q15 factor
+can't hold a decay of seconds. Every strike starts from rest (phases, filter, the noise seed), so a hit renders the
+same every time. The levels are matched to a -7 dBFS peak per instrument; the voice's output is linear to -6 dBFS
+with a soft knee above.
+
+**The pages** (HOME, four of them; HOME turns the page as it's let go on a DRUM track, so it can be held):
+
+| Page | KNOB 1 | KNOB 2 | KNOB 3 | KNOB 4 |
+| --- | --- | --- | --- | --- |
+| PATTERN | PATN: a written rhythm, written over the pattern when turned | LEN: 2 to 4 bars | SWNG: off-sixteenths up to a third of a step late | ACNT: an accented step's extra punch |
+| VARY | SEED: 0 as written, 1 to 200 a version | VARY: how far a version strays | FILL: the chance of a fill in the last bar | EVOL: a new version every 1, 2, 4 or 8 loops |
+| KIT | TUNE: every instrument, semitones | DECY: every decay, a quarter to four times | TONE: every filter, an octave each way | DRV: drive over the kit |
+| STEP | INST: the instrument the keys write | BAR: the bar shown (OCT- / OCT+ too) | MODE: HITS, ACC, LIVE, ERAS | LVL: the source's level |
+
+PATN, LEN, INST, BAR and MODE aren't modulation targets (`pdesc_t.nomod`): PATN writes the pattern, the rest are the
+page's own state. Everything else is, so an LFO on SEED, or a SEQ stepping it, gives a groove that keeps finding new
+versions.
+
+**The keys.** On PATTERN, VARY and KIT the white keys play the kit; holding one makes KNOB 1 to 4 that instrument's
+own TUNE, DECY, LVL and TONE (the header's box shows its code; the picture shows its sound). On STEP they follow MODE:
+HITS toggles step n of the bar for INST, ACC toggles the step's accent, LIVE plays and, while the transport runs,
+writes the hit at the nearest sixteenth, ERAS wipes the held instrument as the playhead passes.
+HOME held + a white key picks INST and plays it. POLY held clears the pattern; SAVE held brings it back (a PATN
+turned over an edited pattern keeps the edit for SAVE the same way).
+
+**The written rhythms.** Ten, as readable strings in `DRM_PRESET`: ROCK, DISC, FUNK, SHFL, BOSA, RMBA, CHA, BGIN,
+TNGO, MRCH. They're my arrangements of the styles a preset rhythm box offers, two bars each, a starting point to edit
+or vary. A track starts on ROCK.
+
+**SEED, and how a version varies.** This is the part I care most about getting musical. SEED 0 is the pattern as
+written. Any other value is a version, and a version is a pure function of (version, bar, step, instrument): a hash
+decides each choice, so the same SEED always plays the same thing and the screen can draw it. It isn't noise
+sprinkled on the grid. Each instrument varies the way a player would vary that part:
+
+- The backbone (BD, SD, CP) is never dropped. The bass drum picks up a note on the weak sixteenth before one of its
+  own hits; the snare adds quiet ghost notes on the sixteenths of a beat it already plays in.
+- The time (HH, MA, TB) thins on the weak sixteenths and fills in on the eighths, quieter, and only in a bar where
+  it already plays. A closed hat on the last eighth may open. The open hat itself never fills in.
+- The colour (RS, the congas and bongos, CL, CB, GU, MB) adds ornaments next to its own hits, and a conga or bongo
+  hit can move to another drum of the family the pattern uses: the part's melody changes, not its rhythm.
+- VARY scales it, and the first bar strays least (60 %) and the last bar most (100 %), so the loop still reads as
+  its pattern.
+- FILL is the chance the last bar ends in a fill: a roll on the pattern's snare (else its clap, rim, claves or a
+  bongo), a run down the congas it has, or a stutter of the bass drum against the roll's instrument. Then a crash on
+  the next downbeat, on the cymbal or else an open hat, only if the pattern has one.
+- Nothing the pattern doesn't use comes in (the one exception: a closed hat opening). A rock beat never sprouts a
+  cowbell; a bossa never a snare. The tests hold it to that over 200 versions of ROCK, BOSA and RMBA.
+
+Quiet hits (ghosts, fill-ins) play 7 dB down. EVOL moves the version on by one every N passes of the pattern, so a
+loop can evolve on its own while SEED stays where it was set.
+
+**Timing.** Steps come from the modulation clock (`mclk.beat`, Q16 beats, exact, reset at PLAY): a sixteenth is
+16384, and SWNG pushes the odd steps up to a third of a step late, the same way SEQ swings. A step's hits strike at
+the start of the block it lands in (within 0.73 ms). The tests check the hits land on the grid to the block.
+
+**Who owns what.** The main loop owns the pattern (`tp[t].dpat`, `dacc`, `dins`). LIVE and ERAS happen in the ISR,
+which sees the key the moment it goes down, so their writes go through a ring of 32 the main loop applies
+(`drm_post` / `drm_poll`). A LIVE hit pressed late in a step is written on the next one and struck now, and a skip
+mask stops the next step striking it again. The voices (`drm_rt`) are ISR-only and live in the pool.
+
+**Voices.** Five a track. An instrument re-struck takes its own voice (a drum machine's way: a new hit cuts the last
+one off), else a quiet voice, else the oldest. A voice that's rung out (-84 dB) stops computing, and inside a voice
+a layer that has gone quiet is skipped (the bass drum's 2 ms thud doesn't cost its whole second).
+
+**What it costs** (host instructions per output sample, `checkpoint_sim.sh`): DRUM busy alone (run 26: FUNK at
+VARY 100, FILL 100, long decays, the others plain reels) 1,301, against 938 for the reels alone; the four-track groove
+with a DRUM track in place of its drum reel (run 27) 1,885; four DRUM tracks at once, every voice (run 28) 2,474.
+The first version of the voice loop cost 1,473, 2,071 and 3,720: it decided per sample what's fixed for a block
+(the filter's mode, the metal's squares, drive) and kept computing layers that had gone silent. Splitting it by
+layer, specialising each loop and skipping quiet layers brought the realistic groove back under my 2,000 target.
+
+**Tested** (`tests/bryo_host.c`, `test_drum_voices` and `test_drum`): every instrument rings out, peaks in range,
+has no DC and renders the same every hit, and an accent is louder; the chokes; two bars of ROCK play exactly as
+written and on the grid; swing; SEED's determinism, SEED 0, the backbone never dropped, nothing foreign coming in
+(ROCK, BOSA, RMBA), the congas varying on their own drums; EVOL; DECY's scale; the voice steal; PATN, POLY's clear
+and SAVE's undo (and an empty clear); STEP's HITS and ACC, OCT on the bar, HOME + key; an instrument's own knobs;
+LIVE (no double strike) and ERAS. The LIVE and ERAS checks were confirmed to fail with their logic taken out. The
+modulation audit covers DRUM's targets; FILL and EVOL show "no change" there because they act at the pattern's end,
+past the audit's 3 s window (a two-bar loop at 120 BPM is 4 s).
+
+**Open, for later:** the kit is voiced by measurement (pitch, level, decay) and waits on a listen; the hats and
+maracas are bright (energy to 17 kHz), the bass drum sits low for a small speaker. The cymbal takes 9 s to ring out
+at its designed decay. The patterns aren't saved yet (phase 8, with everything else).
+
 ## USB record mode (2026-10-08)
 
 Recording from the computer is a mode of its own, not a source a track plays through: you go in, record, put the
@@ -1349,6 +1466,7 @@ Each phase ends in something you can flash and hear or see, and each is its own 
 | 5. COLOR + SPACE (**done**, host-verified; see "COLOR, as built" and "SPACE, as built") | drive, crush, noise; delay and reverb | the full chain on 4 tracks inside the budget (on the host it isn't: everything on all four is 5,842; the device decides) |
 | 6. Mixer + routing (**done**, host-verified; routing early as REC IN; see "The mixer, as built") | GLO mixer, filters, compressor | the mixer's DSP |
 | 7. Modulation (**done** but p-locks, host-verified; see "Modulation, as built") | the 4 engines, hold-and-turn depth, assigning engines, SEQ steps, MONO's clear; p-locks wait on a decision | the PRD's §4 workflow end to end |
+| 7b. DRUM (**done**, host-verified; see "DRUM, as built") | the fourth source: sixteen synthesized instruments, patterns of 2 to 4 bars, ten written rhythms, SEED's versions, STEP's HITS ACC LIVE ERAS | a groove from a rhythm, varied, edited, printed onto a tape |
 | 8. Projects | save and recall with reels; the upload tool for user reels (the slots in flash are in, phase 2); quick SAVE (MONO's and POLY's undo came early, phases 2 and 7) | a power cycle brings a session back |
 | 9. Screen (mostly done early: the dot-grid screens) | the modulation arcs on the pictograms, the motion dots, the summed white dot | the PRD's §5 |
 | 10. Tools + docs | the upload tool for reels, the installer text, a Bryo manual | someone else can use it |

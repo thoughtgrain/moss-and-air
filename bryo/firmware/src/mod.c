@@ -20,21 +20,23 @@
  *
  * The targets are numbered so a depth table is one flat array per slot (NPK = 20 knobs an array):
  *   0..79    GRAIN, RESONATOR, COLOR, SPACE: (device - 1) x NPK + knob
- *   80..139  the sources: TAPE, SYNTH, POLY: 80 + source x NPK + knob (each source keeps its own depths)
- *   140..143 the channel strip: LOW HIGH FILT PAN
+ *   80..159  the sources: TAPE, SYNTH, POLY, DRUM: 80 + source x NPK + knob (each source keeps its own depths)
+ *   160..163 the channel strip: LOW HIGH FILT PAN
  * The reel choices (TAPE's REEL, POLY's REEL) aren't targets: the main loop prepares memory for the reel a track
- * plays, so the ISR mustn't switch it.
+ * plays, so the ISR mustn't switch it. Nor is a knob marked nomod (DRUM's PATN, which writes the pattern when
+ * turned, and its page's own state: LEN, INST, BAR, MODE).
  *
  * Engines: the LFO is bipolar (it swings both ways around the knob), ADSR, SEQ and FOLLOW are unipolar (they push one
  * way: depth's sign says which). AMT scales a slot, OFS shifts it. SPRD is a second, right-hand output; only PAN
  * uses it (the left and right channels then pan apart), the other targets take the left one. */
 
 #define MOD_TSRC (4u * NPK)
-#define MOD_TCH (7u * NPK)
-#define MOD_NTGT (7u * NPK + NCH)
+#define MOD_TCH (8u * NPK)
+#define MOD_NTGT (8u * NPK + NCH)
 #define MOD_TG(d, k) (((d) - 1u) * NPK + (k))   /* device d's (GRAIN..SPACE) knob k as a target */
 #define MOD_MAX 32u                  /* depths that aren't 0, per track (the main loop refuses more) */
-enum { MA_SYN = NDEV, MA_POL, MA_CH, MOD_NARR };   /* the knob arrays: dev[DEV_*], then SYNTH's, POLY's, the channel */
+enum { MA_SYN = NDEV, MA_POL, MA_DRM, MA_CH, MOD_NARR };   /* the knob arrays: dev[DEV_*], then SYNTH's, POLY's, DRUM's,
+                                                             * the channel */
 
 /* ------------------------------------------------------------ depths --- */
 static int8_t mdep[NTRK][NSLOT][MOD_NTGT];   /* main loop only: the depth from slot s to target g, -100..100 */
@@ -65,7 +67,7 @@ typedef struct {                     /* a depth, ready for the ISR */
 typedef struct {
     uint8_t n;                       /* entries, sorted by target */
     uint8_t used;                    /* the slots the entries use, a bit each */
-    uint8_t arrs;                    /* the knob arrays they touch, a bit each */
+    uint16_t arrs;                   /* the knob arrays they touch, a bit each */
     mod_ent_t e[MOD_MAX];
 } mod_list_t;
 static mod_list_t mod_l[NTRK][2] __attribute__((section(".pool")));
@@ -81,12 +83,13 @@ static const pdesc_t *mod_tdesc(uint32_t g)
     if (g < MOD_TSRC)
         d = &DEV_P[1u + g / NPK][k];
     else if (g < MOD_TCH)
-        d = (g - MOD_TSRC) / NPK == SRC_TAPE ? &DEV_P[DEV_SRC][k] : (g - MOD_TSRC) / NPK == SRC_SYNTH ? &SYN_P[k] : &POL_P[k];
+        d = (g - MOD_TSRC) / NPK == SRC_TAPE ? &DEV_P[DEV_SRC][k] : (g - MOD_TSRC) / NPK == SRC_SYNTH ? &SYN_P[k]
+          : (g - MOD_TSRC) / NPK == SRC_POLY ? &POL_P[k] : &DRM_P[k];
     else if (g < MOD_NTGT)
         d = &CH_P[g - MOD_TCH];
     else
         return 0;
-    return pdesc_empty(d) || d->names == N_REEL ? 0 : d;
+    return pdesc_empty(d) || d->names == N_REEL || d->nomod ? 0 : d;
 }
 
 /* target g's knob array (MA_* / DEV_*) and its place in it */
@@ -97,14 +100,14 @@ static uint32_t mod_tarr(uint32_t g, uint32_t *k)
     if (g < MOD_TSRC)
         return 1u + g / NPK;
     if (g < MOD_TCH)
-        return s == SRC_TAPE ? DEV_SRC : s == SRC_SYNTH ? MA_SYN : MA_POL;
+        return s == SRC_TAPE ? DEV_SRC : s == SRC_SYNTH ? MA_SYN : s == SRC_POLY ? MA_POL : MA_DRM;
     return MA_CH;
 }
 
 /* knob array a of track t, as the main loop sets it */
 static int16_t *mod_base(uint32_t t, uint32_t a)
 {
-    return a < NDEV ? tp[t].dev[a] : a == MA_SYN ? tp[t].syn : a == MA_POL ? tp[t].pol : tp[t].ch;
+    return a < NDEV ? tp[t].dev[a] : a == MA_SYN ? tp[t].syn : a == MA_POL ? tp[t].pol : a == MA_DRM ? tp[t].drm : tp[t].ch;
 }
 
 /* main loop: track t's list from its depths, published whole */
@@ -132,7 +135,7 @@ static void mod_rebuild(uint32_t t)
                 e->hi = d->max;
                 e->fq = mdep[t][s][g] * (d->max - d->min) * 1280 / 1000;   /* (2^22 / (100 x 32767) = 1.28) */
                 L->used |= (uint8_t)(1u << s);
-                L->arrs |= (uint8_t)(1u << a);
+                L->arrs |= (uint16_t)(1u << a);
                 L->n++;
             }
     mod_n[t] = (uint8_t)(n < 255u ? n : 255u);
@@ -307,9 +310,10 @@ enum { ENV_IDLE, ENV_ATK, ENV_DEC, ENV_SUS, ENV_REL };
 static mod_rt_t mrt[NTRK][NSLOT] __attribute__((section(".pool")));
 static int16_t mda[NTRK][MOD_NARR][NPK] __attribute__((section(".pool")));   /* ISR: the modulated arrays */
 static const int16_t *mdv[NTRK][MOD_NARR];     /* what the devices read: mda's array, or tp's own (mod_init) */
-#define TPD(t, a) (mdv[t][a])                  /* track t's knob array a (DEV_*, MA_SYN, MA_POL, MA_CH), modulated */
+#define TPD(t, a) (mdv[t][a])                  /* track t's knob array a (DEV_*, MA_SYN, MA_POL, MA_DRM, MA_CH),
+                                                * modulated */
 static int16_t mod_pan_r[NTRK];                /* ISR: the right channel's PAN (SPRD), when the channel is modulated */
-static uint8_t mod_arrs[NTRK];                 /* ISR: the arrays mdv points into mda for */
+static uint16_t mod_arrs[NTRK];                /* ISR: the arrays mdv points into mda for */
 
 /* Some knobs modulate finer than they turn: a knob holds whole steps (TUNE semitones, CUT semitones of the filter's
  * scale, FILT 1 %), so a slow LFO on one climbs a staircase: a trill instead of vibrato, a resonant sweep you can
@@ -648,7 +652,7 @@ static void mod_tick(uint32_t keys, uint32_t sel, const int32_t *const *last)
         if (arrs != mod_arrs[t]) {                     /* the arrays read: the copy where there are depths */
             for (a = 0; a < MOD_NARR; a++)
                 mdv[t][a] = (arrs >> a) & 1u ? mda[t][a] : mod_base(t, a);
-            mod_arrs[t] = (uint8_t)arrs;
+            mod_arrs[t] = (uint16_t)arrs;
         }
         if (!L->n)
             continue;

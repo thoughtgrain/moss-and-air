@@ -2,7 +2,7 @@
 /* The DRUM kit's voice: one small synthesizer that every instrument shares, set by a patch (drum.c's DRM_KIT).
  *
  * I build every sound from three layers, all optional:
- *   TONE   one or two partials (sines, or band-limited squares), struck: the pitch starts BEND above and falls
+ *   TONE   one or two sine partials, struck: the pitch starts BEND above and falls
  *          back with its own time constant, the level decays from the strike (the body)
  *   NOISE  white noise, the metal (a few square waves at fixed inharmonic ratios), or a mix, through one
  *          filter (low, band or high), under an envelope of three parts: a rise (a fade-in subtracted from the
@@ -34,7 +34,6 @@ typedef struct {
     int16_t p16;                                         /* pitch, 1/16 semitone (MIDI x 16); 0: no tone layer */
     uint16_t ratio;                                      /* the second partial over the first, Q12; 0: none */
     uint8_t mix2;                                        /* its level, 0..127 of the first */
-    uint8_t square;                                      /* 1: squares instead of sines */
     uint8_t bend;                                        /* the strike's pitch above p16, 1/16 semitone */
     uint8_t bend_ms;                                     /* its fall (tau) */
     uint16_t body_ms;                                    /* the body's decay (tau) */
@@ -65,8 +64,9 @@ typedef struct {
     int16_t tune;                                        /* 1/16 semitone, every pitch and filter */
     uint16_t dscale;                                     /* every decay x this, Q8 (256: as designed) */
     int16_t bright;                                      /* -127..127: the filter +-1 octave, the 2nd partial */
-    uint8_t level;                                       /* 0..127 (100: as designed) */
+    uint16_t level;                                      /* 100: as designed (up to 400: +12 dB) */
     uint8_t accent;                                      /* 0..127: up to +4 dB, more on the hit */
+    uint8_t drive;                                       /* 0..127, added to the patch's */
 } dk_knobs_t;
 
 typedef struct {                                         /* a patch under its knobs, ready to run */
@@ -81,7 +81,7 @@ typedef struct {                                         /* a patch under its kn
     uint32_t krise, khit, kb_tail;
     int32_t ghit, gtail;                                 /* Q15 */
     uint16_t gap, bursts;                                /* samples; count */
-    uint8_t filt, square, late, nm;                      /* nm: metal squares in use */
+    uint8_t filt, late, nm, pad;                         /* nm: metal squares in use */
     int32_t drive, dcomp;                                /* Q12; Q15 */
     int32_t out;                                         /* Q12 */
 } dk_coef_t;
@@ -151,7 +151,6 @@ static void dk_setup(dk_coef_t *c, const dk_patch_t *p, const dk_knobs_t *k)
         c->kb_body = dk_kslow(dk_us(p->body_ms, sc));
         c->g1 = 32767 * 127 / (127 + m2) * p->tone_lv / 127;   /* the partials sum to tone_lv at most */
         c->g2 = c->g1 * m2 / 127;
-        c->square = p->square;
     }
     /* NOISE */
     c->filt = p->filt;
@@ -178,10 +177,11 @@ static void dk_setup(dk_coef_t *c, const dk_patch_t *p, const dk_knobs_t *k)
         c->late = p->late;
     }
     /* DRIVE: x1 .. x5 into tanh, then back to the same small-signal level */
-    c->drive = 4096 + p->drive * 4 * 4096 / 127;
-    c->dcomp = p->drive ? 32767 * 4096 / c->drive : 32767;
+    i = (uint32_t)clamp(p->drive + k->drive, 0, 127);
+    c->drive = 4096 + (int32_t)i * 4 * 4096 / 127;
+    c->dcomp = i ? 32767 * 4096 / c->drive : 32767;
     /* LEVEL and the accent (1 + 0.6 a: +4 dB) */
-    c->out = (int32_t)((uint32_t)p->gain * k->level / 100u);
+    c->out = (int32_t)((uint32_t)p->gain * (k->level < 400u ? k->level : 400u) / 100u);
     c->out += (c->out * acc * 77) >> 14;
 }
 
@@ -214,11 +214,67 @@ static inline void dk_ramp(int32_t *q, uint32_t k, int32_t *a, int32_t *d)
     *d = ((*q >> 10) - *a) >> CTL_LOG2;
 }
 
+/* The sample loops, one per layer, each specialised for what's fixed through a block (the filter's mode, the
+ * metal's squares), so the loop itself has no decisions in it. A layer that has gone quiet is skipped: a bass
+ * drum's thud lasts 2 ms of its second, a hat has no tone at all. */
+
+/* TONE into y (written, not added): the partials under the body's ramp (a: Q20 start, d: step) */
+static void dk_tone_loop(const dk_coef_t *c, dk_voice_t *v, int32_t *y, uint32_t n, int32_t a, int32_t d)
+{
+    uint32_t i, ph1 = v->ph1, ph2 = v->ph2, span = c->span >> 15, ratio = c->ratio;
+    int32_t eb = v->ebend, kb = (int32_t)c->kbend, g1 = c->g1, g2 = c->g2;
+    for (i = 0; i < n; i++) {
+        uint32_t inc = c->inc + span * (uint32_t)eb, inc2 = (inc >> 12) * ratio;
+        int32_t o1, o2;
+        ph1 += inc;
+        ph2 += inc2;
+        eb = (eb * kb) >> 15;
+        o1 = sine_i(ph1);
+        o2 = ratio ? sine_i(ph2) : 0;
+        a += d;
+        y[i] = ((((o1 * g1) >> 15) + ((o2 * g2) >> 15)) * (a >> 5)) >> 15;
+    }
+    v->ph1 = ph1, v->ph2 = ph2, v->ebend = eb;
+}
+
+/* NOISE added into y: the source (m: the metal's block, or 0) through the filter (mode: 0 low, 1 band, 2 high) under
+ * the rise, the hit (re-struck by the bursts) and the tail's ramp (a, d) */
+static inline __attribute__((always_inline)) void dk_noise_loop(const dk_coef_t *c, dk_voice_t *v, int32_t *y,
+                                                                 uint32_t n, const int32_t *m, int32_t a, int32_t d,
+                                                                 const uint32_t mode)
+{
+    uint32_t i, left = v->left, gap = v->gap_n;
+    int32_t eh = v->ehit, er = v->erise, s1 = v->s1, s2 = v->s2, rng = v->rng, gn = c->gnoise, gm = c->gmetal;
+    int32_t gh = c->ghit, gt = c->gtail, kh = v->choke ? 31700 : (int32_t)c->khit, kr = (int32_t)c->krise;
+    for (i = 0; i < n; i++) {
+        int32_t src = (((int32_t)noise32(&rng) >> 16) * gn) >> 15, f, e;
+        if (m)
+            src += (m[i] * gm) >> 15;
+        f = clamp(tsvf_mode(&c->f, src, &s1, &s2, mode), -65535, 65535);
+        if (left && !--gap) {                            /* a burst: the hit again */
+            eh = 32767;
+            gap = c->gap;
+            left--;
+        }
+        a += d;
+        e = ((eh * gh) >> 15) + (((a >> 5) * gt) >> 15);
+        if (er) {                                        /* (the rise: only until it's done) */
+            e = (e * (32767 - er)) >> 15;
+            er = (er * kr) >> 15;
+        }
+        eh = (eh * kh) >> 15;
+        y[i] += (f * (clamp(e, 0, 65534) >> 1)) >> 14;
+    }
+    v->left = (uint16_t)left, v->gap_n = (uint16_t)gap, v->ehit = eh, v->erise = er, v->s1 = s1, v->s2 = s2;
+    v->rng = rng;
+}
+
 static __attribute__((noinline)) void dk_run(const dk_coef_t *c, dk_voice_t *v, int32_t *y, uint32_t n)
 {
     static const uint32_t KB_CHOKE = 40265u;             /* dk_kslow(1500): a 1.5 ms release */
-    uint32_t i, j, ph1, ph2, span = c->span >> 15;
-    int32_t ab, db, at, dt, eb, eh, er, s1, s2;
+    uint32_t i, j;
+    int32_t ab, db, at, dt, m[CTL];
+    int tone, noise;
     if (v->trig)
         dk_strike(c, v);
     if (!v->live) {
@@ -226,56 +282,45 @@ static __attribute__((noinline)) void dk_run(const dk_coef_t *c, dk_voice_t *v, 
             y[i] = 0;
         return;
     }
-    ph1 = v->ph1, ph2 = v->ph2, eb = v->ebend, eh = v->ehit, er = v->erise, s1 = v->s1, s2 = v->s2;
     if (!v->tail_on && !v->left) {                       /* the last burst struck: the tail starts */
         v->qtail = 1 << 30;
         v->tail_on = 1;
     }
     if (v->choke)
         v->left = 0;
+    tone = c->g1 && v->qbody > DK_QUIET;
+    noise = c->filt != DK_OFF && (v->qtail > DK_QUIET || v->ehit > 4 || v->left || !v->tail_on);
     dk_ramp(&v->qbody, v->choke ? KB_CHOKE : c->kb_body, &ab, &db);
     dk_ramp(&v->qtail, v->choke ? KB_CHOKE : c->kb_tail, &at, &dt);
-    for (i = 0; i < n; i++) {
-        int32_t x = 0;
-        if (c->g1) {                                     /* TONE */
-            uint32_t inc = c->inc + span * (uint32_t)eb, inc2 = (inc >> 12) * c->ratio;
-            int32_t o1, o2;
-            ph1 += inc;
-            ph2 += inc2;
-            eb = (eb * (int32_t)c->kbend) >> 15;
-            o1 = c->square ? osc_pulse(ph1, inc, 0x80000000u) : sine_i(ph1);
-            o2 = !c->ratio ? 0 : c->square ? osc_pulse(ph2, inc2, 0x80000000u) : sine_i(ph2);
-            ab += db;
-            x = ((((o1 * c->g1) >> 15) + ((o2 * c->g2) >> 15)) * (ab >> 5)) >> 15;
-        }
-        if (c->filt != DK_OFF) {                         /* NOISE */
-            int32_t src = (((int32_t)noise32(&v->rng) >> 16) * c->gnoise) >> 15, f, e;
-            if (c->nm) {
-                int32_t m = 0;
-                for (j = 0; j < c->nm; j++) {
-                    v->mph[j] += c->minc[j];
-                    m += (v->mph[j] >> 31) ? c->mamp : -c->mamp;
+    if (tone)
+        dk_tone_loop(c, v, y, n, ab, db);
+    else
+        for (i = 0; i < n; i++)
+            y[i] = 0;
+    if (noise) {
+        if (c->nm) {                                     /* the metal: its squares summed for the block */
+            for (i = 0; i < n; i++)
+                m[i] = 0;
+            for (j = 0; j < c->nm; j++) {
+                uint32_t ph = v->mph[j], inc = c->minc[j];
+                int32_t amp = c->mamp;
+                for (i = 0; i < n; i++) {
+                    ph += inc;
+                    m[i] += (ph >> 31) ? amp : -amp;
                 }
-                src += (m * c->gmetal) >> 15;
+                v->mph[j] = ph;
             }
-            f = clamp(tsvf_mode(&c->f, src, &s1, &s2, c->filt == DK_LOW ? 0u : c->filt == DK_BAND ? 1u : 2u),
-                      -65535, 65535);
-            if (v->left && !--v->gap_n) {                /* a burst: the hit again */
-                eh = 32767;
-                v->gap_n = c->gap;
-                v->left--;
-            }
-            at += dt;
-            e = ((eh * c->ghit) >> 15) + (((at >> 5) * c->gtail) >> 15);
-            e = (e * (32767 - er)) >> 15;
-            eh = (eh * (int32_t)(v->choke ? 31700u : c->khit)) >> 15;
-            er = (er * (int32_t)c->krise) >> 15;
-            x += (f * (clamp(e, 0, 65534) >> 1)) >> 14;
         }
-        if (c->drive != 4096)                            /* DRIVE */
-            x = (softclip((clamp(x, -65535, 65535) * c->drive) >> 12) * c->dcomp) >> 15;
-        y[i] = soft_knee((clamp(x, -65535, 65535) * c->out) >> 12, 16384);
+        switch (c->filt) {
+        case DK_LOW: dk_noise_loop(c, v, y, n, c->nm ? m : 0, at, dt, 0u); break;
+        case DK_BAND: dk_noise_loop(c, v, y, n, c->nm ? m : 0, at, dt, 1u); break;
+        default: dk_noise_loop(c, v, y, n, c->nm ? m : 0, at, dt, 2u); break;
+        }
     }
-    v->ph1 = ph1, v->ph2 = ph2, v->ebend = eb, v->ehit = eh, v->erise = er, v->s1 = s1, v->s2 = s2;
-    v->live = v->qbody > DK_QUIET || v->qtail > DK_QUIET || eh > 4 || v->left || !v->tail_on;
+    if (c->drive != 4096)                                /* DRIVE */
+        for (i = 0; i < n; i++)
+            y[i] = (softclip((clamp(y[i], -65535, 65535) * c->drive) >> 12) * c->dcomp) >> 15;
+    for (i = 0; i < n; i++)
+        y[i] = soft_knee((clamp(y[i], -65535, 65535) * (c->out >> 1)) >> 11, 16384);   /* (out up to ~42000) */
+    v->live = v->qbody > DK_QUIET || v->qtail > DK_QUIET || v->ehit > 4 || v->left || !v->tail_on;
 }

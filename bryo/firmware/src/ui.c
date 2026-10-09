@@ -22,7 +22,7 @@
 #define UI_MSG_FRAMES 70             /* a message holds the visualization panel ~1 s (~66 frames/s) */
 
 enum { FOCUS_DEV, FOCUS_SLOT };
-enum { UNDO_TAPE, UNDO_MOD };
+enum { UNDO_TAPE, UNDO_MOD, UNDO_DRUM };
 #define SLOT_NONE 0xFFu
 enum { CHAN_LEVELS, CHAN_STRIP, CHAN_MASTER };   /* ui.chan: the mixer's page */      /* what the strip shows: a device of the track, or a modulator slot */
 enum { VIEW_PAGE, VIEW_MIXER, VIEW_ROUTE, VIEW_USBREC };   /* VIEW_MIXER: GLO, the four track levels on the knobs,
@@ -47,7 +47,11 @@ static struct {
     uint32_t poly_t0, save_t0;
     uint8_t mono_held;               /* the MONO key (clear the track's modulation) held, waiting for half a second */
     uint32_t mono_t0;
-    uint8_t undo;                    /* what SAVE held undoes: UNDO_TAPE (POLY's clear) or UNDO_MOD (MONO's) */
+    uint8_t undo;                    /* what SAVE held undoes: UNDO_TAPE (POLY's clear), UNDO_MOD (MONO's), UNDO_DRUM
+                                      * (POLY's clear of a DRUM pattern, or PATN over an edited one) */
+    uint8_t home_held, home_used;    /* a DRUM track: HOME down on its page (it turns the page as it's let go, unless
+                                      * a white key or SELECT was used meanwhile) */
+    uint8_t drm_inst;                /* a DRUM page: the white key held (+1; 0: none): KNOB 1..4 are its own knobs */
     uint8_t slot_held, slot_used;    /* a slot's pad down (SLOT_NONE: none), and a knob or SELECT turned meanwhile: a
                                       * tap opens the slot's page as it's let go, a hold sets depths (mod.c) */
     uint16_t steps_held;             /* a SEQ page: the white keys held, the steps KNOB 1 sets */
@@ -115,6 +119,10 @@ static const pdesc_t *ui_page(uint32_t k, int16_t **vp)
         *vp = &lv[k];
         return &RIN_P[k];
     }
+    if (ui.drm_inst && ui.kind == FOCUS_DEV) {          /* a DRUM instrument held: its own knobs */
+        *vp = &p->dins[(ui.drm_inst - 1u) & 15u][k];
+        return &DRI_P[k];
+    }
     k += 4u * ui.page;
     if (ui.kind == FOCUS_SLOT) {
         *vp = &p->mod[ui.slot][k];
@@ -155,6 +163,10 @@ static void draw_head(void)
     if (slot) {
         box[0] = 'M';
         box[1] = (char)('1' + ui.slot);
+    }
+    if (ui.drm_inst && !slot && ui.view == VIEW_PAGE) {      /* a DRUM instrument held: the box names it */
+        box[0] = DRM_KIT[(ui.drm_inst - 1u) & 15u].code[0];
+        box[1] = DRM_KIT[(ui.drm_inst - 1u) & 15u].code[1];
     }
     if (ui.slot_held < NSLOT && ui.view != VIEW_USBREC) {   /* a slot's pad held: the box names it (its depths below) */
         box[0] = 'M';
@@ -240,7 +252,7 @@ static void draw_strip(void)
             sig = (sig ^ (uint32_t)(mod_any(sys.sel, page_target(k)) |
                                     (ui.slot_held < NSLOT ? (mdep[sys.sel][ui.slot_held][page_target(k)] + 256) << 1 : 0))) * 16777619u;
     }
-    sig += ui.slot_held * 2909u;
+    sig += ui.slot_held * 2909u + ui.drm_inst * 6151u;
     sig += (ui.last < 4u ? ui.last + 1u : 0u) * 7919u + sys.ntrk * 15485863u + sys.sel * 104729u + ui.view * 31u + ui.page * 263u + ui.chan * 5u + ui.kind * 131u +
            ui.dev * 1031u + (ui.kind == FOCUS_SLOT ? tp[sys.sel].engine[ui.slot] * 65537u : tp[sys.sel].src * 3571u);
     if (!ui.force && sig == ui.sig_strip)
@@ -258,6 +270,7 @@ static void draw_strip(void)
         }
         uint32_t pk = ui.view == VIEW_ROUTE ? PK_SRC : ui.view == VIEW_MIXER ? (ui.chan == CHAN_MASTER ? MS_PK[k] : CH_PK[k])
                     : ui.kind == FOCUS_SLOT ? ME_PK[tp[sys.sel].engine[ui.slot]][4u * ui.page + k]
+                    : ui.drm_inst ? DRI_PK[k]
                     : dev_pk(sys.sel, ui.dev)[4u * ui.page + k];
         int lvl = ui.view == VIEW_MIXER && !ui.chan, mute = lvl && track[k].mute;
         int off = (lvl || ui.view == VIEW_ROUTE) && k >= sys.ntrk;
@@ -320,14 +333,33 @@ static void draw_foot(void)
         str_cpy(a, ui.chan == CHAN_MASTER ? "EDIT: LEVELS" : ui.chan ? "EDIT: MASTER" : "EDIT: CHANNEL", sizeof a);
     else if (ui.view == VIEW_ROUTE)
         str_cpy(a, "KNOBS: REC IN", sizeof a);
-    else
+    else if (tp[sys.sel].src == SRC_DRUM && ui.kind == FOCUS_DEV && ui.dev == DEV_SRC) {   /* DRUM: what a key does */
+        static const char *const STEP[4] = {"KEYS: STEPS", "KEYS: ACCENTS", "KEYS: PLAY+WRITE", "HOLD KEY: ERASE"};
+        uint32_t m = (uint32_t)clamp(tp[sys.sel].drm[DM_MODE], 0, 3);
+        if (ui.home_held)
+            str_cpy(a, "KEYS: INSTRUMENT", sizeof a);
+        else if (ui.page == 3u && m == DMODE_HITS) {
+            str_cpy(a, "KEYS: ", sizeof a);
+            str_cpy(a + 6, DRM_KIT[clamp(tp[sys.sel].drm[DM_INST], 0, 15)].code, 3);
+            str_cpy(a + str_len(a), " STEPS", 8);
+        } else
+            str_cpy(a, ui.page == 3u ? STEP[m] : "KEYS:PLAY HOLD:EDIT", sizeof a);
+    } else
         str_cpy(a, tp[sys.sel].src != SRC_TAPE ? "KEYS: NOTES" : ui.kind == FOCUS_DEV && ui.dev == DEV_GRAIN ?
                    "KEYS: GRAIN CURSOR" : ui.kind == FOCUS_DEV && ui.dev == DEV_RESO ? "KEYS: PLUCK STRINGS" :
                    "KEYS: SLICES", sizeof a);   /* (what the keys do on this page) */
-    str_cpy(b, "T", sizeof b);                        /* "T2 OCT 3": the track, its keys' octave */
+    str_cpy(b, "T", sizeof b);                        /* "T2 OCT 3": the track, its keys' octave (DRUM: "T2 BAR 1/2",
+                                                       * the bar STEP shows, of the pattern's) */
     fmt_int(b + 1, (int32_t)sys.sel + 1);
-    str_cpy(b + str_len(b), " OCT ", 8);
-    fmt_int(b + str_len(b), track[sys.sel].octave);
+    if (tp[sys.sel].src == SRC_DRUM) {
+        str_cpy(b + str_len(b), " BAR ", 8);
+        fmt_int(b + str_len(b), tp[sys.sel].drm[DM_BAR]);
+        str_cpy(b + str_len(b), "/", 2);
+        fmt_int(b + str_len(b), tp[sys.sel].drm[DM_LEN]);
+    } else {
+        str_cpy(b + str_len(b), " OCT ", 8);
+        fmt_int(b + str_len(b), track[sys.sel].octave);
+    }
     if (ui.view == VIEW_USBREC)
         str_cpy(b, "44.1K", sizeof b);                /* (what the computer sends: 44.1 kHz) */
     sig = hash_str(hash_str(5381u, a), b) + track[sys.sel].mute + ux.theme * 3u;
