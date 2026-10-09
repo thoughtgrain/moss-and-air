@@ -72,6 +72,8 @@ static void ui_redraw(void);
 #include "../firmware/src/tape.c"
 #include "../firmware/src/synth.c"
 #include "../firmware/src/poly.c"
+#include "../firmware/src/drum_voice.c"
+#include "../firmware/src/drum.c"
 #include "../firmware/src/source.c"
 #include "../firmware/src/grain.c"
 #include "../firmware/src/reso.c"
@@ -4237,6 +4239,68 @@ static void test_mod(void)
 }
 
 /* each source's LVL (its last page): -12 dB is a quarter of the sound, on TAPE, SYNTH and POLY alike; a target */
+/* the DRUM kit's voices, struck alone: each rings out to silence, under full scale, without DC, and the same every
+ * hit; an accent is louder; a closed hat chokes the open one */
+static uint32_t drum_hit(uint32_t i, uint32_t acc, uint32_t choke_at, int32_t *out, uint32_t max, int32_t *peak)
+{
+    dv_param_t p;
+    dv_coef_t c;
+    dv_voice_t v;
+    dv_metal_t m;
+    int32_t mb[CTL];
+    uint32_t n = 0, k;
+    drm_inst_param(i, &p);
+    p.accent = (uint8_t)acc;
+    dv_setup(&c, &p);
+    memset(&m, 0, sizeof m);
+    dv_metal_tune(&m, &c);
+    dv_init(&v, c.type);
+    dv_trigger(&v);
+    *peak = 0;
+    while (n + CTL <= max) {
+        if (n == choke_at)
+            dv_choke(&v);
+        dv_metal_run(&m, mb, CTL);
+        dv_run(&c, &v, mb, out + n, CTL);
+        for (k = 0; k < CTL; k++)
+            *peak = abs(out[n + k]) > *peak ? abs(out[n + k]) : *peak;
+        n += CTL;
+        if (!v.live)
+            break;
+    }
+    return v.live ? 0u : n;
+}
+
+static void test_drum_voices(void)
+{
+    static int32_t a[44100 * 12], b[44100 * 12];
+    uint32_t i, rings = 1, quiet = 1, nodc = 1, same = 1, louder = 1, k, n, nb, choked;
+    int32_t pk, pkb;
+    for (i = 0; i < DRM_NINST; i++) {
+        int64_t sum = 0;
+        n = drum_hit(i, 0, ~0u, a, 44100u * 12u, &pk);
+        nb = drum_hit(i, 0, ~0u, b, 44100u * 12u, &pkb);
+        rings &= n != 0;
+        quiet &= pk > 4000 && pk < 30000;
+        for (k = 0; k < n; k++)
+            sum += a[k];
+        nodc &= n && llabs(sum / (int64_t)n) < 300;
+        same &= n == nb && !memcmp(a, b, n * sizeof *a);
+        drum_hit(i, 127, ~0u, b, 44100u * 12u, &pkb);
+        louder &= pkb > pk;
+        if (!n || !(pk > 4000 && pk < 30000) || !(pkb > pk))
+            printf("bryo:   (%s: rang out after %u samples, peak %d, accented %d)\n", DRM_INST[i].code, n, pk, pkb);
+    }
+    check("DRUM: each of the 16 instruments rings out to silence (the cymbal in 12 s)", rings);
+    check("..peaks between -18 and -0.8 dBFS, without DC, the same every hit", quiet && nodc && same);
+    check("..and an accent makes every one louder", louder);
+    n = drum_hit(DI_OH, 0, ~0u, a, 44100u * 12u, &pk);
+    choked = drum_hit(DI_OH, 0, CTL * 20u, a, 44100u * 12u, &pk);
+    check("the open hat rings past half a second; choked (HH, MB) it stops within 25 ms",
+          n > 22050u && choked && choked < CTL * 20u + 1103u &&
+          (DRM_INST[DI_HH].chokes & DRM_INST[DI_MB].chokes) == 1u << DI_OH);
+}
+
 static void test_source_level(void)
 {
     static int32_t a[CTL * 300], b[CTL * 300];
@@ -4597,6 +4661,7 @@ int main(int argc, char **argv)
     test_mod();
     test_mod_engines();
     test_source_level();
+    test_drum_voices();
     test_input();
     test_settings();
     palette_set(UI_GREY_INDEX);                          /* (the screens are one ink now, whatever the palette) */

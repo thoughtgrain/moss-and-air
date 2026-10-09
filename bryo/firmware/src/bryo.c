@@ -76,6 +76,8 @@ static void ui_redraw(void);
 #include "tape.c"                /* TAPE: the ADPCM looper, the factory reels */
 #include "synth.c"               /* SYNTH: a small subtractive voice */
 #include "poly.c"                /* POLY: a sound across the keys */
+#include "drum_voice.c"          /* the DRUM kit's voices: synthesized drums */
+#include "drum.c"                /* DRUM: the kit and its pattern */
 #include "source.c"              /* the source engines a track starts with */
 #include "grain.c"               /* GRAIN: grains of the track's tape */
 #include "reso.c"                /* RESONATOR: four tuned strings */
