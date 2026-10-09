@@ -23,6 +23,10 @@
  *                  starts and stops the take, the white keys pick its track, REC again puts it there, HOME goes
  *                  back a step
  *   OCT- / OCT+    the white keys' octave (a DRUM track: the bar STEP shows)
+ *   PRESETS        the project view (project.c): turned again, the slot it points at. There OCT+ loads it, SAVE
+ *                  saves into it, POLY held deletes it, OCT- (or any page pad) goes back. Loading over changes
+ *                  not saved, or saving over another project, wants a second press within 3 s
+ *   SAVE tapped    save into the project loaded or saved last (P1 to start with); held: undo the last clear
  *   DRUM           HOME turns its pages as it's let go; held + a white key: STEP's instrument (heard). On PATTERN,
  *                  VARY and KIT the white keys play the kit, and one held makes KNOB 1..4 its own TUNE DECY LVL
  *                  TONE; on STEP they toggle the bar's steps (HITS, ACC), or play and write (LIVE), or wipe (ERAS).
@@ -67,7 +71,8 @@ static uint32_t focus_btn(void)
 {
     if (ui.view == VIEW_MIXER)
         return ui.chan ? B_EDIT : B_GLO;
-    if (ui.view == VIEW_ROUTE || ui.view == VIEW_USBREC)   /* (no pad: ALGORITHM is a knob; REC held) */
+    if (ui.view == VIEW_ROUTE || ui.view == VIEW_USBREC || ui.view == VIEW_PROJECT)   /* (no pad: ALGORITHM and
+                                                                                     * PRESETS are knobs; REC held) */
         return NB;
     if (ui.kind == FOCUS_SLOT)
         return SLOT_BTN[ui.slot];
@@ -228,6 +233,99 @@ static void glo_up(void)
     ui.last = 0xFF;
 }
 
+/* ------------------------------------------------------------ projects --- */
+/* PRESETS turned: the project view opens on the project loaded last; turned again, it points at the next slot */
+static void pj_turn(int32_t d)
+{
+    if (ui.view != VIEW_PROJECT) {
+        ui.view = VIEW_PROJECT;
+        ui.chan = 0;
+        ui.chan_latched = 0;
+        ui.glo_latched = 0;
+        ui.pj_sel = pj_cur;
+    } else {
+        ui.pj_sel = (uint8_t)clamp((int32_t)ui.pj_sel + d, 0, (int32_t)PJ_N - 1);
+    }
+    ui.pj_ask = PJ_ASK_NONE;
+    ui.last = 0xFF;
+}
+
+/* an action that wants a second press: asked now (0), or already asked and pressed again in time (1) */
+static int pj_confirmed(uint32_t what, const char *ask)
+{
+    if (ui.pj_ask == what && (uint32_t)(fm1_ms - ui.pj_ask_t) < 3000u) {
+        ui.pj_ask = PJ_ASK_NONE;
+        return 1;
+    }
+    ui.pj_ask = (uint8_t)what;
+    ui.pj_ask_t = fm1_ms;
+    ui_message(ask);
+    return 0;
+}
+
+/* the instrument saved into slot s, and what came of it said */
+static void pj_do_save(uint32_t s)
+{
+    char m[40] = "SAVING P";
+    int rc;
+    uint32_t t;
+    m[8] = (char)('1' + s);
+    m[9] = 0;
+    ui_message(m);
+    ui_draw();                                          /* (the flash holds the main loop while it writes) */
+    rc = pj_save(s);
+    str_cpy(m, "P", sizeof m);
+    m[1] = (char)('1' + s);
+    m[2] = 0;
+    if (rc < 0) {
+        str_cpy(m + 2, " NOT SAVED: THE FLASH REFUSED", 32);
+    } else if (rc == 0) {
+        str_cpy(m + 2, " SAVED", 8);
+    } else {                                            /* saved, some tapes without a reel to go in */
+        str_cpy(m + 2, " SAVED. NO FREE REEL:", 24);
+        for (t = 0; t < NTRK; t++)
+            if ((rc >> t) & 1) {
+                char tn[4] = {' ', 'T', (char)('1' + t), 0};
+                str_cpy(m + str_len(m), tn, 4);
+            }
+    }
+    ui_message(m);
+}
+
+/* SAVE tapped: on the project view into the slot pointed at (over another project: asked first), elsewhere into the
+ * project loaded or saved last */
+static void pj_save_tap(void)
+{
+    uint32_t s = ui.view == VIEW_PROJECT ? ui.pj_sel : pj_cur;
+    if (ui.view == VIEW_PROJECT && pj_sum[s].used && s != pj_cur) {
+        char m[40] = "P";
+        m[1] = (char)('1' + s);
+        m[2] = 0;
+        str_cpy(m + 2, " HOLDS A PROJECT: SAVE AGAIN", 30);
+        if (!pj_confirmed(PJ_ASK_SAVE, m))
+            return;
+    }
+    pj_do_save(s);
+}
+
+/* OCT+ on the project view: the slot pointed at, loaded (over changes not saved: asked first) */
+static void pj_load_press(void)
+{
+    uint32_t s = ui.pj_sel;
+    char m[40] = "P";
+    m[1] = (char)('1' + s);
+    m[2] = 0;
+    if (!pj_sum[s].used) {
+        str_cpy(m + 2, " IS EMPTY", 12);
+        ui_message(m);
+        return;
+    }
+    if (pj_changed() && !pj_confirmed(PJ_ASK_LOAD, "CHANGES NOT SAVED: OCT+ AGAIN"))
+        return;
+    str_cpy(m + 2, pj_load(s) == 0 ? " LOADED" : " CAN'T BE READ", 16);
+    ui_message(m);
+}
+
 /* REC: arm the focused track (the tape made ready: a reel copied in), or let go of it */
 static void rec_arm(void)
 {
@@ -306,13 +404,21 @@ static void on_button(uint32_t b)
         if (sys.playing)
             rec_arm();
         break;
-    case B_SAVE:                                        /* tap: save (phase 8); held: undo the last clear */
+    case B_SAVE:                                        /* tap: save the project; held: undo the last clear */
         ui.save_held = 1;
         ui.save_t0 = fm1_ms;
         break;
     case B_OCTDN:
     case B_OCTUP:
-        if (tp[sys.sel].src == SRC_DRUM) {              /* a DRUM track: the bar STEP shows */
+        if (ui.view == VIEW_PROJECT) {                  /* the project view: OCT+ loads, OCT- goes back */
+            if (b == B_OCTUP) {
+                pj_load_press();
+            } else {
+                ui.view = VIEW_PAGE;
+                ui.pj_ask = PJ_ASK_NONE;
+                ui.last = 0xFF;
+            }
+        } else if (tp[sys.sel].src == SRC_DRUM) {              /* a DRUM track: the bar STEP shows */
             int16_t *bp = &tp[sys.sel].drm[DM_BAR];
             *bp = (int16_t)clamp(*bp + (b == B_OCTUP ? 1 : -1), 1, tp[sys.sel].drm[DM_LEN]);
         } else if (b == B_OCTDN && track[sys.sel].octave > 1u) {
@@ -345,7 +451,8 @@ static void on_black(uint32_t k)
                                                          * pattern) */
         ui.poly_held = 1;
         ui.poly_t0 = fm1_ms;
-        ui_message(tp[sys.sel].src == SRC_DRUM ? "KEEP HOLDING POLY TO CLEAR THE PATTERN" : "KEEP HOLDING POLY TO CLEAR THE TAPE");
+        ui_message(ui.view == VIEW_PROJECT ? "KEEP HOLDING POLY TO DELETE IT" : tp[sys.sel].src == SRC_DRUM ?
+                   "KEEP HOLDING POLY TO CLEAR THE PATTERN" : "KEEP HOLDING POLY TO CLEAR THE TAPE");
     }
 }
 
@@ -359,6 +466,14 @@ static void hold_keys(void)
         if (!((fm1_in.notes >> k) & 1u)) {
             ui.poly_held = 0;
             ui.msg_t = 1;                               /* (the message ends next frame) */
+        } else if ((uint32_t)(fm1_ms - ui.poly_t0) >= 500u && ui.view == VIEW_PROJECT) {   /* a project, deleted */
+            char m[40] = "P";
+            ui.poly_held = 0;
+            m[1] = (char)('1' + ui.pj_sel);
+            m[2] = 0;
+            str_cpy(m + 2, !pj_sum[ui.pj_sel].used ? " IS EMPTY" : pj_delete(ui.pj_sel) == 0 ? " DELETED (ITS REELS STAY)"
+                                                                                           : " NOT DELETED: FLASH", 28);
+            ui_message(m);
         } else if ((uint32_t)(fm1_ms - ui.poly_t0) >= 500u && tp[sys.sel].src == SRC_DRUM) {
             ui.poly_held = 0;
             if (drm_clear(sys.sel)) {
@@ -432,7 +547,7 @@ static void hold_keys(void)
         int held = (int)((fm1_in.buttons >> panel.btn[B_SAVE]) & 1u);
         if (!held) {
             ui.save_held = 0;
-            ui_message("SAVE: PROJECTS ARRIVE IN PHASE 8");
+            pj_save_tap();
         } else if ((uint32_t)(fm1_ms - ui.save_t0) >= hold) {
             ui.save_held = 0;
             ui_message((ui.undo == UNDO_MOD ? mod_undo() : ui.undo == UNDO_DRUM ? drm_undo() : tape_undo_clear()) >= 0
@@ -459,6 +574,8 @@ static void on_knob(uint32_t c, int32_t d)
     }
     if (ui.slot_held != SLOT_NONE)                      /* (a page without depths: the knob as usual) */
         ui.slot_used = 1;
+    if (ui.view == VIEW_PROJECT)                        /* (the project view: the knobs have nothing there) */
+        return;
     if (seq_page() && c == 0u && ui.steps_held) {      /* a SEQ page, white keys held: KNOB 1 sets their steps */
         uint32_t k;
         for (k = 0; k < 16u; k++)
@@ -641,8 +758,10 @@ static void ui_input(void)
             sys.bpm = (uint16_t)clamp((int32_t)sys.bpm + d, 40, 240);
         }
     }
-    if (panel_enc(EN_PRESET))
-        ui_message("PROJECTS ARRIVE IN PHASE 8");
+    if ((d = panel_enc(EN_PRESET)) != 0)               /* PRESETS: the project view, the slot it points at */
+        pj_turn(d);
+    if (ui.pj_ask && (uint32_t)(fm1_ms - ui.pj_ask_t) >= 3000u)   /* (a second press that didn't come) */
+        ui.pj_ask = PJ_ASK_NONE;
     if ((d = panel_enc(EN_ALGO)) != 0) {               /* ALGORITHM: the routing view (REC IN); turned on it, the
                                                          * focused track's */
         if (ui.view != VIEW_ROUTE) {

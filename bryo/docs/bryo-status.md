@@ -13,7 +13,7 @@ cite its sections as "PRD 2.2" and so on). Each track is a source (TAPE, SYNTH, 
 GRAIN, RESONATOR, COLOR, SPACE, then a channel strip into the mix and a master compressor. Four modulator slots
 per track move any of it: hold a slot's pad, turn a knob.
 
-**Phases 1 to 7 of 10 are built, with one piece open (p-locks), and verified on the host only.** Nothing has run on
+**Phases 1 to 8 of 10 are built, with one piece open (p-locks), and verified on the host only.** Nothing has run on
 an FM-1 yet. The next real milestone is the hardware checkpoint (`docs/hardware-checkpoint.md`): flash it, read
 the CPU load, listen.
 
@@ -28,7 +28,7 @@ the CPU load, listen.
 | 6 Mixer + routing | done: channel strips (LOW HIGH FILT PAN), master compressor; routing is REC IN |
 | 7 Modulation | done but p-locks: LFO ADSR SEQ FOLLOW, hold-and-turn depths, MONO's clear and undo |
 | 7b DRUM | done: a fourth source, a CR-78-inspired drum machine of Bryo's own sounds, patterns, rhythms and SEED |
-| 8 Projects | not started: save and recall with reels |
+| 8 Projects | done: six slots in flash (A/B), SAVE, the project view, the last one back at power-on; takes kept in user reels |
 | 9 Screen | mostly early: the dot-grid screens; still to come: modulation arcs, moving dots |
 | 10 Tools + docs | not started: reel upload tool, installer text, a manual |
 
@@ -60,6 +60,9 @@ the CPU load, listen.
   (PATN), and SEED: any value but 0 plays a version that varies the pattern the way a player would (the backbone
   kept, ghost notes, the hats thinning and filling, fills at the end), the same version every time. OCT- / OCT+ pick
   the bar; POLY held clears the pattern.
+- **Projects.** SAVE tapped saves the whole instrument into the project loaded last; PRESETS opens the six slots
+  (OCT+ loads, SAVE saves, POLY held deletes, OCT- leaves); the last project saved comes back at power-on. A take on
+  a track's own tape goes into a user reel named after it.
 - **The USB record mode.** Stopped, REC held a second: the FM-1 plays the computer and records it; trim, level,
   fades, then a white key picks the track.
 
@@ -79,7 +82,7 @@ One core, no RTOS. Three contexts, and the rules between them are most of the ar
 **Memory.** Sound lives in one pool of 152 chunks (28 s of tape-format sound: `mem.c`) handed out by use: tapes as
 long as what's on them, GRAIN's live buffers, RESONATOR's strings and SPACE's lines while they're on. Nothing is
 set aside per track. When it runs short: a cleared tape's chunks first, then a parked track's tape, then the end of
-the longest tape. Main RAM holds 86.7 of 96 KiB (.bss), the pool 326.2 of 336 KiB (2026-10-09 with DRUM, 32-bit
+the longest tape. Main RAM holds 87.2 of 96 KiB (.bss), the pool 326.2 of 336 KiB (2026-10-09 with DRUM, 32-bit
 build: the firmware preprocessed, its inline assembly taken out, compiled `-m32 -Os`, `size -A`).
 
 **Parameters.** `param.c` holds every knob as an integer in its own range (`tp[t]`), with a descriptor (name,
@@ -113,6 +116,7 @@ Felucca's `felucca.c` did); `tests/bryo_host.c` includes the same files for the 
 | `usbrec.c` | the USB record mode (the endpoint itself is in `usb.c`) |
 | `chain.c` | a control block of the whole instrument; TRACKS; shedding; the main loop's memory polls |
 | `reel.c`, `vdisk.c`, `msc.c` | user reels in flash; the FM-1 as a USB drive (FAT12, WAV in and out) |
+| `project.c` | projects: six A/B slots in flash, the packed stream, takes into reels, the last one at power-on |
 | `ui.c`, `ui_input.c`, `ui_px.c`, `ui_viz.c` | the screen's regions; buttons, keys and knobs into actions; the dot grid and pictograms; the pictures |
 | kept from Felucca | `main.c`, `audio.c`, `usb.c`, `panel.c`, `settings.c`, `storage*.c`, `console.c`, `ota*.c`, `lcd.c`, `gfx.c`, `midi_uart.c`, the HAL in `firmware/hal/` |
 
@@ -121,7 +125,7 @@ Tests and tools:
 | File | What |
 | --- | --- |
 | `tests/run_tests.sh` | everything below that's quick, plus Felucca's kept hardware and installer tests; ends "ALL HOST TESTS PASSED" |
-| `tests/bryo_host.c` | Bryo's chain, input and screens on the host: 473 checks, and every screen rendered |
+| `tests/bryo_host.c` | Bryo's chain, input and screens on the host: 495 checks, and every screen rendered |
 | `tests/bryo_golden.txt`, `ui_golden.py` | each screen's pixel fingerprint |
 | `tests/checkpoint_sim.sh` | the hardware checkpoint on the host: 28 runs rendered to WAV, each one's cost under callgrind, and a stress test with the audio and USB interrupts cutting into the main loop while the memory's books are checked |
 | `tests/mod_audit.sh` | every knob a modulator can move: does it change the sound, does it step at the blocks, what it costs (`--cost`) |
@@ -203,6 +207,9 @@ number.
   cost 7 KB of main RAM.
 - **2026-10-09: every source has a LEVEL** on its last page, as the S-4 does; that needed five pages a device
   (NPK 20).
+- **2026-10-09: projects are a field-by-field stream, packed, never a struct dump** (versioned, counted arrays,
+  clamped on load, depths by array and knob): a newer Bryo reads older projects. Six slots, A/B, Bryo's own magic so
+  Felucca never misreads one. A take on a track's own tape goes into a user reel named after the project and track.
 - **2026-10-09: GRAIN, RESONATOR and COLOR can be sends** (ROUT: INS or SEND, per device, per track): the dry at
   full, the device added at WET. Per track rather than shared aux buses: no new memory or CPU, every track keeps
   its own effects. SPACE was always a send.
@@ -240,10 +247,10 @@ number.
 
 1. **The hardware checkpoint** (`docs/hardware-checkpoint.md`): build, flash, read the CPU on the run sheet,
    listen. Everything after depends on those numbers.
-2. **Phase 8, projects:** save and recall a session with its reels (the flash layout is in the architecture doc).
-3. **Phase 9, the screen's modulation:** arcs on the pictograms, the moving dots, the summed value.
-4. **DRUM by ear:** listen to the kit and the rhythms, tune `DRM_KIT` and `DRM_PRESET`.
-5. Decisions waiting: p-locks, SPRD on PAN.
+2. **Phase 9, the screen's modulation:** arcs on the pictograms, the moving dots, the summed value.
+3. **DRUM by ear:** listen to the kit and the rhythms, tune `DRM_KIT` and `DRM_PRESET`.
+4. Decisions waiting: p-locks, SPRD on PAN, and whether shared aux buses (one reverb all tracks send to) are worth
+   a chain rework (ROUT's per-track sends are in).
 
 ## Where the details are
 
@@ -271,4 +278,4 @@ About 50 commits over three days, each one a working step (`git log --oneline --
   realistic load runs; GRAIN's shared pool.
 - **2026-10-09:** modulation; TUNE played live; a LEVEL on every source; the modulation audit (RESONATOR's pitch
   glides, fine pitch); fine filter cutoffs; this page; DRUM (its own voice and kit, the source, SEED); sends
-  (ROUT).
+  (ROUT); projects (phase 8).

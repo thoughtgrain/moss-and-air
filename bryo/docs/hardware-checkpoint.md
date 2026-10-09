@@ -128,6 +128,8 @@ Write down the CPU reading for each, and anything you hear.
 | 21 | On the mixer's channel page, hold LFO and turn KNOB 4 (PAN) to +60 %; tap LFO, LFO 3: SPRD 100 | the track moving across the stereo field, left and right apart | does it sound wide, or just wobbly? |
 | 22 | Power-cycle. Track 1 to DRUM (hold HOME, turn SELECT), PLAY. Tap each white key; then HOME (VARY), SEED 10, FILL 80 | ROCK; each instrument on its key; the beat varying, a fill every other loop or so | CPU; how the kit sounds on the speaker (the bass drum, the hats' brightness); do the steps sit in time? |
 | 23 | Tracks 2 to 4 to DRUM too, each its own PATN (run 28's case) | four drum machines at once | CPU at the most voices there can be |
+| 24 | Record a take on track 1 (its own tape), change some knobs, tap SAVE; power-cycle | "P1 SAVED"; after the power cycle the same session, track 1 playing user reel P1T1 | how long the save stutters the sound; is everything back? |
+| 25 | PRESETS: turn to P2, SAVE (empty: saved at once); change the tempo; turn back to P1, OCT+, OCT+ again | P1 loaded after the second press, the tempo it had | does the second-press question read clearly? |
 
 ## What I'll do with the numbers
 

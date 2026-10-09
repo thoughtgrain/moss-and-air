@@ -41,7 +41,7 @@ usb-record	ENC_K1	turn	CHOOSE: START, where the kept part begins (a block, 11.6 
 usb-record	ENC_K2	turn	CHOOSE: LENGTH of the kept part (the rest goes back to memory when it's kept)	now	-	change
 usb-record	ENC_K3	turn	CHOOSE: GAIN, -24..+24 dB; past +24: NORM (the loudest point to full scale)	now	-	change
 usb-record	ENC_K4	turn	CHOOSE: FADE at both cut points, 0..500 ms (10 ms to start with)	now	-	change
-page	BTN_SAVE	tap	quick-save the active project (now: a message)	planned	8	PRD 2.2
+page	BTN_SAVE	tap	save into the project loaded or saved last (P1 to start with); a track's own tape with a take goes into a user reel named after the project and track (P2T3), and SAVE says which tapes found no reel free	now	-	PRD 2.2
 page	BTN_SAVE	hold	undo the last clear: the tape (POLY held, while nothing has been recorded over it), the track's modulation (MONO held) or a DRUM pattern (POLY held on a DRUM track, or PATN turned over an edited pattern), whichever came last	now	-	change
 page	BTN_OCTDN	press	the white keys an octave down (SYNTH's and POLY's notes, RESONATOR's root)	now	-	PRD 2.1
 page	BTN_OCTUP	press	the white keys an octave up	now	-	PRD 2.1
@@ -50,7 +50,7 @@ page	ENC_K2	turn	the second value on the strip	now	-	PRD 1
 page	ENC_K3	turn	the third value on the strip	now	-	PRD 1
 page	ENC_K4	turn	the fourth value on the strip	now	-	PRD 1
 page	ENC_SELECT	turn	the global tempo, 40..240 BPM	now	-	PRD 2.1
-page	ENC_PRESETS	turn	open the project manager and scroll its slots (now: a message)	planned	8	change
+page	ENC_PRESETS	turn	open the project view (PROJECTS), pointing at the project loaded last	now	-	change
 page	ENC_ALGORITHM	turn	open REC IN (the routing view): what each track's REC records	now	-	change
 page	WHITE_1-16	press	TAPE: slice n of the focused track's loop (16 slices); playing: the head jumps there (crossfaded); stopped: that slice plays once. SYNTH and POLY: notes, key n the semitone n above C of OCT (until RESONATOR and SEQ give the keys their own jobs)	now	-	change
 page	BLACK_OP1	press	mute / unmute track 1	now	-	PRD 2.3
@@ -95,10 +95,12 @@ slot-held	ENC_K1-4	hold-turn	the depth (-100..100 %) from this slot to that knob
 slot-held	ENC_SELECT	hold-turn	that slot's engine (LFO ADSR SEQ FOLLOW), starting from that engine's defaults; its depths stay; the tempo is left alone	now	-	change
 slot-held	BTN_HOME	hold	(on HOME) choose the track's source engine with SELECT: TAPE, SYNTH, POLY, DRUM; each keeps its own knobs, the switch crossfades	now	-	change
 slot-held+step	ENC_K1-4	hold-turn	the depth for that step only (p-lock); release the key and pad to commit (waiting on a decision: SEQ's step values are in, per-step depths are not)	proposed	-	PRD 4.3
-project-view	ENC_PRESETS	turn	move through the project slots	planned	8	change
-project-view	BTN_OCTUP	press	load the selected project	planned	8	change
-project-view	BTN_OCTDN	press	leave the project manager	planned	8	change
-project-view	BTN_SAVE	press	save into the selected slot	planned	8	PRD 2.1
+project-view	ENC_PRESETS	turn	point at the next or previous of the six project slots	now	-	change
+project-view	BTN_OCTUP	press	load the slot pointed at (it stops the transport); with changes not saved, asked first: OCT+ again within 3 s	now	-	change
+project-view	BTN_OCTDN	press	leave the project view (any page pad does too)	now	-	change
+project-view	BTN_SAVE	tap	save into the slot pointed at; over another project, asked first: SAVE again within 3 s	now	-	PRD 2.1
+project-view	BLACK_POLY	hold	held 0.5 s: delete the project pointed at (the user reels it saved stay)	now	-	change
+project-view	ENC_K1-4	turn	nothing (the view has no knobs)	now	-	change
 routing-view	ENC_ALGORITHM	turn	the focused track's REC IN (AUTO OTHR T1-T4; its own number: SELF)	now	-	change
 routing-view	ENC_K1-4	turn	track 1..4's REC IN: AUTO (as before: the others on TAPE, its own source on SYNTH or POLY), OTHR (the others' mix), T1-T4 (one track; its own: SELF)	now	-	change
 routing-view	BTN_HOME	press	leave REC IN for the source (any page pad does the same for its page; GLO for the mixer)	now	-	change

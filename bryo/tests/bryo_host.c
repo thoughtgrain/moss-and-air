@@ -102,6 +102,7 @@ static int rf_prog(uint32_t off, const void *src, uint32_t n)
     return 0;
 }
 #include "../firmware/src/reel.c"
+#include "../firmware/src/project.c"
 #include "../firmware/src/settings.c"
 #include "../firmware/src/ui_px.c"
 #include "../firmware/src/ui.c"
@@ -147,6 +148,10 @@ static void power_on(void)
     memset(&drm_undo_buf, 0, sizeof drm_undo_buf);
     memset(drm_dirty, 0, sizeof drm_dirty);
     drm_rq_w = drm_rq_r = 0;
+    memset(pj_sum, 0, sizeof pj_sum);                    /* (the projects' RAM side: as at boot, before pj_boot) */
+    pj_cur = 0;
+    pj_seq = 0;
+    pj_hash_at = 0;
     memset(&sys, 0, sizeof sys);
     memset(&fm1_in, 0, sizeof fm1_in);
     panel = PANEL_DEFAULT;
@@ -519,7 +524,9 @@ static void test_input(void)
         check("SAVE held: the clear undone (the reel back)", tape_src(2) == 3u);
         fm1_ms = 4000;
         tap(B_SAVE);
-        check("SAVE tapped: no undo, the projects message", tape_src(2) == 3u && ui.msg_t);
+        check("SAVE tapped: no undo; it saves the project (P1)", tape_src(2) == 3u && pj_sum[0].used &&
+              !strncmp(ui.msg, "P1 SAVED", 8));
+        pj_delete(0);
         ui.msg_t = 0;
     }
 
@@ -3478,7 +3485,8 @@ static void test_controls_more(void)
 
     host_enc[panel.enc[EN_PRESET]] = 1;
     ui_input();
-    check("PRESET turned: the message says when projects arrive", !strcmp(ui.msg, "PROJECTS ARRIVE IN PHASE 8"));
+    check("PRESETS turned: the project view, pointing at the project loaded last (P1)", ui.view == VIEW_PROJECT &&
+          ui.pj_sel == pj_cur);
     host_enc[panel.enc[EN_ALGO]] = 1;
     ui_input();
     check("ALGORITHM turned: the routing view (REC IN), nothing changed yet", ui.view == VIEW_ROUTE &&
@@ -4682,6 +4690,189 @@ static void test_sends(void)
     power_on();
 }
 
+/* projects (project.c) in the host's NOR model: save, power-cycle, everything back; tapes into reels; a power cut
+ * mid-save; a Felucca record; the project view's controls */
+static void pj_wipe(void)                                /* the project sectors and the reel slots erased */
+{
+    uint32_t s, k;
+    for (s = 0; s < PJ_N; s++) {
+        rf_erase(pj_sector(s, 0));
+        rf_erase(pj_sector(s, 1));
+    }
+    for (k = 0; k < USLOT_N * USLOT_SIZE; k += 4096u)
+        rf_erase(USLOT_BASE + k);
+    uslot_names();
+}
+
+static void pj_scene(void)                               /* a session far from the defaults */
+{
+    uint32_t t;
+    sys.bpm = 97;
+    chain_tracks(3);
+    mst[MS_AMT] = 45;
+    for (t = 0; t < NTRK; t++) {
+        tp[t].dev[DEV_GRAIN][GP_WET] = (int16_t)(10 + t * 20);
+        tp[t].dev[DEV_COLOR][CP_ROUT] = 1;
+        tp[t].ch[CH_PAN] = (int16_t)(t * 30 - 40);
+        track[t].level = (uint8_t)(70 + t);
+        track[t].octave = (uint8_t)(2 + t);
+    }
+    track[2].mute = 1;
+    tp[0].src = SRC_SYNTH;
+    tp[0].syn[SY_CUT] = 33;
+    tp[1].src = SRC_DRUM;
+    drm_load(1, 2);
+    tp[1].drm[DM_SEED] = 17;
+    tp[1].dpat[1][7] |= 1u << DI_CB;
+    tp[1].dacc[0] = 0x0101u;
+    tp[1].dins[DI_SD][DIN_TUNE] = 3;
+    tp[2].src = SRC_POLY;
+    tp[2].pol[PL_TUNE] = -7;
+    param_engine(3, 2, ME_SEQ);
+    tp[3].steps[2][5] = 77;
+    tp[3].recin = RIN_OTHR;
+    mod_nudge(1, 0, MOD_TSRC + SRC_DRUM * NPK + DM_SEED, 30);
+    mod_nudge(3, 2, MOD_TG(DEV_SPACE, SP_DLY), -25);
+    mod_nudge(0, 1, MOD_TCH + CH_FILT, 60);
+}
+
+static void test_projects(void)
+{
+    static track_params_t want[NTRK];
+    static int8_t wdep[NTRK][NSLOT][MOD_NTGT];
+    track_ctl_t wtr[NTRK];
+    int16_t wmst[NMS];
+    pj_hdr_t h;
+    uint32_t s, n0, k;
+    int rc, same;
+    char m[128];
+    power_on();
+    pj_wipe();
+    pj_boot();
+    for (same = 1, s = 0; s < PJ_N; s++)
+        same &= !pj_sum[s].used;
+    check("projects: none saved yet: every slot empty, the defaults kept, P1 the current one",
+          same && pj_cur == 0 && tp[0].src == SRC_TAPE && !pj_changed());
+    pj_scene();
+    check("..a change makes the project changed", pj_changed());
+    rc = pj_save(1);
+    memcpy(want, tp, sizeof tp);
+    memcpy(wdep, mdep, sizeof mdep);
+    memcpy(wtr, track, sizeof track);
+    memcpy(wmst, mst, sizeof mst);
+    pj_current(1, &h);
+    snprintf(m, sizeof m, "saved into P2: %u bytes packed (%u unpacked, a sector holds %u)", h.len, h.raw, PJ_PAYLOAD_MAX);
+    check(m, rc == 0 && pj_cur == 1 && !pj_changed() && pj_sum[1].used && h.len < h.raw && h.len < 2500u);
+    power_on();                                          /* a power cycle */
+    check("..power-on alone: the defaults (nothing loaded yet)", tp[1].src == SRC_TAPE && sys.bpm != 97);
+    pj_boot();
+    same = !memcmp(tp, want, sizeof tp) && !memcmp(mdep, wdep, sizeof mdep) && !memcmp(mst, wmst, sizeof mst);
+    for (k = 0; k < NTRK; k++)
+        same &= track[k].level == wtr[k].level && track[k].mute == wtr[k].mute && track[k].octave == wtr[k].octave;
+    check("..booted: P2 back as saved: every knob, source, pattern, step, depth, level, mute, octave, the tempo",
+          same && pj_cur == 1 && sys.bpm == 97 && sys.ntrk == 3 && mod_count(1) == 1u && mod_count(3) == 1u &&
+          !pj_changed());
+    {                                                    /* the depths reach the ISR (the lists rebuilt) */
+        const int32_t *last[NTRK] = {track_rt[0].last, track_rt[1].last, track_rt[2].last, track_rt[3].last};
+        mod_tick(0, 0, last);
+        check("..and the loaded depths are live (track 2's list holds SEED's)", (mod_on >> 1) & 1u);
+    }
+
+    /* a track's own tape: kept in a user reel named after the project and the track */
+    tp[0].src = SRC_TAPE;
+    tp[0].dev[DEV_SRC][TK_REEL] = 1;
+    tape_prepare(0);                                     /* (factory reel 1 copied onto the tape: a take) */
+    tape_unprepare(0);
+    n0 = tape_ctl[0].nblk;
+    rc = pj_save(1);
+    k = (uint32_t)tp[0].dev[DEV_SRC][TK_REEL];
+    check("..T1's own tape saved: into user reel P2T1, the track now plays that reel (the same length)",
+          rc == 0 && k > NREEL && uslot_valid(k - NREEL - 1u) && !strcmp(uslot_hdr(k - NREEL - 1u)->name, "P2T1") &&
+          uslot_hdr(k - NREEL - 1u)->nblk == n0);
+    for (n0 = 0, s = 0; s < USLOT_N; s++)
+        n0 += uslot_valid(s);
+    rc = pj_save(1);
+    for (k = 0, s = 0; s < USLOT_N; s++)
+        k += uslot_valid(s);
+    check("..saved again unchanged: no new reel", rc == 0 && k == n0 && n0 == 1u);
+    power_on();
+    pj_boot();
+    {
+        tape_view_t v;
+        tape_view(0, &v);
+        check("..power-cycled: T1 plays P2T1, as long as the take", v.len == uslot_hdr(0)->nblk * TAPE_BLK && v.len);
+    }
+    for (s = 1; s < USLOT_N; s++)                        /* no reel free: the project still saves */
+        uslot_save(s, REELS[0].data, REELS[0].pred, REELS[0].idx, REELS[0].peak, 4, "FULL");
+    tp[2].dev[DEV_SRC][TK_REEL] = 1;
+    tp[2].pol[PL_REEL] = 1;
+    tape_prepare(2);
+    tape_unprepare(2);
+    rc = pj_save(1);
+    check("..no reel free for T3's take: saved without it, and SAVE knows which", rc == 1 << 2 && pj_sum[1].used);
+
+    /* a power cut in the middle of a save: the copy before stays in charge */
+    sys.bpm = 150;
+    host_prog_limit = 600;
+    rc = pj_save(1);
+    host_prog_limit = 0xFFFFFFFFu;
+    power_on();
+    pj_boot();
+    check("a power cut halfway through a save: the copy before is loaded (the tempo it had, not 150)",
+          rc < 0 && pj_sum[1].used && sys.bpm == 97);
+
+    /* a Felucca record in a slot's sector reads as empty; an empty slot doesn't load */
+    rf_erase(pj_sector(0, 0));
+    {
+        static const uint8_t FELU[32] = {'F', 'E', 'L', 'U', 1, 0, 0, 0, 1};
+        rf_prog(pj_sector(0, 0), FELU, sizeof FELU);
+    }
+    pj_scan(0);
+    check("a Felucca project in P1's sector: P1 reads as empty, and doesn't load", !pj_sum[0].used && pj_load(0) == -1);
+
+    /* the project view */
+    power_on();
+    pj_boot();
+    host_enc[panel.enc[EN_PRESET]] = 1;
+    ui_input();
+    check("PRESETS: the project view on P2 (the one loaded); turned again, P3", ui.view == VIEW_PROJECT && ui.pj_sel == 1u &&
+          (host_enc[panel.enc[EN_PRESET]] = 1, ui_input(), ui.pj_sel == 2u));
+    shot("BRYO", "projects");
+    press(B_OCTUP);
+    check("..OCT+ on an empty slot: says so", !strcmp(ui.msg, "P3 IS EMPTY"));
+    tap(B_SAVE);
+    check("..SAVE: P3 saved (an empty slot: no question), now the current one", pj_sum[2].used && pj_cur == 2 &&
+          !strncmp(ui.msg, "P3 SAVED", 8));
+    host_enc[panel.enc[EN_PRESET]] = -1;
+    ui_input();
+    tap(B_SAVE);
+    check("..SAVE on P2 (another project): asked first, not saved", ui.pj_ask == PJ_ASK_SAVE && pj_cur == 2);
+    tap(B_SAVE);
+    check("..SAVE again within 3 s: saved over it", pj_cur == 1 && !strncmp(ui.msg, "P2 SAVED", 8));
+    sys.bpm = 133;
+    host_enc[panel.enc[EN_PRESET]] = 1;
+    ui_input();
+    press(B_OCTUP);
+    check("..OCT+ on P3 with a change not saved: asked first", ui.pj_ask == PJ_ASK_LOAD && sys.bpm == 133);
+    press(B_OCTUP);
+    check("..OCT+ again: P3 loaded", pj_cur == 2 && sys.bpm == 97 && !strcmp(ui.msg, "P3 LOADED"));
+    fm1_in.notes = 1u << black_note(BK_POLY);
+    key_edge(black_note(BK_POLY));
+    fm1_ms += 600;
+    ui_input();
+    fm1_in.notes = 0;
+    check("..POLY held: P3 deleted (its reels stay)", !pj_sum[2].used && !strncmp(ui.msg, "P3 DELETED", 10) &&
+          uslot_valid(0));
+    turn(0, 5);
+    press(B_OCTDN);
+    check("..the knobs do nothing there; OCT-: back to the page", ui.view == VIEW_PAGE && tp[0].dev[DEV_SRC][0] == 0);
+    sys.bpm = 101;
+    tap(B_SAVE);
+    check("SAVE tapped on a page: into the current project (P3)", pj_cur == 2 && pj_sum[2].used && pj_sum[2].bpm == 101);
+    pj_wipe();
+    power_on();
+}
+
 static void test_source_level(void)
 {
     static int32_t a[CTL * 300], b[CTL * 300];
@@ -5047,6 +5238,7 @@ int main(int argc, char **argv)
     test_drum_voices();
     test_drum();
     test_sends();
+    test_projects();
     test_input();
     test_settings();
     palette_set(UI_GREY_INDEX);                          /* (the screens are one ink now, whatever the palette) */

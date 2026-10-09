@@ -1694,6 +1694,58 @@ static void viz_message(void)
 }
 
 /* the panel: its signature (what it shows), then the picture */
+/* ---------------------------------------------------------- PROJECTS --- */
+/* the project view's strip: the slot PRESETS points at, large; whether it holds a project, its tempo, each track's
+ * source; LOADED when it's the one the instrument holds (CHANGED once something's been changed since); a second
+ * press waiting, named */
+static void viz_project_strip(void)
+{
+    const pj_sum_t *m = &pj_sum[ui.pj_sel % PJ_N];
+    char n[4] = {'P', (char)('1' + ui.pj_sel % PJ_N), 0, 0}, b[16];
+    uint32_t t;
+    px_text_big(2, 3, 3, n, px_ink);
+    px_text(44, 3, PXF_5B, m->used ? "SAVED" : "EMPTY", m->used ? px_ink : px_dim);
+    if (m->used) {
+        fmt_int(b, m->bpm);
+        str_cpy(b + str_len(b), " BPM", 5);
+        px_text(44, 13, PXF_5, b, px_ink);
+    }
+    if (ui.pj_sel == pj_cur)
+        px_tag(44, 22, PXF_3, pj_changed() ? "LOADED, CHANGED" : "LOADED", px_ink, px_bg);
+    if (ui.pj_ask)
+        px_tag(44, 22, PXF_3, ui.pj_ask == PJ_ASK_LOAD ? "OCT+ AGAIN: LOAD" : "SAVE AGAIN: OVER IT", px_ink, px_bg);
+    for (t = 0; t < NTRK; t++) {                                       /* each track's source */
+        int32_t x = 30 * (int32_t)t;
+        char tn[3] = {'T', (char)('1' + t), 0};
+        px_line(x + 2, 31, x + 27, 31, px_dim, 2);
+        px_text_c(x, 30, 34, PXF_3, tn, px_dim);
+        px_text_c(x, 30, 41, PXF_5, m->used ? SRC_NAME[m->src[t] % NSRC] : "-", m->used ? px_ink : px_dim);
+    }
+}
+
+/* the project view's picture: the six slots, three by two, each with its number and its tracks' sources (T S P D)
+ * or EMPTY; the one PRESETS points at inverted, the loaded one marked with a block in its corner */
+static void viz_project(void)
+{
+    uint32_t s, t;
+    for (s = 0; s < PJ_N; s++) {
+        const pj_sum_t *m = &pj_sum[s];
+        int32_t x = 1 + (int32_t)(s % 3u) * 40, y = 1 + (int32_t)(s / 3u) * 21, sel = s == ui.pj_sel;
+        uint16_t ink = sel ? px_bg : px_ink;
+        char n[3] = {'P', (char)('1' + s), 0}, src[5] = {0};
+        if (sel)
+            px_box(x, y, 38, 19, px_ink);
+        else
+            px_frame(x, y, 38, 19, m->used ? px_ink : px_dim, m->used ? 1 : 2);
+        px_text(x + 3, y + 3, PXF_5B, n, ink);
+        if (s == pj_cur)
+            px_box(x + 32, y + 2, 4, 4, ink);
+        for (t = 0; t < NTRK; t++)
+            src[t] = SRC_NAME[m->src[t] % NSRC][0];
+        px_text(x + 3, y + 12, PXF_3, m->used ? src : "EMPTY", sel ? px_bg : m->used ? px_ink : px_dim);
+    }
+}
+
 static uint32_t viz_sig(void)
 {
     uint32_t h = 2166136261u + ui.view * 7u + ui.kind * 31u + ui.dev * 131u + ui.slot * 1009u + ui.glo_held * 3u +
@@ -1724,6 +1776,12 @@ static uint32_t viz_sig(void)
                 h = (h ^ (uint32_t)(mst[k] + 32768)) * 16777619u;
         return h + ui.chan * 977u + sys.ntrk * 5381u + (ui.chan ? 0u : sys.cpu_q8 * 100u / 256u / 5u * 7919u) +
                (ui.chan == CHAN_MASTER ? (uint32_t)comp.gr_q8 * 602u / 2560u * 104729u : 0u);
+    }
+    if (ui.view == VIEW_PROJECT) {                                     /* the slots, which is pointed at, loaded */
+        for (t = 0; t < PJ_N; t++)
+            h = (h ^ (pj_sum[t].used | pj_sum[t].src[0] << 2 | pj_sum[t].src[1] << 4 | pj_sum[t].src[2] << 6 |
+                      (uint32_t)pj_sum[t].src[3] << 8)) * 16777619u;
+        return h + ui.pj_sel * 31u + pj_cur * 977u;
     }
     if (ui.view == VIEW_ROUTE) {
         for (t = 0; t < NTRK; t++)
@@ -1796,6 +1854,8 @@ static void draw_viz(void)
             viz_channel(f);
         else
             viz_memory();
+    } else if (ui.view == VIEW_PROJECT) {
+        viz_project();
     } else if (ui.view == VIEW_ROUTE) {
         viz_route(ui.last < 4u ? ui.last : 0xFFu);
     } else {

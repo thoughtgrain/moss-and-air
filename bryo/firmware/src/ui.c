@@ -25,7 +25,8 @@ enum { FOCUS_DEV, FOCUS_SLOT };
 enum { UNDO_TAPE, UNDO_MOD, UNDO_DRUM };
 #define SLOT_NONE 0xFFu
 enum { CHAN_LEVELS, CHAN_STRIP, CHAN_MASTER };   /* ui.chan: the mixer's page */      /* what the strip shows: a device of the track, or a modulator slot */
-enum { VIEW_PAGE, VIEW_MIXER, VIEW_ROUTE, VIEW_USBREC };   /* VIEW_MIXER: GLO, the four track levels on the knobs,
+enum { VIEW_PAGE, VIEW_MIXER, VIEW_ROUTE, VIEW_USBREC, VIEW_PROJECT };   /* VIEW_PROJECT: PRESETS turned, the
+                                                                          * project slots (project.c) */   /* VIEW_MIXER: GLO, the four track levels on the knobs,
                                                             * the tracks below; VIEW_ROUTE: ALGORITHM, each track's
                                                             * REC IN on the knobs; VIEW_USBREC: the USB record mode
                                                             * (REC held), the tracks a take can go to */
@@ -52,6 +53,9 @@ static struct {
     uint8_t home_held, home_used;    /* a DRUM track: HOME down on its page (it turns the page as it's let go, unless
                                       * a white key or SELECT was used meanwhile) */
     uint8_t drm_inst;                /* a DRUM page: the white key held (+1; 0: none): KNOB 1..4 are its own knobs */
+    uint8_t pj_sel;                  /* the project view: the slot PRESETS points at */
+    uint8_t pj_ask;                  /* .. an action waiting for its second press (PJ_ASK_*), until pj_ask_t */
+    uint32_t pj_ask_t;
     uint8_t slot_held, slot_used;    /* a slot's pad down (SLOT_NONE: none), and a knob or SELECT turned meanwhile: a
                                       * tap opens the slot's page as it's let go, a hold sets depths (mod.c) */
     uint16_t steps_held;             /* a SEQ page: the white keys held, the steps KNOB 1 sets */
@@ -73,7 +77,9 @@ static struct {
     uint32_t sig_head, sig_strip, sig_viz, sig_foot;
 } ui;
 
+enum { PJ_ASK_NONE, PJ_ASK_LOAD, PJ_ASK_SAVE };
 static void draw_viz(void);           /* ui_viz.c */
+static void viz_project_strip(void);  /* ui_viz.c: the project view's selected slot */
 static uint32_t page_target(uint32_t c);   /* ui_input.c: knob c's modulation target (MOD_NTGT: none) */
 static void viz_usbrec_strip(void);   /* ui_viz.c: the record mode's tracks */
 
@@ -154,6 +160,10 @@ static void draw_head(void)
     if (ui.view == VIEW_USBREC) {
         str_cpy(ti, "USB RECORD", sizeof ti);
         str_cpy(box, "IN", sizeof box);
+    } else if (ui.view == VIEW_PROJECT) {
+        str_cpy(ti, "PROJECTS", sizeof ti);
+        box[0] = 'P';
+        box[1] = (char)('1' + ui.pj_sel);
     } else if (ui.view == VIEW_MIXER)
         str_cpy(ti, ui.chan == CHAN_MASTER ? "MASTER" : ui.chan ? "CHANNEL" : "MIXER", sizeof ti);
     else if (ui.view == VIEW_ROUTE)
@@ -242,6 +252,19 @@ static void draw_strip(void)
         px_blit(UI_STRIP_Y);
         return;
     }
+    if (ui.view == VIEW_PROJECT) {                      /* the project view: the slot PRESETS points at */
+        const pj_sum_t *m = &pj_sum[ui.pj_sel % PJ_N];
+        sig += ui.pj_sel * 7u + m->used * 131u + m->bpm * 1031u + m->src[0] + m->src[1] * 4u + m->src[2] * 16u +
+               m->src[3] * 64u + pj_cur * 104729u + (uint32_t)pj_changed() * 524287u + ui.pj_ask * 15485863u;
+        if (!ui.force && sig == ui.sig_strip)
+            return;
+        ui.sig_strip = sig;
+        px_colors();
+        px_begin(UI_STRIP_H);
+        viz_project_strip();
+        px_blit(UI_STRIP_Y);
+        return;
+    }
     for (k = 0; k < 4u; k++) {
         int16_t *vp;
         const pdesc_t *d = ui_page(k, &vp);
@@ -323,6 +346,8 @@ static void draw_foot(void)
     if (ui.view == VIEW_USBREC)                       /* the record mode: what REC and HOME do in this step */
         str_cpy(a, ur.state == UR_RECORDING || ur.state == UR_CHOOSE ? (ur.state == UR_CHOOSE ? "REC:KEEP HOME:THROW AWAY"
                    : "REC:STOP HOME:THROW AWAY") : "REC:START HOME:LEAVE", sizeof a);
+    else if (ui.view == VIEW_PROJECT)                 /* the project view: what the buttons do there */
+        str_cpy(a, "OCT+:LOAD SAVE OCT-:BACK", sizeof a);
     else if (ui.slot_held < NSLOT)                    /* a slot's pad held: what it does */
         str_cpy(a, "KNOB:DEPTH SEL:ENGINE", sizeof a);
     else if (ui.view == VIEW_PAGE && ui.kind == FOCUS_SLOT && tp[sys.sel].engine[ui.slot] == ME_SEQ)
@@ -362,6 +387,8 @@ static void draw_foot(void)
     }
     if (ui.view == VIEW_USBREC)
         str_cpy(b, "44.1K", sizeof b);                /* (what the computer sends: 44.1 kHz) */
+    if (ui.view == VIEW_PROJECT)
+        b[0] = 0;                                     /* (the footer's left part needs the room) */
     sig = hash_str(hash_str(5381u, a), b) + track[sys.sel].mute + ux.theme * 3u;
     if (!ui.force && sig == ui.sig_foot)
         return;

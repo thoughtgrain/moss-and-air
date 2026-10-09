@@ -61,7 +61,9 @@ What works on the panel now (every control, in every context, with what's planne
 | ALGORITHM | REC IN: KNOB 1 to 4 set what each track's REC records (AUTO, the others, one track, itself); turned again, the focused track's |
 | PLAY | start and stop: every tape plays its loop from the start |
 | REC | arm the focused track: while playing it records onto its tape the other tracks (TAPE) or its own sound (SYNTH, POLY); a reel is copied on first |
-| SAVE, held | undo the last clear (the tape, or the track's modulation) |
+| SAVE, tapped | save the project: the whole instrument (every knob, source, pattern, depth, the mixer, the tempo) into the project loaded last (P1 to start with). A track's own recorded tape goes into a user reel named after it (P2T3). The last project saved comes back at power-on |
+| PRESETS | the project view: six slots; turn to point at one, OCT+ loads it, SAVE saves into it, POLY held deletes it, OCT- goes back |
+| SAVE, held | undo the last clear (the tape, the track's modulation, or a DRUM pattern) |
 | OCT− / OCT+ | the white keys' octave |
 | White keys | TAPE: the 16 slices of the focused track's loop (stopped: the slice plays once); SYNTH, POLY: notes, a semitone apart from C; DRUM: the kit (on STEP: steps, accents, live hits, or held to wipe) |
 | Black keys OP1 to OP4 | track mutes |

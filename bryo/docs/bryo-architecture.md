@@ -203,12 +203,12 @@ A device like COLOR or SPACE costs 2 to 6 KB of code, a page of the UI 1 to 3 KB
 
 | Area | Bytes | What |
 | --- | ---: | --- |
-| Projects | 8 × 4 KiB × 2 (A/B) = 64 KiB | Machine state: devices, mixer, routing, modulators, p-locks, which reel each tape holds |
+| Projects | 6 × 4 KiB × 2 (A/B) = 48 KiB | Machine state: devices, sources, patterns, mixer, routing, modulators, which reel each tape holds; packed, about 2 KB each (see "Projects, as built": eight didn't fit beside the reels) |
 | Reel slots | 6 × 40 KiB = 240 KiB | Saved tapes and uploaded audio, all the same format; a long one spans the slots after it (21.5 s at most); a project points to reels |
 | Settings | unchanged | 0xFC000–0xFEFFF, as Felucca |
 
-A project saves its four tapes into reel slots it owns (so saving with audio needs four free reels), or it
-can save "state only" and point at reels that already exist.
+A project points at the reels its tracks play; a track's own recorded tape is copied into a user reel when it's
+saved (see "Projects, as built").
 
 ### CPU
 
@@ -964,6 +964,71 @@ strings) would need a step for SPACE as well (the room at a quarter rate, say), 
 the device's number. The stress run cuts the interrupts in while RESONATOR and SPACE take and give back memory as
 knobs turn, and the books balance (RESONATOR's strings and SPACE's lines are in the check now too).
 
+## Projects, as built (2026-10-09)
+
+Phase 8: a project is the whole instrument, saved to flash and brought back. SAVE tapped saves it; PRESETS opens
+the project view; a power cycle brings back the project saved last.
+
+**What a project holds:** every track's knobs on every page (source, GRAIN, RESONATOR, COLOR, SPACE, the slots'
+engines and knobs, the channel strip), which source each track runs and its SYNTH, POLY and DRUM knobs, the SEQ
+steps, the DRUM pattern, accents and each instrument's own knobs, every modulation depth, REC IN, each track's
+level, mute and octave, TRACKS, the master compressor and the tempo. And what each tape plays: a factory reel or one
+of your reels by its number. A track's own RAM tape with a take on it can't survive a power cycle, so SAVE copies it
+into a user reel named after the project and the track ("P2T3"), switches the track to that reel (the same sound,
+and the RAM goes back to the pool), and the project points there. The next SAVE reuses that reel if the take still
+fits it, and doesn't write it again at all if nothing was recorded since. With no reel free, the project is saved
+without that take and SAVE names the tracks ("P2 SAVED. NO FREE REEL: T3").
+
+**Where (`firmware/src/project.c`):** six slots, each an A/B pair of 4 KiB sectors in the data region Felucca kept
+its projects and presets in (Bryo's user reels have its sample area, so this was the room left):
+
+| Slot | Copy A | Copy B |
+| --- | --- | --- |
+| P1..P4 | 0x97000, 0x99000, 0x9B000, 0x9D000 | the sector after each |
+| P5 | 0x9F000 (was Felucca's FM6 bank) | 0xDC000 (was its preset area) |
+| P6 | 0xDD000 | 0xDE000 |
+
+A save goes to the copy that isn't in charge: erase it, program the payload, then a 32-byte commit record LAST
+(magic, slot, copy, seq, lengths, the payload's CRC, its own CRC). Loading takes the valid copy with the newest seq,
+so a save cut off by a power cut leaves the copy before it in charge; the test cuts the power 600 bytes into a save
+and gets the earlier project back. The magic is Bryo's own ("BRYP"), not storage.c's "FELU": a Felucca reinstalled
+over Bryo sees empty sectors instead of trying to load a Bryo project as its own (and the test puts a Felucca record
+in a slot's sector: it reads as empty).
+
+**The format:** a byte stream written and read field by field, never a struct dump, so RAM layouts can change
+freely. A version byte, then every array as its count and its values; reading takes as many values as were saved and
+fit, defaults the rest, and clamps each one to its knob's range. A newer Bryo that adds knobs reads older projects;
+a project with more tracks than the FM-1 has is refused before anything changes. The depths are stored sparsely and
+by (array, knob), not by target number, because target numbers moved when DRUM arrived and will move again. The
+stream is packed with PackBits (a run of a byte, or bytes as they are), a byte at a time, straight to and from the
+flash: no RAM holds a whole project, just a 256-byte page on the way out. The test scene packs to 1,945 bytes
+(3,670 unpacked); the very most a project can be is about 3.8 KB, inside a sector's 3,840.
+
+**The project view** (PRESETS turned): the slot it points at, large, with its tempo and each track's source; the six
+slots below, three by two, each with its tracks' sources (T S P D) or EMPTY; the loaded one marked. OCT+ loads,
+SAVE saves into it, POLY held deletes it (the user reels it saved stay: they're yours, on the drive too), OCT- or any
+page pad leaves. Two things ask for a second press within 3 s: loading over changes not saved (the state is
+fingerprinted when a project loads or saves) and saving over a different project. SAVE tapped anywhere else saves
+into the project loaded or saved last, without asking: that's the quick save the PRD wants.
+
+**Loading** stops the transport and lets REC go, sets everything, rebuilds the depth lists (published whole, as
+always), parks tracks above TRACKS, and drops the undo buffers (they belonged to the session before). Each track's
+own RAM tape is let go: what a project keeps of a tape is in its reel.
+
+**What it costs:** 0.5 KB of main RAM (the page buffer, the packer, the six summaries; .bss now 87.2 of 96 KiB). A
+save erases and programs one sector (well under a second of flash work) plus a user reel for each new take (about a
+second each), with the sound stuttering while the flash holds the bus, as reel saves always have; the screen says
+SAVING first.
+
+**Tested** (`test_projects`): an empty flash boots to the defaults; a scene far from them (four sources, a DRUM
+pattern, SEQ steps, depths on a DRUM knob, a device and the channel, levels, mutes, octaves, TRACKS 3, the tempo, the
+compressor) saves, power-cycles and comes back byte for byte, its depth lists live; a take kept in reel P2T1 and
+played from it after a power cycle; a second save writes no new reel; no reel free reported per track; the power
+cut; the Felucca record; the project view's every control, both questions, delete, and SAVE on a page.
+
+**Not yet:** the device itself (the run sheet has two rows for it), names (projects are P1 to P6), and p-locks (when
+they come, they're a new array in the stream: older projects just won't have them).
+
 ## Sends: ROUT, as built (2026-10-09)
 
 GRAIN, RESONATOR and COLOR each have a WET, and until now it was always a crossfade: turning WET up turned the dry
@@ -1507,7 +1572,7 @@ Each phase ends in something you can flash and hear or see, and each is its own 
 | 6. Mixer + routing (**done**, host-verified; routing early as REC IN; see "The mixer, as built") | GLO mixer, filters, compressor | the mixer's DSP |
 | 7. Modulation (**done** but p-locks, host-verified; see "Modulation, as built") | the 4 engines, hold-and-turn depth, assigning engines, SEQ steps, MONO's clear; p-locks wait on a decision | the PRD's §4 workflow end to end |
 | 7b. DRUM (**done**, host-verified; see "DRUM, as built") | the fourth source: sixteen synthesized instruments, patterns of 2 to 4 bars, ten written rhythms, SEED's versions, STEP's HITS ACC LIVE ERAS | a groove from a rhythm, varied, edited, printed onto a tape |
-| 8. Projects | save and recall with reels; the upload tool for user reels (the slots in flash are in, phase 2); quick SAVE (MONO's and POLY's undo came early, phases 2 and 7) | a power cycle brings a session back |
+| 8. Projects (**done**, host-verified; see "Projects, as built") | save and recall with reels; quick SAVE; the project view; the last project at power-on (user reels came in phase 2, over USB, so no upload tool) | a power cycle brings a session back |
 | 9. Screen (mostly done early: the dot-grid screens) | the modulation arcs on the pictograms, the motion dots, the summed white dot | the PRD's §5 |
 | 10. Tools + docs | the upload tool for reels, the installer text, a Bryo manual | someone else can use it |
 
