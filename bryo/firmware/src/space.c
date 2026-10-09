@@ -168,13 +168,12 @@ static void space_poll(void)
     uint32_t t;
     for (t = 0; t < NTRK; t++) {
         space_t *S = &space[t];
-        const int16_t *v = tp[t].dev[DEV_SPACE];
-        int use = trk_live(t);
-        if (use && v[SP_DLY] > 0)
+        int use = trk_live(t);                          /* (DLY or VERB at 0 but modulated up: on) */
+        if (use && mod_peak(t, MOD_TG(DEV_SPACE, SP_DLY)) > 0)
             sp_line_fill(&S->dly, MEM_SPACE + t, SP_DLY16, SP_DLY8);
         else if (S->dly.nch)
             sp_line_free(&S->dly);
-        if (use && v[SP_VERB] > 0) {
+        if (use && mod_peak(t, MOD_TG(DEV_SPACE, SP_VERB)) > 0) {
             if (sp_line_fill(&S->rev, MEM_SPACE + t, SP_REV, 0))
                 sp_line_fill(&S->pre, MEM_SPACE + t, SP_PRE16, SP_PRE8);
         } else {
@@ -340,7 +339,7 @@ static void sp_room_run(space_t *S, uint8_t *const *pb, int plb, uint32_t pl, in
 static void space_block(uint32_t t, int32_t *l, int32_t *r, uint32_t n)
 {
     space_t *S = &space[t];
-    const int16_t *v = tp[t].dev[DEV_SPACE];
+    const int16_t *v = TPD(t, DEV_SPACE);
     uint8_t *db[SP_LMAX], *pb[SP_LMAX], *rb[SP_REV];
     int32_t tone = v[SP_TONE], sprd = clamp(v[SP_SPRD], 0, 100), gd1, gv1, gd0 = S->gd, gv0 = S->gv;
     int32_t kl = 32767, kh = 0, damp = 6554, fbg = clamp(v[SP_FDBK], 0, 100) * 32112 / 100;

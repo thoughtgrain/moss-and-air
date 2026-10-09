@@ -567,56 +567,19 @@ static int32_t vz_place(int32_t y, int32_t amt, int32_t ofs)         /* Q15 -> Q
     return clamp(y * amt / 100 + ofs * 327, -32767, 32767);
 }
 
-static int32_t isqrt(int32_t n)                                       /* floor(sqrt(n)), n >= 0 */
-{
-    int32_t x = n, y = (n + 1) / 2;
-    if (n < 2)
-        return n;
-    while (y < x) {
-        x = y;
-        y = (x + n / x) / 2;
-    }
-    return x;
-}
-
 /* The LFO's random steps: a loop of LEN values (Q15), and the next time round, drifted by VAR. One table for
  * both RND's steps and, on the other shapes, each cycle's level (VAR's drift repeats every LEN cycles). */
-static void lfo_rand(const int16_t *v, int32_t *now, int32_t *next)
+static void lfo_rand(const int16_t *v, int16_t *now, int16_t *next)
 {
     int32_t k;
     vz_seed = 4242u;
     for (k = 0; k < 16; k++)
-        now[k] = ((int32_t)(vz_rand() % 2001u) - 1000) * 32;
+        now[k] = (int16_t)(((int32_t)(vz_rand() % 2001u) - 1000) * 32);
     for (k = 0; k < 16; k++)
-        next[k] = clamp(now[k] + ((int32_t)(vz_rand() % 2001u) - 1000) * 32 * v[6] / 100, -32767, 32767);
+        next[k] = (int16_t)clamp(now[k] + ((int32_t)(vz_rand() % 2001u) - 1000) * 32 * v[6] / 100, -32767, 32767);
 }
 
-/* the LFO at phase q (0..999 of a cycle), Q15: the shape (SIN TRI SQR SAW, or RND's step from rnd[]), SKEW's
- * warped phase, FOLD, CURV */
-static int32_t lfo_at(const int16_t *v, int32_t q, const int32_t *rnd)
-{
-    int32_t sk = clamp(500 + v[2] * 5, 50, 950), sh = clamp(v[1], 0, 4), n = clamp(v[7], 1, 16), y, a;
-    q = q < sk ? q * 500 / sk : 500 + (q - sk) * 500 / (1000 - sk);  /* SKEW: squashed to one side */
-    if (sh == 0)
-        y = sine_i((uint32_t)q * 4294967u);
-    else if (sh == 1)
-        y = q < 250 ? q * 131 : q < 750 ? (500 - q) * 131 : (q - 1000) * 131;
-    else if (sh == 2)
-        y = q < 500 ? 30000 : -30000;
-    else if (sh == 3)
-        y = (q - 500) * 65;                                           /* saw: a ramp up and the drop */
-    else
-        y = rnd[clamp(q * n / 1000, 0, n - 1)];                       /* RND: LEN held steps a cycle */
-    y = y * (100 + v[3] * 3) / 100;                                   /* FOLD: overdrive, then fold back */
-    while (y > 32767 || y < -32767)
-        y = y > 0 ? 65534 - y : -65534 - y;
-    a = y < 0 ? -y : y;                                               /* CURV: + narrows the curves, - widens them */
-    if (v[4] > 0)
-        a = (a * (100 - v[4]) + (a * a / 32767) * v[4]) / 100;
-    else if (v[4] < 0)
-        a = (a * (100 + v[4]) + isqrt(a * 32767) * (-v[4])) / 100;
-    return y < 0 ? -a : a;
-}
+/* (lfo_at and isqrt: mod.c, shared with the sound) */
 
 static void viz_wave(const int16_t *v, uint32_t f)
 {
@@ -625,7 +588,8 @@ static void viz_wave(const int16_t *v, uint32_t f)
      * the first cycle in; SYNC BPM puts the beat ticks on the line; TRIG KEY marks the key that restarts it; SPRD's
      * right channel, dim. AMT and OFS place it all. */
     static const char *const NAME[5] = {"SINE", "TRIANGLE", "SQUARE", "SAW", "RANDOM"};
-    int32_t i, py = DMID, sh = clamp(v[1], 0, 4), fade = v[14] * DW / 200, half = DH / 2 - 1, now[16], nxt[16];
+    int32_t i, py = DMID, sh = clamp(v[1], 0, 4), fade = v[14] * DW / 200, half = DH / 2 - 1;
+    int16_t now[16], nxt[16];
     int32_t sm = 0, smn = 0, smr = 0, k = 1000 - v[5] * 9, n = clamp(v[7], 1, 16);
     lfo_rand(v, now, nxt);
     px_line(DX0, DMID, DX1, DMID, px_dim, 2);
@@ -681,12 +645,6 @@ static void viz_wave(const int16_t *v, uint32_t f)
         vz_ktag(118, DLBL - 1, &ME_P[ME_WAVE][f], v[f]);
 }
 
-/* t (0..1000) along a stage bent by its curve c (-100..100): 0 straight, + sags (exponential), - bows (log) */
-static int32_t vz_bend(int32_t t, int32_t c)
-{
-    return t - c * t / 1000 * (1000 - t) / 400;
-}
-
 static void viz_adsr(const int16_t *v, uint32_t f)
 {
     /* the times (0..127 on TIME_MS_X10: 1 ms .. 10 s) on a square-root scale so short and long both read; each
@@ -714,7 +672,7 @@ static void viz_adsr(const int16_t *v, uint32_t f)
         for (x = xs[k]; x <= xs[k + 1]; x++) {
             int32_t span = xs[k + 1] - xs[k], t = span ? (x - xs[k]) * 1000 / span : 1000, lv, yy, c;
             c = CRV[k] == 0xFF ? 0 : v[CRV[k]];
-            lv = ys[k] + (ys[k + 1] - ys[k]) * vz_bend(t, ys[k + 1] > ys[k] ? -c : c) / 1000;
+            lv = ys[k] + (ys[k + 1] - ys[k]) * env_bend(t, ys[k + 1] > ys[k] ? -c : c) / 1000;
             lv = clamp(lv * v[10] / 100 + v[11] * 10, 0, 1000);
             yy = base - lv * (base - top) / 1000;
             if (v[8] && (x & 1) == 0)                                  /* VEL: the softest key */
@@ -995,7 +953,7 @@ static void viz_seq(const int16_t *v, uint32_t f)
     /* the 16 steps in four groups of four, each a bar as tall as its value (tp[].steps, 0..100) with a node on
      * top; the steps past LEN are their dotted slots only. SWING nudges the off-beats late; SLEW draws the glide
      * from each step's value into the next. The step numbers sit under each group; the last-turned knob is named
-     * at the right of that row. */
+     * at the right of that row. The steps whose white keys are held (KNOB 1 sets them) are framed. */
     const int8_t *st = tp[sys.sel].steps[ui.slot];
     int32_t k, bw = 5, gap = 1, gg = 3, top = DY0 + 1, floor = DY1, h = floor - top, sw = v[3] * 2 / 100;
     int32_t px = 0, py = 0;
@@ -1014,6 +972,8 @@ static void viz_seq(const int16_t *v, uint32_t f)
                 px_box(x, top - 2, bw, 1, px_ink);
                 px_box(x + 1, top - 1, bw - 2, 1, px_ink);
             }
+            if ((ui.steps_held >> k) & 1u)                             /* a white key held: KNOB 1 sets this one */
+                px_frame(x - 1, top - 1, bw + 2, h + 3, px_ink, 1);
             if (v[2] && k)                                             /* SLEW: the glide from the last value */
                 px_line(px, py, x + v[2] * (bw - 1) / 100, y, px_ink, 1);
             px = x + bw - 1;
@@ -1556,7 +1516,7 @@ static uint32_t viz_sig(void)
     h += ui.page * 389u;
     if (ui.kind == FOCUS_SLOT && tp[sys.sel].engine[ui.slot] == ME_SEQ)   /* SEQ draws its step values */
         for (k = 0; k < 16u; k++)
-            h = (h ^ (uint32_t)(uint8_t)tp[sys.sel].steps[ui.slot][k]) * 16777619u;
+            h = (h ^ (uint32_t)(uint8_t)tp[sys.sel].steps[ui.slot][k]) * 16777619u + ui.steps_held * 7u;
     if (ui.kind == FOCUS_DEV && ui.dev == DEV_SRC)                     /* the source; the keys' range: the octave */
         h = (h ^ (tp[sys.sel].src * 7u + track[sys.sel].octave * 131u)) * 16777619u;
     if (ui.kind == FOCUS_DEV && ui.dev == DEV_SRC && tp[sys.sel].src == SRC_POLY)   /* POLY on the track's tape */

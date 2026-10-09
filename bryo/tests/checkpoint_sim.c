@@ -291,8 +291,10 @@ static double run(int n, char *say, size_t sz)
                  "the compressor (%u grains)", sounding());
         return 6;
     }
-    case 19: case 21: case 22: {                         /* realistic: a four-track groove (21: its busiest moment,
-                                                          * 22: bounced onto track 4 while it plays) */
+    case 19: case 21: case 22: case 24: case 25: {       /* realistic: a four-track groove (21: its busiest moment,
+                                                          * 22: bounced onto track 4 while it plays; 24: modulated
+                                                          * as I'd play it; 25: every slot on every track, 32 depths
+                                                          * each, the most there can be) */
         uint32_t t;
         tp[0].dev[DEV_COLOR][CP_CRSH] = 30;              /* T1 drums: crushed a little */
         tp[1].dev[DEV_GRAIN][GP_WET] = 50;               /* T2: grains */
@@ -315,11 +317,38 @@ static double run(int n, char *say, size_t sz)
             if (tape_prepare(3) > 0)
                 sys.rec |= 8u;
         }
+        if (n == 24) {                                   /* the modulation I'd reach for */
+            tp[0].mod[0][0] = 90;                        /* T1: an LFO a beat, on the crush */
+            mod_nudge(0, 0, MOD_TG(DEV_COLOR, CP_CRSH), 40);
+            tp[1].mod[2][1] = 4;                         /* T2: SEQ at 1/16 on GRAIN's SIZE */
+            mod_nudge(1, 2, MOD_TG(DEV_GRAIN, GP_SIZE), 30);
+            param_engine(1, 3, ME_FOLLOW);               /* ..and T1's drums ducking its filter (FOLLOW T1) */
+            tp[1].mod[3][0] = 1;
+            mod_nudge(1, 3, MOD_TCH + CH_FILT, -40);
+            mod_nudge(2, 1, MOD_TSRC + SRC_SYNTH * 16u + SY_CUT, 35);   /* T3: the ADSR opening the synth's cutoff */
+            tp[3].mod[0][11] = 50;                       /* T4: an LFO with SPRD on PAN, slow */
+            tp[3].mod[0][0] = 30;
+            tp[3].mod[0][12] = 0;
+            mod_nudge(3, 0, MOD_TCH + CH_PAN, 40);
+        }
+        if (n == 25) {                                   /* every slot running, 32 depths a track */
+            uint32_t s, g, k;
+            for (t = 0; t < NTRK; t++)
+                for (s = 0; s < NSLOT; s++) {
+                    param_engine(t, s, s);               /* LFO ADSR SEQ FOLLOW */
+                    for (g = s * 13u, k = 0; k < 8u && g < MOD_NTGT; g += 3u)
+                        if (mod_tdesc(g) && mod_nudge(t, s, g, (int32_t)(t + s) % 2 ? -20 : 20) != -128)
+                            k++;
+                }
+        }
         play_phrase(2, 6);
-        snprintf(say, sz, "%s (%u grains, %u strings)", n == 19 ? "a four-track groove: crushed drums, grains, a filtered "
+        snprintf(say, sz, "%s (%u grains, %u strings%s)", n == 19 ? "a four-track groove: crushed drums, grains, a filtered "
                  "synth bass, a reverb, the compressor" : n == 21 ? "the groove's busiest moment: denser grains, strings, "
-                 "a delay, every channel filtered" : "the groove, bounced onto track 4 as it plays",
-                 sounding(), reso[0].nch + reso[1].nch + reso[2].nch + reso[3].nch);
+                 "a delay, every channel filtered" : n == 22 ? "the groove, bounced onto track 4 as it plays" : n == 24 ?
+                 "the groove, modulated: an LFO on the crush, a SEQ on grain size, T1 ducking T2's filter, an ADSR on "
+                 "the bass, a stereo LFO on T4's pan" : "the groove with every slot on every track, 32 depths each",
+                 sounding(), reso[0].nch + reso[1].nch + reso[2].nch + reso[3].nch,
+                 n == 25 ? (mod_count(0) + mod_count(1) + mod_count(2) + mod_count(3) == 4u * MOD_MAX ? ", 128 depths" : ", NOT 128 depths") : "");
         return 6;
     }
     case 20: {                                           /* realistic: an ambient pad on two tracks */
@@ -445,6 +474,19 @@ static uint32_t books(void)
             if (bad++ < 8)
                 printf("checkpoint: track %u's tape longer (%u blocks) than its chunks (%u)\n", t, tape_ctl[t].nblk,
                        tape_ctl[t].nch);
+    }
+    for (t = 0; t < NTRK; t++) {                         /* modulation: every modulated knob inside its range, and
+                                                          * every array read from the copy has a depth */
+        const mod_list_t *L = &mod_l[t][mod_cur[t] & 1u];
+        for (k = 0; k < L->n; k++) {
+            const mod_ent_t *e = &L->e[k];
+            int32_t v = mda[t][e->arr][e->k];
+            if ((mod_arrs[t] >> e->arr) & 1u && (v < e->lo || v > e->hi) && bad++ < 8)
+                printf("checkpoint: track %u's modulated knob %u out of its range: %d\n", t, e->tgt, v);
+        }
+        for (k = 0; k < MOD_NARR; k++)
+            if ((TPD(t, k) == mda[t][k]) != ((mod_arrs[t] >> k) & 1u) && bad++ < 8)
+                printf("checkpoint: track %u's array %u read from the wrong place\n", t, k);
     }
     for (k = 0; k < capm.nch; k++)
         SEE(capm.map[k], MEM_IMPORT, "the capture");
@@ -587,6 +629,18 @@ static int stress(double secs)
             uint32_t t = st_rand(NTRK), k = st_rand(9);
             const pdesc_t *d = &DEV_P[DEV_COLOR][k];
             tp[t].dev[DEV_COLOR][k] = (int16_t)(d->min + (int32_t)st_rand((uint32_t)(d->max - d->min + 1)));
+        } else if (a < 89) {                             /* modulation: a depth, an engine, a slot knob, a clear */
+            uint32_t t = st_rand(NTRK), s = st_rand(NSLOT), w = st_rand(16);
+            if (w < 10)
+                mod_nudge(t, s, st_rand(MOD_NTGT), (int32_t)st_rand(81) - 40);
+            else if (w < 12)
+                param_engine(t, s, st_rand(NME));
+            else if (w < 14)
+                tp[t].mod[s][st_rand(8)] = (int16_t)st_rand(100);
+            else if (w < 15)
+                mod_clear(t);
+            else
+                mod_undo();
         }
         actions++;
         if (cap.on && cap.done && !cap.named) {          /* (the computer writes the WAV's directory entry) */
@@ -637,9 +691,9 @@ int main(int argc, char **argv)
         return stress(atof(argv[2]));
     if (argc > 2 && !strcmp(argv[1], "wav")) {
         int n;
-        wav_cap = 23u * 44100u * 2u;
+        wav_cap = 25u * 44100u * 2u;
         wav_buf = malloc(wav_cap * sizeof *wav_buf);
-        for (n = 1; n <= 23; n++) {
+        for (n = 1; n <= 25; n++) {
             char path[512];
             wav_n = wav_clip = 0;
             run(n, say, sizeof say);

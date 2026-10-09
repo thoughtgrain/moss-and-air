@@ -59,6 +59,13 @@ runs 18 to 22 are realistic setups (each played for 6 s, a synth track's keys go
 | 20 | an ambient pad on two tracks: a synth stretched by dense grains into a long reverb, a reel through the strings | 2,077 | 2.2x |
 | 21 | the groove's busiest moment: denser grains, strings, a delay, every channel filtered | 2,439 | 2.6x |
 | 22 | the groove, bounced onto track 4 as it plays | 1,756 | 1.9x |
+| 24 | the groove, modulated: an LFO a beat on the crush, a SEQ on grain size, T1's drums ducking T2's filter (FOLLOW), an ADSR on the bass's cutoff, a stereo LFO on T4's pan | 1,788 | 1.9x |
+| 25 | the groove with every slot on every track, 32 depths each (the most there can be) | 2,858 | 3.1x |
+
+Run 24 is run 19 (now 1,595: every run costs about 5 more since the modulation's clock ticks whether or not anything
+is modulated) plus the modulation I'd reach for: 83 of the 190 extra are the modulators, the rest the devices
+re-tuning as their knobs move. Run 25 is the ceiling, not a scene (docs/bryo-architecture.md, "Modulation, as
+built").
 
 The everyday setups sit under the 2,000 target, a dense pad at it, a busy build-up 20 % over; the all-on case
 (run 15, 6.3x) isn't one anybody plays. GRAIN's density is what moves the number most. One reading from the device
@@ -114,6 +121,8 @@ Write down the CPU reading for each, and anything you hear.
 | 17 | REC, 10 s of something you know, REC, white key 2, REC | track 2's tape is the take; PLAY plays it | the length on TAPE's page; does it sound like what the computer played (mono, 22 kHz)? |
 | 18 | Record the FM-1 on the computer (Bryo as its input) while it plays | the master output arrives (Felucca's, untested with Bryo) | any dropouts? |
 | 19 | GLO, EDIT: each track's LOW +6, FILT -40, PAN apart; EDIT again: MASTER, AMT 60 | the channels shaped and placed, the mix glued, the meter moving | CPU; does the compressor pump? |
+| 20 | Power-cycle, PLAY. Track 1 on COLOR: hold LFO, turn KNOB 2 (CRSH) to +40 %, let go. Tap LFO, LFO 4: SYNC BPM. Hold ENV on GRAIN 2, KNOB 1 (WET) +80 %; play a white key | the crush breathing in time; grains swelling in on each key and on each loop | CPU; does the crush step audibly (zipper), or glide? |
+| 21 | On the mixer's channel page, hold LFO and turn KNOB 4 (PAN) to +60 %; tap LFO, LFO 3: SPRD 100 | the track moving across the stereo field, left and right apart | does it sound wide, or just wobbly? |
 
 ## What I'll do with the numbers
 

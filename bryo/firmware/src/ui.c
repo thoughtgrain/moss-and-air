@@ -22,6 +22,8 @@
 #define UI_MSG_FRAMES 70             /* a message holds the visualization panel ~1 s (~66 frames/s) */
 
 enum { FOCUS_DEV, FOCUS_SLOT };
+enum { UNDO_TAPE, UNDO_MOD };
+#define SLOT_NONE 0xFFu
 enum { CHAN_LEVELS, CHAN_STRIP, CHAN_MASTER };   /* ui.chan: the mixer's page */      /* what the strip shows: a device of the track, or a modulator slot */
 enum { VIEW_PAGE, VIEW_MIXER, VIEW_ROUTE, VIEW_USBREC };   /* VIEW_MIXER: GLO, the four track levels on the knobs,
                                                             * the tracks below; VIEW_ROUTE: ALGORITHM, each track's
@@ -43,6 +45,12 @@ static struct {
     uint8_t glo_latched;             /* the mixer stays up (GLO tapped) */
     uint8_t poly_held, save_held;    /* the POLY key (clear the tape) and SAVE (undo) held, waiting for HOLD */
     uint32_t poly_t0, save_t0;
+    uint8_t mono_held;               /* the MONO key (clear the track's modulation) held, waiting for half a second */
+    uint32_t mono_t0;
+    uint8_t undo;                    /* what SAVE held undoes: UNDO_TAPE (POLY's clear) or UNDO_MOD (MONO's) */
+    uint8_t slot_held, slot_used;    /* a slot's pad down (SLOT_NONE: none), and a knob or SELECT turned meanwhile: a
+                                      * tap opens the slot's page as it's let go, a hold sets depths (mod.c) */
+    uint16_t steps_held;             /* a SEQ page: the white keys held, the steps KNOB 1 sets */
     uint8_t zero_held;               /* the 0 key down: let go before HOLD, a tap (the freeze latches or lets go) */
     uint8_t rec_held, rec_said;      /* REC down (stopped: its arm waits for the let-go; held a second: USB record),
                                       * and the hint shown */
@@ -62,6 +70,7 @@ static struct {
 } ui;
 
 static void draw_viz(void);           /* ui_viz.c */
+static uint32_t page_target(uint32_t c);   /* ui_input.c: knob c's modulation target (MOD_NTGT: none) */
 static void viz_usbrec_strip(void);   /* ui_viz.c: the record mode's tracks */
 
 static void ui_message(const char *s)
@@ -77,6 +86,7 @@ static void ui_init(void)
     ui.kind = FOCUS_DEV;
     ui.dev = DEV_SRC;
     ui.last = 0xFF;
+    ui.slot_held = SLOT_NONE;
     ui.force = 1;
 }
 
@@ -146,6 +156,10 @@ static void draw_head(void)
         box[0] = 'M';
         box[1] = (char)('1' + ui.slot);
     }
+    if (ui.slot_held < NSLOT && ui.view != VIEW_USBREC) {   /* a slot's pad held: the box names it (its depths below) */
+        box[0] = 'M';
+        box[1] = (char)('1' + ui.slot_held);
+    }
     fmt_int(bpm, sys.bpm);
     sig = hash_str(hash_str(hash_str(2166136261u, ti), bpm), box) + pages * 977u + ui.page * 61u + sys.playing * 7u + ((sys.rec >> sys.sel) & 1u) * 131u +
           ux.theme * 3u + (ur.state == UR_RECORDING) * 524287u;
@@ -195,7 +209,8 @@ static void draw_head(void)
 
 /* ------------------------------------------------------------- strip --- */
 /* four cells of 30 dots: the knob's pictogram (it shows the value), its label, the value. The page's last-turned
- * knob has its label inverted. On the mixer each cell is a track: a fader whose notches are the level set and whose
+ * knob has its label inverted. A knob a slot modulates has a small mark in its cell's corner; while a slot's pad is
+ * held the value row shows that slot's depth to each knob instead (the header's box names the slot, "--" where there can't be a depth). On the mixer each cell is a track: a fader whose notches are the level set and whose
  * fill is the live meter (so the strip redraws as the meters move); EDIT (held, or tapped to latch): the selected track's channel. */
 static void draw_strip(void)
 {
@@ -221,7 +236,11 @@ static void draw_strip(void)
         sig = hash_str(sig, pdesc_empty(d) ? "" : d->label) + (uint32_t)(*vp + 32768) * 2654435761u;
         if (ui.view == VIEW_MIXER && !ui.chan)          /* the faders carry the meters */
             sig = (sig ^ (uint32_t)(meter_w(track_rt[k].peak, 19) | track[k].mute << 8)) * 16777619u;
+        if (page_target(k) < MOD_NTGT)                  /* the depths: the marks, the held slot's values */
+            sig = (sig ^ (uint32_t)(mod_any(sys.sel, page_target(k)) |
+                                    (ui.slot_held < NSLOT ? (mdep[sys.sel][ui.slot_held][page_target(k)] + 256) << 1 : 0))) * 16777619u;
     }
+    sig += ui.slot_held * 2909u;
     sig += (ui.last < 4u ? ui.last + 1u : 0u) * 7919u + sys.ntrk * 15485863u + sys.sel * 104729u + ui.view * 31u + ui.page * 263u + ui.chan * 5u + ui.kind * 131u +
            ui.dev * 1031u + (ui.kind == FOCUS_SLOT ? tp[sys.sel].engine[ui.slot] * 65537u : tp[sys.sel].src * 3571u);
     if (!ui.force && sig == ui.sig_strip)
@@ -258,6 +277,24 @@ static void draw_strip(void)
             px_text_c(x, 30, 37, PXF_5, off ? "OFF" : "MUTE", off ? px_dim : px_ink);
             continue;
         }
+        if (page_target(k) < MOD_NTGT && mod_any(sys.sel, page_target(k)))   /* modulated: a mark in the corner */
+            px_box(x + 26, 1, 2, 2, px_ink);
+        if (ui.slot_held < NSLOT && page_target(k) < MOD_NTGT) {   /* a slot's pad held: its depth to this knob */
+            int32_t dp = mdep[sys.sel][ui.slot_held][page_target(k)];
+            if (!mod_tdesc(page_target(k))) {
+                px_text_c(x, 30, 37, PXF_5, "--", px_dim);
+                continue;
+            }
+            if (dp > 0) {
+                val[0] = '+';
+                fmt_int(val + 1, dp);
+            } else {
+                fmt_int(val, dp);
+            }
+            str_cpy(val + str_len(val), "%", 2);
+            px_text_c(x, 30, 37, PXF_5, val, dp ? px_ink : px_dim);
+            continue;
+        }
         param_format(d, v, val, &unit);
         str_cpy(val + str_len(val), unit, 4);          /* "-140%", "250MS": at most 5, 29 dots */
         px_text_c(x, 30, 37, PXF_5, val, px_ink);
@@ -273,6 +310,10 @@ static void draw_foot(void)
     if (ui.view == VIEW_USBREC)                       /* the record mode: what REC and HOME do in this step */
         str_cpy(a, ur.state == UR_RECORDING || ur.state == UR_CHOOSE ? (ur.state == UR_CHOOSE ? "REC:KEEP HOME:THROW AWAY"
                    : "REC:STOP HOME:THROW AWAY") : "REC:START HOME:LEAVE", sizeof a);
+    else if (ui.slot_held < NSLOT)                    /* a slot's pad held: what it does */
+        str_cpy(a, "KNOB:DEPTH SEL:ENGINE", sizeof a);
+    else if (ui.view == VIEW_PAGE && ui.kind == FOCUS_SLOT && tp[sys.sel].engine[ui.slot] == ME_SEQ)
+        str_cpy(a, "KEY+KNOB 1: STEP", sizeof a);
     else if (ui.glo_held)                             /* the white keys pick the track; SELECT sets TRACKS */
         str_cpy(a, "KEYS:TRK SEL:TRACKS", sizeof a);
     else if (ui.view == VIEW_MIXER)

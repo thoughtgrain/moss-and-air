@@ -29,6 +29,7 @@ static const char *const N_SHAPE[5] = {"SIN", "TRI", "SQR", "SAW", "RND"};
 static const char *const N_SRC[6] = {"SELF", "T1", "T2", "T3", "T4", "USB"};
 static const char *const N_OSC[5] = {"SIN", "TRI", "SQR", "SAW", "PLS"};
 static const char *const N_HOLD[5] = {"OFF", "1/32", "1/16", "1/8", "1/4"};
+static const char *const N_SRATE[6] = {"1", "1/2", "1/4", "1/8", "1/16", "1/32"};   /* SEQ: a step's length, in bars */
 #include "bryo_reels.h"              /* the factory reels' names (tools/gen_reels.py) */
 #define USLOT_N 6u                   /* user reels: your sounds in flash (reel.c) */
 static char uslot_name[USLOT_N][6];  /* their names (reel.c uslot_names) */
@@ -173,13 +174,13 @@ static const pdesc_t MS_P[NMS] = {
 };
 static int16_t mst[NMS];
 
-/* The modulator engines (phase 7 runs them; their knobs exist now so a slot's page can be edited), lined up with
+/* The modulator engines, lined up with
  * the Torso S-4's modulators (docs/bryo-architecture.md, "Modulators"). The S-4's WAVE and RANDOM are one LFO
  * here: random is one of its shapes (RND), on the same core, so every shape gets the same rate, placement and
  * timing, and the random knobs (SMTH, VAR, LEN) work on every shape. ADSR and FOLLOW are the S-4's; SEQ is the
  * PRD's. Page by page: the shape's character first, then its refinements, its depth and placement (AMT, OFS,
  * PHAS, SPRD), then the timing switches. The PRD's hold-and-turn sets each target's depth; AMT scales the slot as
- * a whole, as the S-4's AMOUNT does. */
+ * a whole, as the S-4's AMOUNT does. mod.c runs them. */
 enum { ME_WAVE, ME_ADSR, ME_SEQ, ME_FOLLOW, NME };
 static const char *const ME_NAME[NME] = {"LFO", "ADSR", "SEQ", "FOLLOW"};
 #define P_AMT {"AMT", 0, 100, 100, F_PCT}
@@ -204,8 +205,9 @@ static const pdesc_t ME_P[NME][NPK] = {
         {"ATK", 0, 127, 10, F_NUM}, {"DEC", 0, 127, 50, F_NUM}, {"SUS", 0, 100, 60, F_PCT}, {"REL", 0, 127, 50, F_NUM},
         {"ACRV", -100, 100, 0, F_BIPCT}, {"DCRV", -100, 100, 0, F_BIPCT}, {"RCRV", -100, 100, 0, F_BIPCT}, P_SPRD,
         {"VEL", 0, 100, 0, F_PCT}, {"LOOP", 0, 1, 0, F_ENUM, N_OFFON}, P_AMT, P_OFS},
-    {   /* SEQ (the PRD's): 16 steps of values, then their order, restart, chance and first step */
-        {"LEN", 1, 16, 16, F_NUM}, {"RATE", 0, 5, 2, F_NUM}, {"SLEW", 0, 100, 0, F_PCT}, {"SWNG", 0, 100, 0, F_PCT},
+    {   /* SEQ (the PRD's): 16 steps of values (a white key held + KNOB 1 sets one), a step a RATE (1 bar .. 1/32),
+         * then their order, restart, chance and first step */
+        {"LEN", 1, 16, 16, F_NUM}, {"RATE", 0, 5, 2, F_ENUM, N_SRATE}, {"SLEW", 0, 100, 0, F_PCT}, {"SWNG", 0, 100, 0, F_PCT},
         {"DIR", 0, 3, 0, F_ENUM, N_DIR}, P_TRIG, {"PROB", 0, 100, 100, F_PCT}, {"STRT", 1, 16, 1, F_NUM}},
     {   /* FOLLOW: the envelope of a track's sound (SELF: this track's tape) or USB in; GAIN into it, how fast it
          * rises and falls; then sample-and-hold to the tempo, depth, offset, spread */

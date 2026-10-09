@@ -38,7 +38,7 @@ static syn_t syn[NTRK];
 /* white key k of track t as a pitch, 1/16 semitone */
 static int32_t syn_note16(uint32_t t, uint32_t k)
 {
-    int32_t n = 12 * ((int32_t)track[t].octave + 1) + (int32_t)k + tp[t].syn[SY_TUNE];
+    int32_t n = 12 * ((int32_t)track[t].octave + 1) + (int32_t)k + TPD(t, MA_SYN)[SY_TUNE];
     return clamp(n, 0, 127) * 16;
 }
 
@@ -46,7 +46,7 @@ static void syn_start(uint32_t t, uint32_t k, uint32_t nv)
 {
     syn_t *s = &syn[t];
     syn_voice_t *v = &s->v[0];
-    int32_t note = syn_note16(t, k), glide = tp[t].syn[SY_GLID] > 0;
+    int32_t note = syn_note16(t, k), glide = TPD(t, MA_SYN)[SY_GLID] > 0;
     uint32_t j;
     if (nv == 1u && (v->stage == 1u || v->stage == 2u)) {   /* one voice, a key still down: legato */
         v->key = (uint8_t)k;
@@ -91,7 +91,7 @@ static void syn_start(uint32_t t, uint32_t k, uint32_t nv)
 /* one block of one voice, added into out */
 static void syn_voice(uint32_t t, syn_voice_t *v, int32_t *out, uint32_t n)
 {
-    const int16_t *p = tp[t].syn;
+    const int16_t *p = TPD(t, MA_SYN);
     tsvf_t flt;
     uint32_t wave = (uint32_t)p[SY_WAVE], i, inc1, inc2, ph0 = v->ph[0], ph1 = v->ph[1];
     int32_t e15, a0 = v->amp, a1, cut, m2 = p[SY_MIX] * 327, m1 = 32767 - m2, nz = p[SY_NOIS] * 254;
@@ -182,7 +182,7 @@ static void syn_voice(uint32_t t, syn_voice_t *v, int32_t *out, uint32_t n)
 static void syn_block(uint32_t t, uint32_t keys, const int32_t *rec, int32_t *out, uint32_t n)
 {
     syn_t *s = &syn[t];
-    uint32_t on = keys & ~s->keys, off = s->keys & ~keys, nv = (uint32_t)clamp(tp[t].syn[SY_VOIC], 1, SYN_NV), j, k;
+    uint32_t on = keys & ~s->keys, off = s->keys & ~keys, nv = (uint32_t)clamp(TPD(t, MA_SYN)[SY_VOIC], 1, SYN_NV), j, k;
     (void)rec;
     for (j = 0; j < n; j++)
         out[j] = 0;
@@ -199,7 +199,7 @@ static void syn_block(uint32_t t, uint32_t keys, const int32_t *rec, int32_t *ou
                         h--;
                     v->key = (uint8_t)h;
                     v->to16 = syn_note16(t, h);
-                    if (!tp[t].syn[SY_GLID])
+                    if (!TPD(t, MA_SYN)[SY_GLID])
                         v->p16 = v->to16;
                 } else {
                     v->stage = 3;

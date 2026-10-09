@@ -57,7 +57,7 @@ static inline int16_t *rs_line(const reso_t *R, uint32_t k) { return (int16_t *)
 /* the root now, 1/16 semitone */
 static int32_t reso_root16(uint32_t t)
 {
-    return reso[t].root16 > 0 ? reso[t].root16 : tp[t].dev[DEV_RESO][RP_PTCH] * 16;
+    return reso[t].root16 > 0 ? reso[t].root16 : TPD(t, DEV_RESO)[RP_PTCH] * 16;
 }
 
 /* a period, Q8 samples, for pitch n16 (kept inside a string's line) */
@@ -108,7 +108,7 @@ static void rs_pluck(reso_t *R, uint32_t nstr, int32_t root16, int32_t a, int32_
 static void reso_block(uint32_t t, int32_t *l, int32_t *r, uint32_t keys, int pluck, uint32_t n)
 {
     reso_t *R = &reso[t];
-    const int16_t *p = tp[t].dev[DEV_RESO];
+    const int16_t *p = TPD(t, DEV_RESO);
     int32_t wet1 = clamp(p[RP_WET], 0, 100), wet0 = R->wet, e[CTL], acc_e[CTL], acc_o[CTL];
     int32_t a = 32767 * (15 + 85 * clamp(p[RP_TONE], 0, 100) / 100) / 100, sc = clamp(p[RP_SCAL], 0, 3), root16;
     uint32_t k, i, press = keys & ~R->keys, nstr = R->nch < reso_cap ? R->nch : reso_cap, t60 = rs_t60(p[RP_DEC]);
@@ -201,7 +201,7 @@ static void reso_poll(void)
     uint32_t t;
     for (t = 0; t < NTRK; t++) {
         reso_t *R = &reso[t];
-        int on = trk_live(t) && tp[t].dev[DEV_RESO][RP_WET] > 0;
+        int on = trk_live(t) && mod_peak(t, MOD_TG(DEV_RESO, RP_WET)) > 0;   /* (WET modulated up: on) */
         while (on && R->nch < RS_N) {
             int32_t c = tape_alloc(MEM_RESO + t, NTRK, 1);
             if (c < 0)

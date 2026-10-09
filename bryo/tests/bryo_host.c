@@ -67,6 +67,7 @@ static void ui_redraw(void);
 #include "../firmware/src/dsp.c"
 #include "../firmware/src/master.c"
 #include "../firmware/src/param.c"
+#include "../firmware/src/mod.c"
 #include "../firmware/src/mem.c"
 #include "../firmware/src/tape.c"
 #include "../firmware/src/synth.c"
@@ -867,6 +868,22 @@ static void screens_in(const char *pal)
     press(B_ARP);                                        /* FOLLOW 2: HOLD 1/16 */
     turn(0, 2);
     shot(pal, "mod4_follow2");
+    press(B_SEQ);                                        /* SEQ: white keys 2 and 3 held, KNOB 1 raises those steps */
+    fm1_in.notes |= note_bit_of_white(1) | note_bit_of_white(2);
+    ui_input();
+    turn(0, 30);
+    shot(pal, "mod3_steps");
+    fm1_in.notes &= ~(note_bit_of_white(1) | note_bit_of_white(2));
+    ui_input();
+    press(B_FX);                                         /* COLOR, LFO's pad held: DRIV +40 %, CRSH -25 % */
+    hold(B_LFO);
+    turn(0, 40);
+    turn(1, -25);
+    shot(pal, "mod_depth");
+    let_go(B_LFO);
+    shot(pal, "mod_marks");                              /* let go: the modulated knobs marked */
+    mod_clear(0);                                        /* (the screens below as they were) */
+    mod_undo_buf.valid = 0;
     press(B_HOME);
     tap(B_GLO);
     track[1].mute = 1;                                   /* track 2 muted, track 1 sounding */
@@ -3935,6 +3952,447 @@ static void test_memory(void)
     }
 }
 
+/* ---------------------------------------------------------- modulation --- */
+/* track t's modulated PAN (the ISR's copy) over n blocks: its lowest and highest */
+static void pan_range(uint32_t t, uint32_t n, int32_t *lo, int32_t *hi)
+{
+    uint32_t b;
+    *lo = 32767;
+    *hi = -32768;
+    for (b = 0; b < n; b++) {
+        chain_block(out, CTL);
+        *lo = TPD(t, MA_CH)[CH_PAN] < *lo ? TPD(t, MA_CH)[CH_PAN] : *lo;
+        *hi = TPD(t, MA_CH)[CH_PAN] > *hi ? TPD(t, MA_CH)[CH_PAN] : *hi;
+    }
+}
+
+static void test_mod(void)
+{
+    const uint32_t PAN = MOD_TCH + CH_PAN;
+    int32_t lo, hi;
+    power_on();
+    render(4, 0);
+    check("mod: no depths, every track reads its own knobs (nothing copied)", TPD(0, DEV_GRAIN) == tp[0].dev[DEV_GRAIN] && TPD(3, MA_CH) == tp[3].ch);
+    check("mod: the reel choices can't be targets", mod_nudge(0, 0, MOD_TSRC + TK_REEL, 50) == -128 &&
+                                                    mod_nudge(0, 0, MOD_TSRC + SRC_POLY * 16u + PL_REEL, 50) == -128);
+    check("..nor an empty knob", mod_nudge(0, 0, MOD_TG(DEV_SPACE, 15), 50) == -128);
+
+    /* LFO slot 1 (SIN, FREE): depth 100 swings PAN across its whole range; 50: half of it */
+    tp[0].mod[0][0] = 127;                               /* RATE: ~20 Hz, many cycles in a few blocks */
+    tp[0].mod[0][12] = 0;                                /* SYNC FREE */
+    mod_nudge(0, 0, PAN, 100);
+    pan_range(0, 300, &lo, &hi);
+    check("mod: LFO at depth 100 sweeps PAN end to end", TPD(0, MA_CH) == mda[0][MA_CH] && lo <= -95 && hi >= 95);
+    check("..and leaves the knob itself alone", tp[0].ch[CH_PAN] == 0);
+    mod_nudge(0, 0, PAN, -75);                           /* (depth x the range each way: 25 % of 200 is 50) */
+    pan_range(0, 300, &lo, &hi);
+    check("mod: depth 25: a quarter of the range each way, round the knob", lo >= -51 && lo <= -45 && hi >= 45 && hi <= 51);
+    tp[0].ch[CH_PAN] = 80;
+    pan_range(0, 300, &lo, &hi);
+    check("..clamped at the range's ends", hi == 100 && lo >= 25 && lo <= 32);
+    tp[0].ch[CH_PAN] = 0;
+    tp[0].mod[0][8] = 0;                                 /* AMT 0: the slot moves nothing */
+    pan_range(0, 50, &lo, &hi);
+    check("mod: AMT 0 silences the slot", lo == 0 && hi == 0);
+    tp[0].mod[0][8] = 100;
+    tp[0].mod[0][11] = 100;                              /* SPRD 100: the right channel half a cycle on */
+    pan_range(0, 40, &lo, &hi);
+    {
+        int32_t d = TPD(0, MA_CH)[CH_PAN] + mod_pan_r[0];
+        check("mod: SPRD on PAN: the right channel's pan mirrors the left's", hi > 40 && d >= -6 && d <= 6);
+    }
+    tp[0].mod[0][11] = 0;
+
+    /* SYNC BPM: RATE 80..87 is one beat; at 120 BPM a cycle is 0.5 s (689 blocks): the upward zero crossings */
+    {
+        uint32_t b, n = 0, first = 0, last = 0;
+        int32_t prev = 0;
+        tp[0].mod[0][0] = 80;
+        tp[0].mod[0][12] = 1;
+        sys.bpm = 120;
+        for (b = 0; b < 2400u; b++) {
+            int32_t v;
+            chain_block(out, CTL);
+            v = TPD(0, MA_CH)[CH_PAN];
+            if (prev < 0 && v >= 0) {
+                if (!n)
+                    first = b;
+                last = b;
+                n++;
+            }
+            prev = v;
+        }
+        check("mod: LFO SYNC BPM: one cycle a beat at 120 BPM", n >= 3u && (last - first) / (n - 1u) >= 685u &&
+                                                               (last - first) / (n - 1u) <= 692u);
+    }
+
+    /* ADSR in slot 2 on GRAIN WET (base 0): a key held on the track opens it to SUS, let go it closes */
+    power_on();
+    {
+        uint32_t g = MOD_TG(DEV_GRAIN, GP_WET), kb = note_bit_of_white(0);
+        int32_t top = 0;
+        uint32_t b;
+        tp[0].mod[1][0] = 0;                             /* ATK 1 ms, DEC short, SUS 50, REL short */
+        tp[0].mod[1][1] = 10;
+        tp[0].mod[1][2] = 50;
+        tp[0].mod[1][3] = 10;
+        mod_nudge(0, 1, g, 100);
+        render(4, 0);
+        check("mod: ADSR at rest: WET stays at its knob", TPD(0, DEV_GRAIN)[GP_WET] == 0);
+        fm1_in.notes |= kb;
+        for (b = 0; b < 3u; b++) {
+            chain_block(out, CTL);
+            top = TPD(0, DEV_GRAIN)[GP_WET] > top ? TPD(0, DEV_GRAIN)[GP_WET] : top;
+        }
+        check("mod: a key down: the attack reaches the top", top >= 98);
+        render(200, 0);
+        check("..held: the sustain level", TPD(0, DEV_GRAIN)[GP_WET] >= 48 && TPD(0, DEV_GRAIN)[GP_WET] <= 51);
+        fm1_in.notes &= ~kb;
+        render(200, 0);
+        check("..let go: released to the knob", TPD(0, DEV_GRAIN)[GP_WET] == 0);
+        check("mod: a modulated WET keeps GRAIN's memory in use (the poll asks mod_peak)", mod_peak(0, g) == 100);
+        sys.playing = 1;                                 /* PLAY: the loop starts, a one-shot */
+        top = 0;
+        for (b = 0; b < 3u; b++) {
+            chain_block(out, CTL);
+            top = TPD(0, DEV_GRAIN)[GP_WET] > top ? TPD(0, DEV_GRAIN)[GP_WET] : top;
+        }
+        render(200, 0);
+        check("mod: the loop's start: a one-shot (up, then released without a key)", top >= 98 &&
+                                                                                 TPD(0, DEV_GRAIN)[GP_WET] == 0);
+        sys.playing = 0;
+    }
+
+    /* SEQ in slot 3 on COLOR DRIV: LEN 4 at 1/16 (a quarter beat: 172 blocks at 120 BPM), steps 0 100 0 100 */
+    power_on();
+    {
+        uint32_t g = MOD_TG(DEV_COLOR, 0), b, ups = 0;
+        int32_t prev = -1;
+        tp[0].mod[2][0] = 4;
+        tp[0].mod[2][1] = 4;
+        tp[0].steps[2][0] = 0;
+        tp[0].steps[2][1] = 100;
+        tp[0].steps[2][2] = 0;
+        tp[0].steps[2][3] = 100;
+        mod_nudge(0, 2, g, 100);
+        sys.playing = 1;
+        for (b = 0; b < 172u * 8u; b++) {
+            int32_t v;
+            chain_block(out, CTL);
+            v = TPD(0, DEV_COLOR)[0];
+            if (b == 10u)
+                check("mod: SEQ step 1 (0): DRIV at its knob", v == 0);
+            if (b == 172u + 10u)
+                check("..step 2 (100): at the top", v == 100);
+            if (prev >= 0 && v > prev)
+                ups++;
+            prev = v;
+        }
+        check("..stepping every 1/16: 4 rises in 8 steps", ups == 4u);
+        tp[0].mod[2][6] = 0;                             /* PROB 0: no step plays after the first, it holds */
+        sys.playing = 0;
+        render(1, 0);
+        sys.playing = 1;
+        prev = -1;
+        ups = 0;
+        for (b = 0; b < 172u * 8u; b++) {
+            chain_block(out, CTL);
+            ups += prev >= 0 && TPD(0, DEV_COLOR)[0] != prev;
+            prev = TPD(0, DEV_COLOR)[0];
+        }
+        check("mod: SEQ PROB 0: the first step holds", ups == 0u);
+        sys.playing = 0;
+    }
+
+    /* FOLLOW in slot 4 on SPACE TONE: the envelope of track 2's last block, RISE and FALL */
+    power_on();
+    {
+        static int32_t loud[CTL], quiet[CTL];
+        const int32_t *last[NTRK] = {quiet, loud, quiet, quiet};
+        uint32_t g = MOD_TG(DEV_SPACE, SP_TONE), b, i;
+        for (i = 0; i < CTL; i++)
+            loud[i] = (i & 1u) ? 30000 : -30000;
+        param_engine(0, 3, ME_FOLLOW);
+        tp[0].mod[3][0] = 2;                             /* SRC T2 */
+        tp[0].mod[3][2] = 0;                             /* RISE fast */
+        tp[0].mod[3][3] = 0;                             /* FALL fast */
+        mod_nudge(0, 3, g, 100);
+        for (b = 0; b < 40u; b++)
+            mod_tick(0, 0, last);
+        check("mod: FOLLOW: a loud source pushes TONE up", TPD(0, DEV_SPACE)[SP_TONE] >= 75);
+        last[1] = quiet;
+        for (b = 0; b < 40u; b++)
+            mod_tick(0, 0, last);
+        check("..silent: back to the knob", TPD(0, DEV_SPACE)[SP_TONE] == tp[0].dev[DEV_SPACE][SP_TONE]);
+    }
+
+    /* the gestures: a slot's pad held + a knob sets the depth on the page shown; a tap opens the slot */
+    power_on();
+    press(B_FX);                                         /* COLOR */
+    hold(B_LFO);
+    turn(1, 5);                                          /* CRSH */
+    check("slot pad held + KNOB 2 on COLOR: slot 1's depth to CRSH", mdep[0][0][MOD_TG(DEV_COLOR, 1)] == 5);
+    check("..the strip shows the depth while it's held", ui.slot_held == 0u);
+    let_go(B_LFO);
+    check("..let go after a turn: still COLOR (no page change)", ui.kind == FOCUS_DEV && ui.dev == DEV_COLOR &&
+                                                                 ui.slot_held == SLOT_NONE);
+    check("..the knob itself is untouched", tp[0].dev[DEV_COLOR][1] == DEV_P[DEV_COLOR][1].def);
+    tap(B_LFO);
+    check("slot pad tapped: its page", ui.kind == FOCUS_SLOT && ui.slot == 0u);
+    tap(B_LFO);
+    check("..again: its next page", ui.kind == FOCUS_SLOT && ui.page == 1u);
+    press(B_HOME);
+    hold(B_ENV);
+    {
+        int32_t d = host_enc[panel.enc[EN_SELECT]] = 1;
+        (void)d;
+        ui_input();
+    }
+    check("slot pad held + SELECT: that slot's engine, the page stays", tp[0].engine[1] == ME_SEQ &&
+                                                                        ui.kind == FOCUS_DEV && ui.dev == DEV_SRC);
+    turn(2, -10);                                        /* TAPE SPD */
+    let_go(B_ENV);
+    check("..and KNOB 3 on TAPE: slot 2's depth to SPD", mdep[0][1][MOD_TSRC + TK_SPD] == -10);
+    check("..depths stay when the engine changes", mdep[0][0][MOD_TG(DEV_COLOR, 1)] == 5);
+    hold(B_LFO);
+    turn(0, 3);                                          /* TAPE's REEL is on page 3: page 1 knob 1 is STRT */
+    let_go(B_LFO);
+    check("hold + turn on the source: the depth for that source's knob", mdep[0][0][MOD_TSRC + TK_STRT] == 3);
+    hold(B_GLO);
+    press(B_EDIT);                                       /* the channel strip */
+    let_go(B_GLO);
+    if (ui.view == VIEW_MIXER && ui.chan == CHAN_STRIP) {
+        hold(B_SEQ);
+        turn(3, 20);
+        let_go(B_SEQ);
+        check("hold + turn on the channel strip: the depth to PAN", mdep[0][2][PAN] == 20);
+    }
+    press(B_HOME);
+
+    /* MONO held 0.5 s clears the track's depths; SAVE held brings them back */
+    {
+        uint32_t mn = black_note(BK_MONO), n0 = mod_count(0);
+        fm1_ms = 10000;
+        fm1_in.notes |= 1u << mn;
+        key_edge(mn);
+        fm1_ms = 10200;
+        fm1_in.notes &= ~(1u << mn);
+        ui_input();
+        check("MONO let go before 0.5 s: nothing cleared", mod_count(0) == n0 && n0 >= 3u);
+        fm1_ms = 11000;
+        fm1_in.notes |= 1u << mn;
+        key_edge(mn);
+        fm1_ms = 11510;
+        ui_input();
+        fm1_in.notes &= ~(1u << mn);
+        ui_input();
+        render(1, 0);
+        check("..held 0.5 s: the track's depths are gone, its knobs read straight", mod_count(0) == 0u && TPD(0, MA_CH) == tp[0].ch);
+        fm1_ms = 12000;
+        hold(B_SAVE);
+        fm1_ms = 12000 + HOLD_MS[settings_hold % 4u];
+        ui_input();
+        let_go(B_SAVE);
+        check("..SAVE held: undone", mod_count(0) == n0);
+        check("..once", mod_undo() == -1);
+    }
+
+    /* a SEQ page: the white keys pick steps (they don't play), KNOB 1 sets the held ones */
+    press(B_SEQ);
+    if (tp[0].engine[2] == ME_SEQ) {
+        uint32_t k3 = note_bit_of_white(2), k5 = note_bit_of_white(4);
+        int8_t s3 = tp[0].steps[2][2], s5 = tp[0].steps[2][4], s1 = tp[0].steps[2][0], len = (int8_t)tp[0].mod[2][0];
+        fm1_in.notes |= k3 | k5;
+        ui_input();
+        check("SEQ page: the keys don't play the track", !sys.keys_live && ui.steps_held == ((1u << 2) | (1u << 4)));
+        turn(0, -7);
+        check("..a white key held + KNOB 1: those steps' values", tp[0].steps[2][2] == s3 - 7 && tp[0].steps[2][4] == s5 - 7 &&
+                                                                  tp[0].steps[2][0] == s1 && tp[0].mod[2][0] == len);
+        fm1_in.notes &= ~(k3 | k5);
+        ui_input();
+        turn(0, -1);
+        check("..no key: KNOB 1 is LEN again", tp[0].mod[2][0] == len - 1);
+    }
+
+    /* the limit: 32 depths a track */
+    power_on();
+    {
+        uint32_t g, n = 0;
+        for (g = 0; g < MOD_NTGT && n < 40u; g++)
+            if (mod_tdesc(g) && mod_nudge(0, 0, g, 10) != -128)
+                n++;
+        check("mod: at most 32 depths a track (the 33rd is refused)", n == MOD_MAX && mod_count(0) == MOD_MAX);
+        render(2, 0);
+        check("..and they all run", TPD(0, DEV_GRAIN) == mda[0][DEV_GRAIN] && TPD(0, DEV_RESO) == mda[0][DEV_RESO]);
+    }
+    power_on();
+}
+
+/* the engines' switches, one block at a time through mod_tick (track 1, GRAIN WET from 0 at depth 100: the value is
+ * the slot's output in %) */
+static int32_t mod_step(uint32_t keys)
+{
+    static const int32_t zero[CTL];
+    const int32_t *last[NTRK] = {zero, zero, zero, zero};
+    mod_tick(keys, 0, last);
+    return TPD(0, DEV_GRAIN)[GP_WET];
+}
+
+static void test_mod_engines(void)
+{
+    const uint32_t WET = MOD_TG(DEV_GRAIN, GP_WET);
+    uint32_t b, i;
+    int32_t v, early, late;
+    power_on();
+    sys.bpm = 120;
+    sys.playing = 1;
+    /* SEQ's orders: steps 0 33 66 100 at 1/16 (172 blocks a step); a sample from the middle of each step */
+    {
+        static const int32_t WANT[4][6] = {{0, 33, 66, 100, 0, 33}, {100, 66, 33, 0, 100, 66}, {0, 33, 66, 100, 66, 33}};
+        static const char *const NAME[3] = {"mod: SEQ FWD: 1 2 3 4", "mod: SEQ REV: 4 3 2 1", "mod: SEQ PING: 1 2 3 4 3 2"};
+        uint32_t d;
+        param_engine(0, 2, ME_SEQ);
+        tp[0].mod[2][0] = 4;
+        tp[0].mod[2][1] = 4;
+        for (i = 0; i < 4u; i++)
+            tp[0].steps[2][i] = (int8_t)(i * 100u / 3u);
+        mod_nudge(0, 2, WET, 100);
+        for (d = 0; d < 4u; d++) {
+            int ok = 1, seen[4] = {0};
+            tp[0].mod[2][4] = (int16_t)d;
+            sys.playing = 0;
+            mod_step(0);
+            sys.playing = 1;
+            for (i = 0; i < 6u; i++) {
+                for (b = 0; b < 172u; b++)
+                    v = mod_step(0);
+                if (d < 3u)
+                    ok &= v == WANT[d][i];
+                else
+                    seen[v == 0 ? 0 : v == 33 ? 1 : v == 66 ? 2 : 3]++;
+            }
+            if (d < 3u)
+                check(NAME[d], ok);
+            else
+                check("mod: SEQ RND: steps from the four, not FWD's", seen[0] + seen[1] + seen[2] + seen[3] == 6 &&
+                                                                     !(seen[0] == 2 && seen[1] == 2 && seen[2] == 1));
+        }
+        tp[0].mod[2][4] = 0;
+        tp[0].mod[2][2] = 50;                            /* SLEW 50: halfway through the glide, halfway there */
+        sys.playing = 0;
+        mod_step(0);
+        sys.playing = 1;
+        for (b = 0; b < 172u + 43u; b++)
+            v = mod_step(0);
+        check("mod: SEQ SLEW: a glide into the next step", v > 5 && v < 30);
+        for (b = 0; b < 60u; b++)
+            v = mod_step(0);
+        check("..arriving at it", v == 33);
+        tp[0].mod[2][2] = 0;
+        tp[0].mod[2][3] = 100;                           /* SWNG 100: step 2 starts a third of a step late */
+        sys.playing = 0;
+        mod_step(0);
+        sys.playing = 1;
+        for (b = 0; b < 172u + 30u; b++)
+            v = mod_step(0);
+        check("mod: SEQ SWNG: the off-beat starts late", v == 0);
+        for (b = 0; b < 40u; b++)
+            v = mod_step(0);
+        check("..then plays", v == 33);
+        mod_clear(0);
+    }
+    /* ADSR LOOP: a key held, attack and decay come round again (the level climbs after reaching SUS) */
+    {
+        uint32_t rises = 0, low = 1;
+        param_engine(0, 1, ME_ADSR);
+        tp[0].mod[1][0] = 20;
+        tp[0].mod[1][1] = 20;
+        tp[0].mod[1][2] = 20;
+        tp[0].mod[1][9] = 1;
+        mod_nudge(0, 1, WET, 100);
+        for (b = 0; b < 600u; b++) {
+            v = mod_step(1u);
+            if (low && v > 90) {                         /* up to the top from SUS (20 %): one more time round */
+                rises++;
+                low = 0;
+            } else if (v <= 25) {
+                low = 1;
+            }
+        }
+        check("mod: ADSR LOOP: attack and decay again while the key is held", rises >= 3u);
+        mod_clear(0);
+    }
+    /* LFO FADE 100: the first cycle fades in (TRIG KEY restarts it) */
+    {
+        param_engine(0, 0, ME_WAVE);
+        tp[0].mod[0][0] = 60;                            /* ~0.5 Hz: a cycle in ~2700 blocks */
+        tp[0].mod[0][12] = 0;
+        tp[0].mod[0][13] = 1;
+        tp[0].mod[0][14] = 100;
+        tp[0].mod[0][1] = 2;                             /* SQR: full swing from the start, but for FADE */
+        tp[0].ch[CH_PAN] = 0;
+        mod_nudge(0, 0, MOD_TCH + CH_PAN, 50);
+        mod_step(0);
+        mod_step(1u);
+        early = TPD(0, MA_CH)[CH_PAN];
+        for (b = 0; b < 3000u; b++)
+            mod_step(1u);
+        late = TPD(0, MA_CH)[CH_PAN];
+        check("mod: LFO FADE: quiet at the restart, full a cycle on", early > -10 && early < 10 && (late > 85 || late < -85));
+        mod_clear(0);
+    }
+    /* LFO VAR on RND: the steps drift each time round; on a shape: each cycle's level */
+    {
+        int16_t was[16];
+        uint32_t moved = 0, k;
+        param_engine(0, 0, ME_WAVE);
+        tp[0].mod[0][1] = LFO_RND;
+        tp[0].mod[0][0] = 127;
+        tp[0].mod[0][12] = 0;
+        tp[0].mod[0][6] = 80;
+        mod_nudge(0, 0, WET, 50);
+        mod_step(0);
+        for (k = 0; k < 16u; k++)
+            was[k] = mrt[0][0].rnd[k];
+        for (b = 0; b < 400u; b++)
+            mod_step(0);
+        for (k = 0; k < 16u; k++)
+            moved += mrt[0][0].rnd[k] != was[k];
+        check("mod: LFO VAR on RND: the steps drift from time round to time round", moved >= 12u);
+        tp[0].mod[0][1] = 0;                             /* SIN, VAR 80, LEN 2: two cycles' levels */
+        tp[0].mod[0][7] = 2;
+        for (b = 0, v = 0; b < 400u; b++) {
+            int32_t x = mod_step(0);
+            v = x > v ? x : v;
+        }
+        check("..on SIN: the cycles' levels vary (never all at full)", v > 10 && v < 50);
+        mod_clear(0);
+    }
+    /* FOLLOW HOLD 1/4: the envelope sampled once a beat (689 blocks at 120 BPM) */
+    {
+        static int32_t loud[CTL], quiet[CTL];
+        const int32_t *last[NTRK] = {quiet, loud, quiet, quiet};
+        uint32_t changes = 0;
+        int32_t prev = -1;
+        for (i = 0; i < CTL; i++)
+            loud[i] = 20000;
+        param_engine(0, 3, ME_FOLLOW);
+        tp[0].mod[3][0] = 2;
+        tp[0].mod[3][4] = 4;
+        mod_nudge(0, 3, WET, 100);
+        for (b = 0; b < 689u * 3u; b++) {
+            last[1] = (b / 100u) & 1u ? loud : quiet;    /* (a source pulsing every 100 blocks) */
+            mod_tick(0, 0, last);
+            v = TPD(0, DEV_GRAIN)[GP_WET];
+            changes += prev >= 0 && v != prev;
+            prev = v;
+        }
+        check("mod: FOLLOW HOLD 1/4: the level moves only on the beat", changes >= 1u && changes <= 3u);
+    }
+    sys.playing = 0;
+    power_on();
+}
+
 int main(int argc, char **argv)
 {
     out_dir = argc > 1 ? argv[1] : "build/bryo_ui";
@@ -3956,6 +4414,8 @@ int main(int argc, char **argv)
     test_space();
     test_usbrec();
     test_mixer();
+    test_mod();
+    test_mod_engines();
     test_input();
     test_settings();
     palette_set(UI_GREY_INDEX);                          /* (the screens are one ink now, whatever the palette) */

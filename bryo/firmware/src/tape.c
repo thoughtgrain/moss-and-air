@@ -254,7 +254,7 @@ static void tape_view(uint32_t t, tape_view_t *v) { tape_view_of(t, tape_src(t),
 /* the loop window in samples: STRT and LEN in % of what the track plays (at least one block long) */
 static void tape_window(uint32_t t, uint32_t len, int32_t *ls, int32_t *ll)
 {
-    const int16_t *k = tp[t].dev[DEV_SRC];
+    const int16_t *k = TPD(t, DEV_SRC);
     int32_t s = (int32_t)len * k[TK_STRT] / 100, l = (int32_t)len * k[TK_LEN] / 100;
     if (l < (int32_t)TAPE_BLK)
         l = (int32_t)TAPE_BLK;
@@ -268,7 +268,7 @@ static void tape_window(uint32_t t, uint32_t len, int32_t *ls, int32_t *ll)
  * -200..200 %, REV turns it round, HALF halves it */
 static int32_t tape_inc(uint32_t t)
 {
-    const int16_t *k = tp[t].dev[DEV_SRC];
+    const int16_t *k = TPD(t, DEV_SRC);
     int32_t inc = 2048 * k[TK_SPD] / 100;
     if (k[TK_REV])
         inc = -inc;
@@ -384,7 +384,7 @@ static void tape_write(uint32_t t, int32_t i, int32_t in, int32_t keep)
 static void tape_jump(uint32_t t, int32_t pos)
 {
     tape_rt_t *rt = &tape_rt[t];
-    int32_t fl = tp[t].dev[DEV_SRC][TK_FADE] * 441 / 10;   /* ms -> output samples */
+    int32_t fl = TPD(t, DEV_SRC)[TK_FADE] * 441 / 10;   /* ms -> output samples */
     rt->xpos = rt->pos;
     rt->b.ok = 0;
     rt->xflen = rt->xf = fl > TAPE_DECLICK ? fl : TAPE_DECLICK;
@@ -394,7 +394,7 @@ static void tape_jump(uint32_t t, int32_t pos)
 /* where in the loop window [ls, ls + ll) the head sits at its offset o from ROTATE's start (wrapped) */
 static int32_t tape_rot(uint32_t t, int32_t ls, int32_t ll, int32_t o)
 {
-    int32_t r = (ll * tp[t].dev[DEV_SRC][TK_ROTA] / 100 + o) % ll;
+    int32_t r = (ll * TPD(t, DEV_SRC)[TK_ROTA] / 100 + o) % ll;
     return ls + (r < 0 ? r + ll : r);
 }
 
@@ -418,7 +418,7 @@ static void tape_block(uint32_t t, uint32_t keys, const int32_t *rec_in, int32_t
     tape_rt_t *rt = &tape_rt[t];
     tape_ctl_t *c = &tape_ctl[t];
     tape_view_t v;
-    int32_t ls, ll, inc = tape_inc(t), i, keep, inl, gain = db_q10(tp[t].dev[DEV_SRC][TK_GAIN]), wlen;
+    int32_t ls, ll, inc = tape_inc(t), i, keep, inl, gain = db_q10(TPD(t, DEV_SRC)[TK_GAIN]), wlen;
     uint32_t k, press = keys & ~rt->keys_prev, playing = sys.playing;
     int rec = rec_in && c->rec_ok && tape_src(t) == 0u, grow;
     if (c->grow && !rec) {                             /* REC let go of a growing tape: its length is what it has */
@@ -451,13 +451,14 @@ static void tape_block(uint32_t t, uint32_t keys, const int32_t *rec_in, int32_t
         }
     }
     rt->keys_prev = keys;
-    tape_dub(grow ? -100 : tp[t].dev[DEV_SRC][TK_DUB], &keep, &inl);   /* (a blank tape: nothing to keep) */
+    tape_dub(grow ? -100 : TPD(t, DEV_SRC)[TK_DUB], &keep, &inl);   /* (a blank tape: nothing to keep) */
     gain = gain * inl / 100;
     if (!inl)
         rec = 0;                                       /* DUB +100: nothing comes in, so nothing is re-encoded */
     if (playing != rt->was_playing) {                  /* the transport: all heads from the loop's start (ROTATE's) */
         rt->was_playing = (uint8_t)playing;
         if (playing) {
+            mod_seam |= (uint8_t)(1u << t);            /* (the loop starts: an ADSR's one-shot, mod.c) */
             rt->pos = (grow ? 0 : tape_rot(t, ls, ll, inc < 0 ? -1 : 0)) << 12;
             rt->xf = 0;
             rt->running = 1;
@@ -519,9 +520,11 @@ static void tape_block(uint32_t t, uint32_t keys, const int32_t *rec_in, int32_t
             }
             tape_jump(t, rt->pos - (ll << 12));        /* the seam, crossfaded */
             rt->wlast = -1;
+            mod_seam |= (uint8_t)(1u << t);
         } else if (inc < 0 && rt->pos < ls << 12) {
             tape_jump(t, rt->pos + (ll << 12));
             rt->wlast = -1;
+            mod_seam |= (uint8_t)(1u << t);
         }
     }
 }

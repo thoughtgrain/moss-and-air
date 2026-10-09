@@ -38,6 +38,7 @@ static void chain_init(void)
         track_rt[t].src_g[SRC_TAPE] = 32767;
         track_rt[t].act = 32767;
     }
+    mod_init();
     tape_init();
 }
 
@@ -78,6 +79,10 @@ static void chain_block(int32_t *out, uint32_t n)
         usbrec_block(l, r, n);
         master_block(l, r, out, n);
         return;
+    }
+    {                                                  /* the modulators, and the knobs they move (mod.c) */
+        const int32_t *last[NTRK] = {track_rt[0].last, track_rt[1].last, track_rt[2].last, track_rt[3].last};
+        mod_tick(keys, sel, last);
     }
     gr_plan();                                         /* the grains each track may sound this block (grain.c) */
     for (u = 0; u < 27u; u++)                          /* the 0 black key held, or tapped (latched): GRAIN frozen */

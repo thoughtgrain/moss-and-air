@@ -22,10 +22,10 @@ page	BTN_HOME	press	focus the track's source (TAPE, SYNTH or POLY); again: its n
 page	BTN_HOME	tap	on a POLY track, again while its page is up: the next page (SAMPLE, ENV, FILTER)	now	-	change
 page	BTN_EDIT	press	focus GRAIN; again: GRAIN 2 (WET SPRY CONT REV), GRAIN 3 (WARP PATN SCAL PRND); again: RESONATOR, RESONATOR 2 (CUT RES SLOP SCAL); again: GRAIN	now	-	PRD 2.2
 page	BTN_FX	press	focus COLOR; again: COLOR 2 (NDEC NTON CMOD WET), COLOR 3 (LVL); again: SPACE, SPACE 2 (DLY VERB TONE SPRD), SPACE 3 (PRE)	now	-	PRD 2.2
-page	BTN_LFO	press	focus modulator slot 1 (default engine LFO, SIN); again: its next page (4: shape, refine, place, timing)	now	-	PRD 2.2
-page	BTN_ENV	press	focus modulator slot 2 (default engine ADSR); again: its next page (3: stages, curves, VEL LOOP AMT OFS)	now	-	PRD 2.2
-page	BTN_SEQ	press	focus modulator slot 3 (default engine SEQ); again: its page 2 (DIR TRIG PROB STRT)	now	-	PRD 2.2
-page	BTN_ARP	press	focus modulator slot 4 (default engine LFO on its random shape, RND); again: its next page	now	-	PRD 2.2
+page	BTN_LFO	tap	modulator slot 1's page as the pad is let go (default engine LFO, SIN); again: its next page (4: shape, refine, place, timing). Held, it sets depths instead (slot-held)	now	-	PRD 2.2
+page	BTN_ENV	tap	modulator slot 2's page as the pad is let go (default engine ADSR); again: its next page (3: stages, curves, VEL LOOP AMT OFS)	now	-	PRD 2.2
+page	BTN_SEQ	tap	modulator slot 3's page as the pad is let go (default engine SEQ); again: its page 2 (DIR TRIG PROB STRT)	now	-	PRD 2.2
+page	BTN_ARP	tap	modulator slot 4's page as the pad is let go (default engine LFO on its random shape, RND); again: its next page	now	-	PRD 2.2
 page	BTN_GLO	tap	open the mixer and keep it up	now	-	change
 page	BTN_GLO	hold	the mixer while held; letting go returns to the page	now	-	change
 page	BTN_SCL	press	nothing (the PRD's SEL; track picking moved under GLO)	unassigned	-	change
@@ -41,8 +41,8 @@ usb-record	ENC_K2	turn	CHOOSE: LENGTH of the kept part (the rest goes back to me
 usb-record	ENC_K3	turn	CHOOSE: GAIN, -24..+24 dB; past +24: NORM (the loudest point to full scale)	now	-	change
 usb-record	ENC_K4	turn	CHOOSE: FADE at both cut points, 0..500 ms (10 ms to start with)	now	-	change
 page	BTN_SAVE	tap	quick-save the active project (now: a message)	planned	8	PRD 2.2
-page	BTN_SAVE	hold	undo the last tape clear (while nothing has been recorded over it)	now	-	change
-page	BTN_OCTDN	press	the white keys an octave down (SYNTH's notes; RESONATOR notes, SEQ step pages later)	now	-	PRD 2.1
+page	BTN_SAVE	hold	undo the last clear: the tape (POLY held, while nothing has been recorded over it) or the track's modulation (MONO held), whichever came last	now	-	change
+page	BTN_OCTDN	press	the white keys an octave down (SYNTH's and POLY's notes, RESONATOR's root)	now	-	PRD 2.1
 page	BTN_OCTUP	press	the white keys an octave up	now	-	PRD 2.1
 page	ENC_K1	turn	the first value on the strip (and it becomes the page's last-turned: the visualization names it)	now	-	PRD 1
 page	ENC_K2	turn	the second value on the strip	now	-	PRD 1
@@ -60,7 +60,7 @@ page	BLACK_OP5	press	the focused track's tape: reverse on / off (TAPE 2's REV)	n
 page	BLACK_OP6	press	the focused track's tape: half speed on / off (TAPE 2's HALF)	now	-	PRD 2.3
 page	BLACK_PIT	press	global pitch shift down (unmuted tracks)	planned	3	PRD 2.3
 page	BLACK_GLO	press	global pitch shift up (unmuted tracks)	planned	3	PRD 2.3
-page	BLACK_MONO	hold	held 0.5 s (countdown ring): clear the focused track's modulation routing; SAVE held undoes	planned	7	PRD 2.3
+page	BLACK_MONO	hold	held 0.5 s: clear the focused track's modulation (every depth of its four slots; the slots' own knobs stay); SAVE held undoes	now	-	PRD 2.3
 page	BLACK_POLY	hold	held 0.5 s: clear the focused track's tape (a reel: the track goes back to its own tape, cleared); SAVE held undoes	now	-	PRD 2.3
 page	BLACK_ZERO	hold	momentary global granular freeze while held: every GRAIN buffer stops recording and its grains loop the held bars (SCAN TAPE: the cursor stops); FROZEN on the GRAIN page	now	-	PRD 2.3
 page	BLACK_ZERO	tap	the freeze latched until the next tap (its LED lit), as a tapped GLO latches the mixer: the right hand is free for GRAIN's knobs	now	-	change
@@ -68,7 +68,8 @@ page:tape	WHITE_1-16	press	play from slice n of the loop (finger drumming, stutt
 page:grain	WHITE_1-16	press	on a TAPE track: GRAIN's cursor to sixteenth n of the tape's loop (SCAN TAPE) or of the buffer (POS: the spot, DLY: the trail); the tape's head stays; stopped, grains while the key is held	now	-	PRD 2.3
 page	BLACK_POLY	release	(the key, not the POLY source engine) letting go before 0.5 s cancels the clear	now	-	change
 page:resonator	WHITE_1-16	press	the strings' root, a semitone a key from C of OCT (until PTCH is turned): on a TAPE track the key plucks them too; on SYNTH or POLY the keys still play the source and the strings follow its notes	now	-	PRD 2.3
-page:slot	WHITE_1-16	press	on a SEQ slot: the 16 steps (OCT-/OCT+: steps 17-32)	planned	7	PRD 2.3
+page:slot	WHITE_1-16	hold	on a SEQ slot's page: pick steps 1-16 (held keys are framed on screen); the keys don't play the track here	now	-	PRD 2.3
+page:slot	ENC_K1	combo	on a SEQ slot's page with white keys held: the held steps' values (0-100 %), instead of LEN	now	-	PRD 2.3
 mixer	ENC_K1	turn	track 1 level (the fader's notches; its fill is the live meter)	now	-	change
 mixer	ENC_K2	turn	track 2 level	now	-	change
 mixer	ENC_K3	turn	track 3 level	now	-	change
@@ -81,10 +82,10 @@ glo-held	WHITE_1-4	press	focus track 1..4 (the white keys don't play while GLO i
 glo-held	ENC_K1-4	turn	the four track levels; letting go of GLO returns to the page	now	-	change
 glo-held	ENC_SELECT	turn	TRACKS 1-4: the tracks in use; the ones above it park (silent, not rendered, their tapes taken first when memory runs short). A pad held + SELECT picks that pad's thing, as HOME + SELECT (the source) and a slot + SELECT (its engine); plain SELECT stays the tempo on every view	now	-	change
 glo-held	BTN_GLO	release	back to the page if something was done or it was held past HOLD; else the mixer stays up	now	-	change
-slot-held	ENC_K1-4	hold-turn	modulation depth from this slot to that knob's parameter on the page; release commits	planned	7	PRD 4.2
-slot-held	ENC_SELECT	hold-turn	the focused slot's pad held: its engine (LFO ADSR SEQ FOLLOW), starting from that engine's defaults; the tempo is left alone	now	-	change
+slot-held	ENC_K1-4	hold-turn	the depth (-100..100 %) from this slot to that knob on the page shown: a device, the source (each source its own depths), the channel strip. The strip shows the slot's depths while it's held; a modulated knob gets a mark. Not the reel choices; at most 32 depths a track. Let go: the page stays	now	-	PRD 4.2
+slot-held	ENC_SELECT	hold-turn	that slot's engine (LFO ADSR SEQ FOLLOW), starting from that engine's defaults; its depths stay; the tempo is left alone	now	-	change
 slot-held	BTN_HOME	hold	(on HOME) choose the track's source engine with SELECT: TAPE, SYNTH, POLY; each keeps its own knobs, the switch crossfades	now	-	change
-slot-held+step	ENC_K1-4	hold-turn	the depth for that step only (p-lock); release the key and pad to commit	planned	7	PRD 4.3
+slot-held+step	ENC_K1-4	hold-turn	the depth for that step only (p-lock); release the key and pad to commit (waiting on a decision: SEQ's step values are in, per-step depths are not)	proposed	-	PRD 4.3
 project-view	ENC_PRESETS	turn	move through the project slots	planned	8	change
 project-view	BTN_OCTUP	press	load the selected project	planned	8	change
 project-view	BTN_OCTDN	press	leave the project manager	planned	8	change

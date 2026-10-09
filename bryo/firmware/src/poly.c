@@ -33,7 +33,7 @@ static tape_rd_t pol_rd[NTRK][POL_NV] __attribute__((section(".pool")));   /* ea
 /* the head's step for white key k on track t, Q12 tape samples per output sample: 0.5 at the sound's own pitch */
 static int32_t pol_inc(uint32_t t, uint32_t k)
 {
-    int32_t n = clamp(12 * ((int32_t)track[t].octave + 1) + (int32_t)k + tp[t].pol[PL_TUNE], 0, 127);
+    int32_t n = clamp(12 * ((int32_t)track[t].octave + 1) + (int32_t)k + TPD(t, MA_POL)[PL_TUNE], 0, 127);
     return (int32_t)(pitch_inc((uint32_t)n * 16u) / (pitch_inc(48u * 16u) >> 11));   /* (C3: the sound's own) */
 }
 
@@ -61,7 +61,7 @@ static void pol_start(uint32_t t, uint32_t k, uint32_t nv, uint32_t len)
         v->ic1 = v->ic2 = 0;
         v->env = 0;
     }
-    v->pos = (int32_t)(len * (uint32_t)tp[t].pol[PL_STRT] / 100u) << 12;
+    v->pos = (int32_t)(len * (uint32_t)TPD(t, MA_POL)[PL_STRT] / 100u) << 12;
     v->inc = pol_inc(t, k);
     v->key = (uint8_t)k;
     v->stage = 1;
@@ -71,7 +71,7 @@ static void pol_start(uint32_t t, uint32_t k, uint32_t nv, uint32_t len)
 
 static void pol_voice(uint32_t t, pol_voice_t *v, tape_rd_t *rd, const tape_view_t *vw, int32_t *out, uint32_t n)
 {
-    const int16_t *p = tp[t].pol;
+    const int16_t *p = TPD(t, MA_POL);
     tsvf_t flt;
     uint32_t i, mode = (uint32_t)clamp(p[PL_TYPE], 0, 2);
     int32_t a0 = v->amp, a1, e15, pos = v->pos, ic1 = v->ic1, ic2 = v->ic2;
@@ -123,7 +123,7 @@ static void pol_block(uint32_t t, uint32_t keys, const int32_t *rec, int32_t *ou
 {
     pol_t *s = &pol[t];
     tape_view_t vw;
-    uint32_t on = keys & ~s->keys, off = s->keys & ~keys, nv = (uint32_t)clamp(tp[t].pol[PL_VOIC], 1, POL_NV), j, k;
+    uint32_t on = keys & ~s->keys, off = s->keys & ~keys, nv = (uint32_t)clamp(TPD(t, MA_POL)[PL_VOIC], 1, POL_NV), j, k;
     (void)rec;
     for (j = 0; j < n; j++)
         out[j] = 0;

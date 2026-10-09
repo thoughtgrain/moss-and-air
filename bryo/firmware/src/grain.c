@@ -155,10 +155,10 @@ static void gr_plan_into(uint8_t *share)
     uint8_t *gr_share = share;
     for (t = 0; t < NTRK; t++) {
         gr_share[t] = 0;
-        if (trk_live(t) && tp[t].dev[DEV_GRAIN][GP_WET] > 0) {
+        if (trk_live(t) && TPD(t, DEV_GRAIN)[GP_WET] > 0) {
             act |= 1u << t;
             on++;
-            need[t] = gr_need(tp[t].dev[DEV_GRAIN]);
+            need[t] = gr_need(TPD(t, DEV_GRAIN));
         }
     }
     left = GR_POOL[on] * grain_cap / GR_CAP;
@@ -442,7 +442,7 @@ static void grain_block(uint32_t t, const int32_t *dry, uint32_t keys, int froze
 {
     grain_trk_t *G = &grain[t];
     gr_buf_t *B = &gbuf[t];
-    const int16_t *p = tp[t].dev[DEV_GRAIN];
+    const int16_t *p = TPD(t, DEV_GRAIN);
     tape_view_t v;
     int32_t ls = 0, ll = 0, wet = p[GP_WET], i, len, live = tp[t].src != SRC_TAPE, playing = sys.playing;
     uint32_t k, press = keys & ~G->keys, scan = (uint32_t)clamp(p[GP_SCAN], 0, 3);
@@ -622,7 +622,8 @@ static void grain_poll(void)
     uint32_t t, bars = gr_bars(), len = bars * (5292000u / (sys.bpm ? sys.bpm : 120u));
     for (t = 0; t < NTRK; t++) {
         const int16_t *p = tp[t].dev[DEV_GRAIN];
-        int on = trk_live(t) && p[GP_WET] > 0 && p[GP_SCAN] != SCAN_TAPE;
+        int on = trk_live(t) && mod_peak(t, MOD_TG(DEV_GRAIN, GP_WET)) > 0 && p[GP_SCAN] != SCAN_TAPE;   /* (WET 0 but
+                                                                                                * modulated up: on) */
         if (grain_frozen && on && gbuf[t].len)
             continue;
         if (on) {

@@ -12,7 +12,7 @@ Felucca's own README is kept in [docs/FELUCCA-README.md](docs/FELUCCA-README.md)
 
 ## Where it stands
 
-**Phase 2 of 10: TAPE.** Each of the four tracks has a tape: a loop in RAM (IMA ADPCM at 22.05 kHz) that plays when
+**Phases 1 to 7 of 10, on the host** (p-locks still to decide). Each of the four tracks has a tape: a loop in RAM (IMA ADPCM at 22.05 kHz) that plays when
 you press PLAY. The tracks share one memory (28 s in all) and each takes what it records: a blank tape grows while
 REC records it, and TRACKS (GLO held + SELECT) switches tracks off to give the rest more. To start, track n plays factory reel n (BEAT, KEYS, AIR, PLUK, made from material in
 this repository). The loop window, speed, reverse and half speed work; the white keys play 16 slices of the loop;
@@ -27,8 +27,10 @@ makes sound too: four tuned strings the track rings through (PTCH, SCAL's chord)
 the root and pluck them. COLOR
 (drive, crush, noise that rides the sound, tilt) and SPACE (a delay and a small room, taking memory only while DLY or
 VERB is up) make sound as well. The mixer's channel (LOW, HIGH, FILT, PAN) and a master compressor
-(GLO, then EDIT, EDIT again for MASTER) shape the mix. The modulators don't make sound yet; that's phase 7. The knobs carry the Torso S-4's names where they do the same job
-([docs/s4-alignment.md](docs/s4-alignment.md)). Phases 1 and 2 are verified on the host only: nothing has been built
+(GLO, then EDIT, EDIT again for MASTER) shape the mix. The four modulator slots run (an LFO, an ADSR, a step sequencer,
+an envelope follower): hold a slot's pad and turn any knob on a device, source or channel page to set how far that
+slot moves it, and the keys, the loop and the tempo drive them. The knobs carry the Torso S-4's names where they do the same job
+([docs/s4-alignment.md](docs/s4-alignment.md)). Everything so far is verified on the host only: nothing has been built
 for or run on an FM-1 yet. The plan, with what the hardware allows and the order of the work, is in
 [docs/bryo-architecture.md](docs/bryo-architecture.md).
 
@@ -42,7 +44,10 @@ What works on the panel now (every control, in every context, with what's planne
 | HOME held + SELECT | the track's source: TAPE, SYNTH or POLY (each keeps its own knobs) |
 | EDIT | GRAIN; again: GRAIN 2, GRAIN 3, GRAIN 4 (SCAN WARP OFST FDBK), RESONATOR, RESONATOR 2 |
 | FX | COLOR; again: COLOR 2, COLOR 3, SPACE, SPACE 2, SPACE 3 |
-| LFO ENV SEQ ARP | modulator slots 1 to 4; again for the slot's next page; held + SELECT: the slot's engine (LFO, ADSR, SEQ, FOLLOW) |
+| LFO ENV SEQ ARP, tapped | modulator slots 1 to 4 (the page opens as you let go); again for the slot's next page |
+| LFO ENV SEQ ARP, held + a knob | that slot's depth to the knob on the page shown (-100 to 100 %); the strip shows the slot's depths while held |
+| LFO ENV SEQ ARP, held + SELECT | the slot's engine (LFO, ADSR, SEQ, FOLLOW); its depths stay |
+| White key held + KNOB 1, on a SEQ page | that step's value (the keys pick steps there, they don't play) |
 | GLO, held | the mixer while held: white keys 1 to 4 pick the track, KNOB 1 to 4 set the levels, SELECT sets TRACKS (1 to 4 in use) |
 | GLO, tapped | the mixer stays up; tap again or press a page pad to leave |
 | EDIT on the mixer | KNOB 1 to 4 set the selected track's LOW, HIGH, FILT and PAN: held, while held; tapped, until tapped again |
@@ -51,11 +56,12 @@ What works on the panel now (every control, in every context, with what's planne
 | ALGORITHM | REC IN: KNOB 1 to 4 set what each track's REC records (AUTO, the others, one track, itself); turned again, the focused track's |
 | PLAY | start and stop: every tape plays its loop from the start |
 | REC | arm the focused track: while playing it records onto its tape the other tracks (TAPE) or its own sound (SYNTH, POLY); a reel is copied on first |
-| SAVE, held | undo the last tape clear |
+| SAVE, held | undo the last clear (the tape, or the track's modulation) |
 | OCT− / OCT+ | the white keys' octave |
 | White keys | TAPE: the 16 slices of the focused track's loop (stopped: the slice plays once); SYNTH, POLY: notes, a semitone apart from C |
 | Black keys OP1 to OP4 | track mutes |
 | Black keys OP5, OP6 | the focused tape's reverse and half speed |
+| Black key MONO, held 0.5 s | clear the focused track's modulation (every depth; the slots' own knobs stay) |
 | Black key POLY, held 0.5 s | clear the focused track's tape |
 | Black key 0 | GRAIN's freeze: held, while it's held; tapped, latched until the next tap |
 | SCL | nothing yet (proposed: hold for the system menu) |

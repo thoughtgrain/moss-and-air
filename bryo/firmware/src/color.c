@@ -62,7 +62,7 @@ static int32_t color_shape(int32_t x, const int16_t *v)
 static void color_block(uint32_t t, int32_t *l, int32_t *r, uint32_t n)
 {
     color_t *C = &color[t];
-    const int16_t *v = tp[t].dev[DEV_COLOR];
+    const int16_t *v = TPD(t, DEV_COLOR);
     int32_t g8 = v[CP_DRIV] > 0 ? col_g8(v[CP_DRIV]) : 256, tilt = v[CP_TILT], nois = v[CP_NOIS];
     int32_t w0 = C->wet, w1 = clamp(v[CP_WET], 0, 100) * 4096 / 100, v0 = C->lvl, v1 = db_q10(v[CP_LVL]);
     int32_t gl = 4096, gh = 4096, ng = nois * 32767 / 100, ak = (8 + (v[CP_NTON] + 100) * 75 / 200) * 128 / 100;

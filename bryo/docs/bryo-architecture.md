@@ -159,8 +159,9 @@ Why:
 | SYNTH | 576 | 4 tracks × 3 voices of oscillator and filter state (.bss) |
 | POLY | 8,288 | 4 tracks × 4 voices × a 256-sample block reader (pool), plus 448 B of voice state (.bss) |
 | The drive | 17,340 | the FAT, root and write cache of the USB drive (the 36 KB WAV inbox is gone: a WAV lands in shared memory) |
+| Modulation | 2,324 main RAM + 5,600 pool | the depths (a byte per slot per target) and MONO's undo in main RAM; the ISR's lists, the slots' state and the modulated knob arrays in the pool |
 
-Measured now (KiB, 32-bit build): the pool holds 316.7 of 336 (19 spare; build.py keeps 8), main RAM's .bss 80.2
+Measured now (KiB, 32-bit build): the pool holds 322.2 of 336 (13.8 spare; build.py keeps 8), main RAM's .bss 83.5
 of 96. The USB record mode's two rings first went into main RAM and took it to 92.2, too close to the stack, so
 they live in the pool's room that was kept for USB audio in.
 
@@ -213,7 +214,7 @@ with its mixes. My target for all four tracks, everything on, is **at most 2,000
 | COLOR | 30 | drive table, crush, follower plus noise (measured 180 a track with every knob on, 0 at the defaults: see "COLOR, as built") |
 | SPACE | 80 | delay plus reverb at 22.05 kHz (measured 220 a track with both on: see "SPACE, as built") |
 | Mixer | 60 for all | measured 145 a track with LOW, HIGH and FILT all on (0 at their defaults), the pan 10, the compressor 2: see "The mixer, as built" |
-| Modulators | 10 | control rate (every 32 samples), not per sample |
+| Modulators | 10 | control rate (every 32 samples), not per sample (measured 83 for all four tracks modulated the way I'd play them, 5 with none: see "Modulation, as built") |
 | **Track total** | **~440** | **× 4 = ~1,760**, plus the mixer and compressor ~60 |
 
 The audio ISR's 85% guard stays. Instead of shedding voices it sheds *grains* first (lowers the sounding
@@ -1001,6 +1002,124 @@ the dry sound back; ATK 1 ms holds a hit down within 0.7 ms against 16 ms at 100
 the sound untouched; every channel knob at its top with a square past full scale stays bounded. The controls test
 walks EDIT through LEVELS, CHANNEL, MASTER and back, and the stress turns the channel and compressor knobs.
 
+## Modulation, as built (2026-10-09)
+
+The four slots had pages, knobs and pictures since phase 2, but they moved nothing. `firmware/src/mod.c` runs them
+now, and the PRD's gesture sets where they go.
+
+**The gesture.** A slot's pad does two jobs now, told apart by what happens while it's down:
+
+- **Tap it** and its page opens as you let go (again: its next page, as before). It used to open as the pad went
+  down; it waits for the let-go so a hold can mean something else.
+- **Hold it and turn a knob** on whatever page is up (a device, the source, the channel strip) and you set that
+  slot's depth to that knob, -100..100 %. While the pad is held, the header's box says M1..M4 and the strip's value
+  row shows the slot's depths instead of the knobs' values ("--" where there can't be one). Let go and you're still
+  on the page you were on. A knob any slot moves gets a small mark in its cell's corner.
+- **Hold it and turn SELECT** and the slot changes engine (LFO, ADSR, SEQ, FOLLOW) without opening its page; a
+  message names the new engine. Its depths stay, so you can try an envelope where an LFO was without re-routing.
+- **MONO held half a second** clears the focused track's depths, every slot (the slots' own knobs stay). **SAVE held**
+  undoes it, or the tape clear, whichever came last. It's the same half-second, same undo as POLY's tape clear,
+  so there's one rule for the two destructive keys.
+- **A SEQ page** takes the white keys: hold one or more and KNOB 1 sets those steps' values (they're framed on
+  screen); let go and KNOB 1 is LEN again. The keys don't play the track while a SEQ page is up, the way GLO's
+  view borrows them to pick tracks.
+
+What a depth means: at 100 %, the slot's full swing moves the knob by its whole range. An LFO swings both ways
+around where you set the knob; ADSR, SEQ and FOLLOW push one way, and the depth's sign says which. The result is
+clamped to the knob's range. So a filter at the middle with an LFO at 50 % sweeps end to end, and an envelope at
+100 % on a WET of 0 opens it all the way.
+
+**What can be a target.** Every knob of GRAIN, RESONATOR, COLOR and SPACE, every knob of the three sources (each
+source keeps its own depths, as it keeps its own knobs), and the channel strip's LOW, HIGH, FILT and PAN. Not the
+reel choices (TAPE's REEL and POLY's REEL): the main loop prepares memory for the reel a track plays, and the ISR
+switching it under the main loop's feet is how you get a tape playing a reel that was never copied. A track holds
+up to 32 depths; the 33rd is refused with a message. Not the levels or the master compressor: the PRD's
+modulation is per track, and those aren't.
+
+**How it runs**, and why it's built this way:
+
+- The main loop owns the depths (`mdep`, a byte per slot per target). Every change rebuilds the track's list of the
+  depths that aren't 0, sorted by target, into the half of a double buffer the ISR isn't reading, then flips one
+  byte. The ISR can't be interrupted by the main loop, so it always sees a whole list, old or new, and never a half
+  edited one. Each entry carries the knob's range and its depth already multiplied by it, so the ISR's work per
+  depth is a multiply, a shift, a clamp.
+- Once a control block (0.73 ms), before any track renders, `mod_tick` advances the clock, runs the slots that
+  some depth uses (a slot without depths costs nothing), then for each knob array that has depths (a device's 16, a
+  source's 16, the channel's 4) copies the knobs as you set them and adds the depths. The devices read their knobs
+  through `TPD(t, array)`, which points at that copy or at the track's own array. An array without depths reads
+  exactly what it read before, so a track without modulation sounds sample for sample as it did. I tried copying a
+  whole track first: it cost more and took 7 KB of main RAM, which is how I ended up with arrays.
+- The memory polls ask `mod_peak` instead of the knob: GRAIN's WET, RESONATOR's WET, SPACE's DLY and VERB at 0 but
+  modulated up keep their memory ready, so an envelope can open a reverb that was off.
+
+**The engines**, against the S-4's (see "Modulators, lined up with the Torso S-4" for the knobs):
+
+- **LFO.** RATE is 0.02 to 20 Hz on a log scale (10 octaves over the knob), or with SYNC BPM one of 16 divisions from
+  16 bars to a 32nd, locked to the beat so it stays in time. The shape comes from the same `lfo_at` the picture
+  draws with, so what you see is what moves; it's evaluated at two neighbouring points and interpolated, so a slow
+  LFO glides instead of stepping. PHAS starts it later; TRIG KEY restarts it on a key; FADE fades it in over FADE %
+  of a cycle from each restart (PLAY, or a key); SMTH is a slew up to about 0.4 s; VAR drifts RND's steps each time
+  round, or on the other shapes each cycle's level, repeating every LEN cycles. AMT and OFS place it. SPRD is a
+  second output half a cycle on at 100.
+- **ADSR.** The times are the synth's (1 ms to 10 s), each stage bent by its curve exactly as the picture bends it.
+  A key down on the track opens it and holds it at SUS; let go, it releases. It also fires once when the track's
+  loop starts: a TAPE track's at its seam (and when PLAY starts), a SYNTH or POLY track's every four bars. That
+  one-shot rises, decays and releases on its own, so an envelope does something on a loop nobody is playing. LOOP
+  cycles attack and decay while a key is held. **VEL** does nothing yet: the FM-1's keys are switches with no
+  velocity, and MIDI in doesn't reach Bryo's tracks. It waits for that.
+- **SEQ.** A step a RATE (1 bar to 1/32, now named on the strip instead of 0..5), LEN steps from STRT, in DIR's order
+  (forward, reverse, ping-pong, random), each played with PROB's chance (a step that doesn't play holds the last
+  value), SLEW gliding over that share of a step, SWNG pushing the off-beats up to a third of a step late. It
+  counts from PLAY, or from a key with TRIG KEY, on the same clock as the LFO, so the two stay in step.
+- **FOLLOW.** The envelope of the source's last block (SELF: this track; T1..T4: that track, after its devices and
+  level), times GAIN, rising and falling at RISE and FALL, and with HOLD sampled once a division. **USB** listens
+  to nothing for now: outside the record mode the computer's audio isn't coming in. When USB audio in outside the
+  record mode lands (the future work I noted for audio), it's one line.
+- **SPRD** is a right-channel output on every engine (the LFO's half a cycle on; ADSR and FOLLOW lag up to 200 ms).
+  Only PAN uses it, as we agreed: with SPRD the left and right channels get their own pan positions, so the sound
+  moves across instead of just sideways. Every other target takes the left output.
+
+**The clock** is one counter of beats (Q16), counted exactly from the tempo with its remainder carried, reset when
+PLAY starts and running on while stopped, so a synced LFO still moves when you're tweaking a stopped loop.
+
+**Load** (host instructions per output sample, `tests/checkpoint_sim.sh`):
+
+| Run | What | Total | Modulation itself |
+| --- | --- | ---: | ---: |
+| 1 | four reels, nothing modulated | 934 (929 before) | 5 (the clock) |
+| 19 | the four-track groove, unmodulated | 1,595 | 0 |
+| 24 | the groove modulated the way I'd play it: an LFO a beat on T1's crush, a SEQ on T2's grain size, T1's drums ducking T2's filter through FOLLOW, the ADSR opening T3's synth cutoff, a stereo LFO on T4's pan | 1,788 | 83 |
+| 25 | every slot on every track, 32 depths each (128) | 2,858 | 447 |
+
+So the realistic case costs about 190 on top of the groove: 83 for the modulators and the rest is the devices
+doing more work because their knobs move (the channel filter re-tuning every block, the synth's cutoff, GRAIN's
+grains at changing sizes). My budget said 10 for the modulators; that was a guess at the summing alone, before
+four engines with curves, interpolation and a clock. The groove modulated stays under the 2,000 I set for a
+realistic four-track scene. Run 25 is the ceiling, and it's not a scene anyone plays: it modulates whatever the
+first 32 targets of each slot are.
+
+**Memory**: the depths and their undo 2.3 KB of main RAM (now 83.5 of 96 KiB); the lists, the slots' state and the
+modulated arrays 5.6 KB of the pool (now 322.2 of 336 KiB). Code about 9 KB on the host measure.
+
+**What's still open:**
+
+- **P-locks** (a step's own depth: a SEQ slot's pad and a white key held, then a knob). The SEQ's step values are
+  in; per-step depths are a decision I haven't had an answer on, so `docs/controls.tsv` lists them as proposed.
+- **LFO RATE with SYNC BPM** prints its 0..127, not the division it picked. The strip's format is per knob, not per
+  mode; it's a small change in the strip I'd rather make with phase 9's modulation arcs.
+- **Seeing it move.** The pictures still draw the knobs as set; phase 9 adds the arcs and the moving dot.
+
+**Tests** (`test_mod`, `test_mod_engines`): no depths, no copy; the reels and empty knobs can't be targets; an LFO
+at 100 sweeps PAN end to end, at 25 a quarter each way, clamped at the ends; AMT 0 silences a slot; SPRD mirrors
+the right pan; SYNC BPM gives one cycle a beat at 120 BPM (689 blocks); ADSR opens on a key to the top, holds SUS,
+releases, and fires a one-shot when PLAY starts; SEQ steps on time, forward, reverse, ping-pong, random, with SLEW's
+glide, SWNG's late off-beat, PROB 0 holding; LOOP comes round while held; FADE starts quiet; VAR drifts RND's steps
+and the cycles' levels; FOLLOW rises with a loud source, falls back, and with HOLD moves only on the beat; the 33rd
+depth is refused; the gestures (hold + knob on a device, the source and the channel; tap opens; hold + SELECT; MONO
+held clears and SAVE undoes, once; a SEQ page's keys and KNOB 1). The checkpoint's stress turns depths, engines and
+slot knobs and clears and undoes while the audio interrupt cuts in, and checks every modulated knob stays in its
+range and every array is read from the right place.
+
 ## USB record mode (2026-10-08)
 
 Recording from the computer is a mode of its own, not a source a track plays through: you go in, record, put the
@@ -1163,7 +1282,7 @@ Each phase ends in something you can flash and hear or see, and each is its own 
 | 4. RESONATOR (**done**, host-verified; see "RESONATOR, as built") | strings, chromatic keys, OCT shifts | tuned feedback chords from the keys |
 | 5. COLOR + SPACE (**done**, host-verified; see "COLOR, as built" and "SPACE, as built") | drive, crush, noise; delay and reverb | the full chain on 4 tracks inside the budget (on the host it isn't: everything on all four is 5,842; the device decides) |
 | 6. Mixer + routing (**done**, host-verified; routing early as REC IN; see "The mixer, as built") | GLO mixer, filters, compressor | the mixer's DSP |
-| 7. Modulation | the 4 engines, hold-and-turn depth, assigning engines, p-locks | the PRD's §4 workflow end to end |
+| 7. Modulation (**done** but p-locks, host-verified; see "Modulation, as built") | the 4 engines, hold-and-turn depth, assigning engines, SEQ steps, MONO's clear; p-locks wait on a decision | the PRD's §4 workflow end to end |
 | 8. Projects | save and recall with reels; user reel slots in flash and the upload tool; quick SAVE; undo for MONO and POLY | a power cycle brings a session back |
 | 9. Screen (mostly done early: the dot-grid screens) | the modulation arcs on the pictograms, the motion dots, the summed white dot | the PRD's §5 |
 | 10. Tools + docs | the upload tool for reels, the installer text, a Bryo manual | someone else can use it |

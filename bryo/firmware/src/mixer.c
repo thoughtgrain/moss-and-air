@@ -106,7 +106,7 @@ static int32_t ch_cut(int32_t f)
 static void mix_channel(uint32_t t, int32_t *l, int32_t *r, uint32_t n)
 {
     chan_t *C = &chan[t];
-    const int16_t *ch = tp[t].ch;
+    const int16_t *ch = TPD(t, MA_CH);
     int32_t glo = ch[CH_LOW] ? db_q10(ch[CH_LOW]) * 4 - 4096 : 0, ghi = ch[CH_HIGH] ? db_q10(ch[CH_HIGH]) * 4 - 4096 : 0;
     int32_t f = ch[CH_FILT];
     uint32_t i, c;
@@ -166,7 +166,7 @@ static void mix_channel(uint32_t t, int32_t *l, int32_t *r, uint32_t n)
 }
 
 /* PAN as the two sides' gains, Q15: sqrt 2 times cos and sin of the place (0 .. pi/2), at most 1 */
-static void ch_pan_gains(int32_t pan, int32_t *gl, int32_t *gr)
+static inline void ch_pan_gains(int32_t pan, int32_t *gl, int32_t *gr)
 {
     uint32_t ph = (uint32_t)(clamp(pan, -100, 100) + 100) * (0x40000000u / 200u);   /* (a quarter turn) */
     int32_t s = sine_i(ph), c = sine_i(ph + 0x40000000u);
@@ -183,9 +183,11 @@ static void ch_pan_gains(int32_t pan, int32_t *gl, int32_t *gr)
 static int mix_pan(uint32_t t, int32_t *l, int32_t *r, int32_t g, uint32_t n)
 {
     chan_t *C = &chan[t];
-    int32_t gl, gr, l0 = C->pl, r0 = C->pr;
+    int32_t gl, gr, l0 = C->pl, r0 = C->pr, pl = TPD(t, MA_CH)[CH_PAN], pr = TPD(t, MA_CH) != tp[t].ch ? mod_pan_r[t] : pl, u;
     uint32_t i;
-    ch_pan_gains(tp[t].ch[CH_PAN], &gl, &gr);
+    ch_pan_gains(pl, &gl, &gr);
+    if (pr != pl)                                       /* SPRD on PAN: the right channel panned apart (mod.c) */
+        ch_pan_gains(pr, &u, &gr);
     if (!l0 && !r0) {                                   /* (power-on: nothing to ramp from) */
         l0 = gl;
         r0 = gr;
