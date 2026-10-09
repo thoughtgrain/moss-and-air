@@ -13,7 +13,7 @@
  * few numbers a track. Load: nothing at all while every knob that colours is at 0 and LVL at 0 dB; about 30
  * instructions a sample with everything on. Audio ISR only. Integer only. */
 
-enum { CP_DRIV, CP_CRSH, CP_NOIS, CP_TILT, CP_NDEC, CP_NTON, CP_CMOD, CP_WET, CP_LVL };
+enum { CP_DRIV, CP_CRSH, CP_NOIS, CP_TILT, CP_NDEC, CP_NTON, CP_CMOD, CP_WET, CP_LVL, CP_ROUT };
 enum { CMOD_BIT, CMOD_RATE, CMOD_BOTH };
 
 typedef struct {                     /* ISR only */
@@ -23,6 +23,7 @@ typedef struct {                     /* ISR only */
     int32_t nlp;                     /* NTON's filter on the noise */
     int32_t tlo[2];                  /* TILT's low band, each side */
     int32_t wet, lvl;                /* last block's WET (Q12) and LVL (Q10): ramped across the next */
+    int32_t dry;                     /* .. and the dry's share + 1 (Q12; INS: 1 - WET, SEND: all; 0: not set yet) */
     int32_t rng;
 } color_t;
 
@@ -71,15 +72,28 @@ static void color_block(uint32_t t, int32_t *l, int32_t *r, uint32_t n)
     int colours = g8 > 256 || sh || hold > 1u || nois || tilt;
     if (!C->rng)
         C->rng = 0x2545F491 + (int32_t)t;              /* (xorshift from 0 stays 0) */
+    int32_t d1 = v[CP_ROUT] ? 4096 : 4096 - w1, d0 = C->dry ? C->dry - 1 : d1;   /* the dry's share (ROUT) */
     if (!v0 && !w0) {                                   /* (power-on: nothing to ramp from) */
         v0 = v1;
         w0 = w1;
     }
     C->wet = w1;
     C->lvl = v1;
-    if (!colours) {                                     /* nothing to colour: only LVL, if it's off 0 dB */
+    C->dry = d1 + 1;
+    if (!colours) {                                     /* nothing to colour: only LVL, if it's off 0 dB (a send adds
+                                                         * the dry to itself: dry x (share + WET)) */
         C->env = 0;
         C->nlp = 0;
+        if (d0 + w0 != 4096 || d1 + w1 != 4096) {
+            int32_t s0 = d0 + w0, s1 = d1 + w1;
+            for (i = 0; i < n; i++) {
+                int32_t g = v0 + (((v1 - v0) * (int32_t)i) >> CTL_LOG2), s = s0 + (((s1 - s0) * (int32_t)i) >> CTL_LOG2);
+                g = (g * s) >> 12;
+                l[i] = clamp(l[i], -131071, 131071) * g >> 10;
+                r[i] = clamp(r[i], -131071, 131071) * g >> 10;
+            }
+            return;
+        }
         if (v0 == 1024 && v1 == 1024)
             return;
         for (i = 0; i < n; i++) {
@@ -104,9 +118,10 @@ static void color_block(uint32_t t, int32_t *l, int32_t *r, uint32_t n)
     {                                                   /* (the state in locals: the compiler can't know the */
         int32_t env = C->env, nlp = C->nlp, h0 = C->held[0], h1 = C->held[1];   /* buffers don't alias it) */
         int32_t lo0 = C->tlo[0], lo1 = C->tlo[1], rng = C->rng;
-        int32_t wq = w0 << CTL_LOG2, gq = v0 << CTL_LOG2, dw = w1 - w0, dg = v1 - v0;
+        int32_t wq = w0 << CTL_LOG2, gq = v0 << CTL_LOG2, dw = w1 - w0, dg = v1 - v0, dq = d0 << CTL_LOG2, ddq = d1 - d0;
+        int par = v[CP_ROUT] || d0 + w0 != 4096;        /* a send (or switching): the dry and the colour apart */
         uint32_t hc = C->hcnt;
-        for (i = 0; i < n; i++, wq += dw, gq += dg) {
+        for (i = 0; i < n; i++, wq += dw, gq += dg, dq += ddq) {
             int32_t x0 = clamp(l[i], -65535, 65535), x1 = clamp(r[i], -65535, 65535), y0, y1, nz = 0;
             int32_t w = wq >> CTL_LOG2, g = gq >> CTL_LOG2;
             if (nois) {                                 /* the envelope opens at once and falls over NDEC */
@@ -136,8 +151,14 @@ static void color_block(uint32_t t, int32_t *l, int32_t *r, uint32_t n)
                 y0 = (lo0 * gl + (y0 - lo0) * gh) >> 12;
                 y1 = (lo1 * gl + (y1 - lo1) * gh) >> 12;
             }
-            y0 = x0 + (((y0 - x0) * w) >> 12);          /* WET */
-            y1 = x1 + (((y1 - x1) * w) >> 12);
+            if (par) {                                  /* WET: a send, dry x its share + the colour x WET */
+                int32_t d = dq >> CTL_LOG2;
+                y0 = (x0 * d + y0 * w) >> 12;
+                y1 = (x1 * d + y1 * w) >> 12;
+            } else {                                    /* WET: in the line, the crossfade */
+                y0 = x0 + (((y0 - x0) * w) >> 12);
+                y1 = x1 + (((y1 - x1) * w) >> 12);
+            }
             l[i] = clamp(y0, -131071, 131071) * g >> 10;   /* LVL */
             r[i] = clamp(y1, -131071, 131071) * g >> 10;
         }

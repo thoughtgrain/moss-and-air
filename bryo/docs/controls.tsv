@@ -21,8 +21,8 @@ any	BTN_OCTDN	combo	held with OCT+ for 5 s: UPDATE MODE countdown from 2 s, lett
 power-on	BTN_OCTDN	combo	held with OCT+ at power-on: HARDWARE CALIBRATION (press each button, turn each encoder)	now	-	kept
 page	BTN_HOME	press	focus the track's source (TAPE, SYNTH, POLY or DRUM); again: its next page (TAPE 2, TAPE 3; SYNTH's FILTER, AMP, VOICE, LEVEL; POLY's ENV, FILTER, LEVEL), round. Every source's last page has LVL (-24..+6 dB: what the track hears of it, the S-4's LEVEL)	now	-	PRD 2.2
 page	BTN_HOME	tap	on a POLY track, again while its page is up: the next page (SAMPLE, ENV, FILTER, LEVEL)	now	-	change
-page	BTN_EDIT	press	focus GRAIN; again: GRAIN 2 (WET SPRY CONT REV), GRAIN 3 (WARP PATN SCAL PRND); again: RESONATOR, RESONATOR 2 (CUT RES SLOP SCAL); again: GRAIN	now	-	PRD 2.2
-page	BTN_FX	press	focus COLOR; again: COLOR 2 (NDEC NTON CMOD WET), COLOR 3 (LVL); again: SPACE, SPACE 2 (DLY VERB TONE SPRD), SPACE 3 (PRE)	now	-	PRD 2.2
+page	BTN_EDIT	press	focus GRAIN; again: GRAIN 2 (WET SPRY CONT REV), GRAIN 3 (PATN SCAL PRND ROUT), GRAIN 4 (SCAN WARP OFST FDBK); again: RESONATOR, RESONATOR 2 (CUT RES SLOP SCAL), RESONATOR 3 (ROUT); again: GRAIN. ROUT on GRAIN, RESONATOR and COLOR: INS (WET crossfades the dry with the device) or SEND (the dry at full, the device added at WET)	now	-	PRD 2.2
+page	BTN_FX	press	focus COLOR; again: COLOR 2 (NDEC NTON CMOD WET), COLOR 3 (LVL ROUT); again: SPACE, SPACE 2 (DLY VERB TONE SPRD), SPACE 3 (PRE)	now	-	PRD 2.2
 page	BTN_LFO	tap	modulator slot 1's page as the pad is let go (default engine LFO, SIN); again: its next page (4: shape, refine, place, timing). Held, it sets depths instead (slot-held)	now	-	PRD 2.2
 page	BTN_ENV	tap	modulator slot 2's page as the pad is let go (default engine ADSR); again: its next page (3: stages, curves, VEL LOOP AMT OFS)	now	-	PRD 2.2
 page	BTN_SEQ	tap	modulator slot 3's page as the pad is let go (default engine SEQ); again: its page 2 (DIR TRIG PROB STRT)	now	-	PRD 2.2

@@ -47,7 +47,8 @@ the CPU load, listen.
   SYNTH 5, POLY 4, DRUM 4, each ending with LVL); EDIT is GRAIN then RESONATOR; FX is COLOR then SPACE; LFO ENV SEQ ARP are
   the slots; GLO is the mixer (EDIT there: the channel, then MASTER); ALGORITHM turned is REC IN. A pad held +
   SELECT picks that pad's thing (HOME: the source; a slot: its engine; GLO: TRACKS). Every control in every
-  context is in `docs/controls.tsv`, checked by `tests/controls_check.py`.
+  context is in `docs/controls.tsv`, checked by `tests/controls_check.py`. GRAIN, RESONATOR and COLOR have ROUT:
+  INS (WET crossfades) or SEND (the dry at full, the device added).
 - **Modulation.** A slot's pad tapped opens its page as you let go; held, KNOB 1 to 4 set its depth to the knobs on
   the page shown (the strip shows the depths while it's held; a modulated knob gets a mark). MONO held half a
   second clears the track's depths; SAVE held undoes the last clear (tape or modulation).
@@ -120,7 +121,7 @@ Tests and tools:
 | File | What |
 | --- | --- |
 | `tests/run_tests.sh` | everything below that's quick, plus Felucca's kept hardware and installer tests; ends "ALL HOST TESTS PASSED" |
-| `tests/bryo_host.c` | Bryo's chain, input and screens on the host: 466 checks, and every screen rendered |
+| `tests/bryo_host.c` | Bryo's chain, input and screens on the host: 473 checks, and every screen rendered |
 | `tests/bryo_golden.txt`, `ui_golden.py` | each screen's pixel fingerprint |
 | `tests/checkpoint_sim.sh` | the hardware checkpoint on the host: 28 runs rendered to WAV, each one's cost under callgrind, and a stress test with the audio and USB interrupts cutting into the main loop while the memory's books are checked |
 | `tests/mod_audit.sh` | every knob a modulator can move: does it change the sound, does it step at the blocks, what it costs (`--cost`) |
@@ -149,7 +150,7 @@ measure the device here. Where it stands (`checkpoint_sim.sh`, 2026-10-09):
 | Run | What | Cost |
 | --- | --- | ---: |
 | 1 | four reels, nothing on | 938 |
-| 19 | a realistic four-track groove | 1,600 |
+| 19 | a realistic four-track groove | 1,615 |
 | 24 | the groove, modulated the way I'd play it | 1,798 (84 of it the modulators) |
 | 21 | the groove's busiest moment | 2,454 |
 | 23 | GRAIN at its densest on one track | 2,986 |
@@ -157,7 +158,7 @@ measure the device here. Where it stands (`checkpoint_sim.sh`, 2026-10-09):
 | 26 | DRUM busy alone (FUNK, VARY 100, FILL 100, long decays), the others plain reels | 1,301 |
 | 27 | the groove with a DRUM track in place of its drum reel | 1,885 |
 | 28 | four DRUM tracks at once, every voice (20) | 2,474 |
-| 15 | everything on, all four tracks | 4,877 |
+| 15 | everything on, all four tracks | 4,909 |
 
 My target for a realistic four-track scene is 2,000; the device's real ratio of host instructions to CPU load is
 the question the hardware checkpoint answers (one reading of run 1 turns all of these into percentages).
@@ -202,6 +203,9 @@ number.
   cost 7 KB of main RAM.
 - **2026-10-09: every source has a LEVEL** on its last page, as the S-4 does; that needed five pages a device
   (NPK 20).
+- **2026-10-09: GRAIN, RESONATOR and COLOR can be sends** (ROUT: INS or SEND, per device, per track): the dry at
+  full, the device added at WET. Per track rather than shared aux buses: no new memory or CPU, every track keeps
+  its own effects. SPACE was always a send.
 - **2026-10-09: DRUM's sounds and rhythms are Bryo's own.** CR-78-inspired in the instrument list and the
   character, written from scratch: one data-driven voice, a patch row per instrument. A first pass reused
   Felucca's drum voices; I replaced them so the kit is ours. "CR-78" stays in the docs, never on screen.
@@ -266,4 +270,5 @@ About 50 commits over three days, each one a working step (`git log --oneline --
   checkpoint's run sheet and its host simulation; RESONATOR, COLOR, SPACE; the USB record mode; the mixer;
   realistic load runs; GRAIN's shared pool.
 - **2026-10-09:** modulation; TUNE played live; a LEVEL on every source; the modulation audit (RESONATOR's pitch
-  glides, fine pitch); fine filter cutoffs; this page; DRUM (its own voice and kit, the source, SEED).
+  glides, fine pitch); fine filter cutoffs; this page; DRUM (its own voice and kit, the source, SEED); sends
+  (ROUT).

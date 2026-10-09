@@ -394,7 +394,8 @@ static void test_input(void)
     check("EDIT again, past GRAIN's pages 2 to 4: RESONATOR", ui.dev == DEV_RESO);
     press(B_EDIT);
     press(B_EDIT);
-    check("EDIT again, past RESONATOR's page 2: GRAIN", ui.dev == DEV_GRAIN && ui.page == 0u);
+    press(B_EDIT);
+    check("EDIT again, past RESONATOR's pages 2 and 3: GRAIN", ui.dev == DEV_GRAIN && ui.page == 0u);
     press(B_FX);
     check("FX: COLOR", ui.dev == DEV_COLOR);
     press(B_FX);
@@ -437,6 +438,9 @@ static void test_input(void)
     check("..again: RESONATOR", ui.dev == DEV_RESO && ui.page == 0u);
     press(B_EDIT);
     check("..again: RESONATOR's page 2 (CUT RES SLOP SCAL)", ui.dev == DEV_RESO && ui.page == 1u);
+    press(B_EDIT);
+    check("..again: RESONATOR's page 3 (ROUT)", ui.dev == DEV_RESO && ui.page == 2u &&
+          !strcmp(dev_p(0, DEV_RESO)[RP_ROUT].label, "ROUT"));
     press(B_EDIT);
     check("..again: back to GRAIN, page 1", ui.dev == DEV_GRAIN && ui.page == 0u);
     press(B_FX);
@@ -4595,6 +4599,89 @@ static void test_drum(void)
     power_on();
 }
 
+/* ROUT: the three devices with a WET as sends. A run of track 1 (a reel playing, the device set up by `dev`, WET as
+ * given, ROUT as given) into o: what the track outputs (track_rt.last), from power-on, `blocks` blocks */
+static void send_run(uint32_t dev, int32_t wet, int32_t rout, int32_t *o, uint32_t blocks)
+{
+    uint32_t b;
+    int16_t *v = tp[0].dev[dev];
+    power_on();
+    track[1].mute = track[2].mute = track[3].mute = 1;
+    sys.playing = 1;
+    if (dev == DEV_GRAIN) {
+        v[GP_WET] = (int16_t)wet;
+        v[GP_ROUT] = (int16_t)rout;
+    } else if (dev == DEV_RESO) {
+        v[RP_WET] = (int16_t)wet;
+        v[RP_ROUT] = (int16_t)rout;
+    } else {
+        v[CP_DRIV] = 50;
+        v[CP_WET] = (int16_t)wet;
+        v[CP_ROUT] = (int16_t)rout;
+    }
+    for (b = 0; b < blocks; b++) {
+        chain_block(out, CTL);
+        chain_poll();
+        memcpy(o + b * CTL, track_rt[0].last, CTL * sizeof *o);
+    }
+}
+
+static void test_sends(void)
+{
+    static int32_t ins[CTL * 600], snd[CTL * 600], dry[CTL * 600];
+    static const uint32_t DEV[3] = {DEV_GRAIN, DEV_RESO, DEV_COLOR};
+    static const char *const NAME[3] = {"GRAIN", "RESONATOR", "COLOR"};
+    uint32_t k, i, n = CTL * 600u, from = CTL * 200u;
+    char m[128];
+    check("ROUT (INS, SEND) on GRAIN, RESONATOR and COLOR; not a modulation target; SPACE has none",
+          !strcmp(DEV_P[DEV_GRAIN][GP_ROUT].label, "ROUT") && !strcmp(DEV_P[DEV_RESO][RP_ROUT].label, "ROUT") &&
+          !strcmp(DEV_P[DEV_COLOR][CP_ROUT].label, "ROUT") && !mod_tdesc(MOD_TG(DEV_GRAIN, GP_ROUT)) &&
+          !mod_tdesc(MOD_TG(DEV_RESO, RP_ROUT)) && !mod_tdesc(MOD_TG(DEV_COLOR, CP_ROUT)));
+    for (k = 0; k < 3u; k++) {                           /* SEND - INS = the dry, at WET 100 (from 0.15 s on) */
+        int32_t err = 0, pd = 0, pe = 0;
+        send_run(DEV[k], 100, 0, ins, 600);
+        send_run(DEV[k], 100, 1, snd, 600);
+        send_run(DEV[k], 0, 0, dry, 600);
+        for (i = from; i < n; i++) {
+            int32_t e = snd[i] - ins[i] - dry[i];
+            err = (e < 0 ? -e : e) > err ? (e < 0 ? -e : e) : err;
+            pd = abs(dry[i]) > pd ? abs(dry[i]) : pd;
+            pe = abs(ins[i]) > pe ? abs(ins[i]) : pe;
+        }
+        snprintf(m, sizeof m, "%s at WET 100: SEND is the dry plus what INS plays (off by %d of a dry peak of %d)",
+                 NAME[k], err, pd);
+        check(m, pd > 1000 && pe > 300 && err <= 8);
+    }
+    {                                                    /* ROUT flipped under a held note: the dry ramps, no click */
+        int32_t jump = 0, base = 0;
+        power_on();
+        track[1].mute = track[2].mute = track[3].mute = 1;
+        tp[0].src = SRC_SYNTH;
+        tp[0].syn[SY_WAVE] = 0;
+        tp[0].dev[DEV_COLOR][CP_WET] = 100;              /* (COLOR at its defaults: a send doubles the dry) */
+        sys.keys_live = 1;
+        fm1_in.notes = note_bit_of_white(0);
+        render(300, 0);
+        for (i = 0; i < 20u; i++) {
+            chain_block(out, CTL);
+            for (k = 1; k < CTL; k++)
+                base = abs(track_rt[0].last[k] - track_rt[0].last[k - 1]) > base ? abs(track_rt[0].last[k] - track_rt[0].last[k - 1]) : base;
+        }
+        tp[0].dev[DEV_COLOR][CP_ROUT] = 1;
+        for (i = 0; i < 4u; i++) {
+            int32_t last = track_rt[0].last[CTL - 1];
+            chain_block(out, CTL);
+            jump = abs(track_rt[0].last[0] - last) > jump ? abs(track_rt[0].last[0] - last) : jump;
+            for (k = 1; k < CTL; k++)
+                jump = abs(track_rt[0].last[k] - track_rt[0].last[k - 1]) > jump ? abs(track_rt[0].last[k] - track_rt[0].last[k - 1]) : jump;
+        }
+        fm1_in.notes = 0;
+        snprintf(m, sizeof m, "COLOR's ROUT flipped under a held sine: no step (the largest move %d, steady %d)", jump, base);
+        check(m, base > 20 && jump < base * 5 / 2);
+    }
+    power_on();
+}
+
 static void test_source_level(void)
 {
     static int32_t a[CTL * 300], b[CTL * 300];
@@ -4959,6 +5046,7 @@ int main(int argc, char **argv)
     test_source_level();
     test_drum_voices();
     test_drum();
+    test_sends();
     test_input();
     test_settings();
     palette_set(UI_GREY_INDEX);                          /* (the screens are one ink now, whatever the palette) */

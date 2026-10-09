@@ -400,7 +400,7 @@ static int32_t reso_filter(const int16_t *v, int32_t n16)
 }
 
 /* peaks at the partials; the peak width narrows as DEC rises; TONE keeps the upper partials (dark at 0); the filter
- * shapes what reaches them; WET blends with the flat dry line (35 %); 0..1000 */
+ * shapes what reaches them; WET blends with the flat dry line (35 %), or (ROUT SEND) adds to it; 0..1000 */
 static int32_t reso_at(const int16_t *v, int32_t x)
 {
     int32_t n16 = reso_n16(x), width16 = 4 + (100 - v[1]) * 28 / 100, best = 0, k, sc = clamp(v[7], 0, 3);
@@ -416,12 +416,14 @@ static int32_t reso_at(const int16_t *v, int32_t x)
             best = pk;
     }
     best = clamp(best * reso_filter(v, n16) / 1000, 0, 1000);
+    if (v[RP_ROUT])
+        return clamp(350 + best * v[3] / 100 * 65 / 100, 0, 1000);
     return (best * v[3] + 350 * (100 - v[3])) / 100;
 }
 
 static void viz_reso(const int16_t *v, uint32_t f)
 {
-    static const char *const NAME[8] = {"PTCH", "DEC", "TONE", "WET", "CUT", "RES", "SLOP", "SCAL"};
+    static const char *const NAME[9] = {"PTCH", "DEC", "TONE", "WET", "CUT", "RES", "SLOP", "SCAL", "ROUT"};
     int32_t x, k, py = 0, top = DY0 + 6, base = DY1 + 2, sc = clamp(v[7], 0, 3);
     px_line(DX0, base - 350 * (base - top) / 1000, DX1, base - 350 * (base - top) / 1000, px_dim, 2);   /* dry */
     px_line(DX0, base + 1, DX1, base + 1, px_dim, 2);
@@ -453,7 +455,8 @@ static void viz_reso(const int16_t *v, uint32_t f)
     }
     vz_label(DX0 + 8, "E1", 0);
     vz_label(DX1 - 8, "E9", 0);
-    vz_label((DX0 + DX1) / 2, f >= 1u && f < 8u ? NAME[f] : N_RSCAL[sc], f >= 1u && f < 8u);
+    vz_label((DX0 + DX1) / 2, f == RP_ROUT ? N_ROUT[clamp(v[RP_ROUT], 0, 1)] : f >= 1u && f < 9u ? NAME[f] : N_RSCAL[sc],
+             f >= 1u && f < 9u);
     if (f >= 4u && f < 8u)
         vz_ktag(118, DY0 - 1, &DEV_P[DEV_RESO][f], v[f]);
 }
@@ -465,14 +468,17 @@ static void viz_reso(const int16_t *v, uint32_t f)
  * (- dark .. + bright); TILT: the low end against the high (on a sine: nothing to draw, so the inset shows it); WET:
  * the dry and the coloured signal; LVL: the output in dB */
 
-static int32_t color_out(int32_t x, int32_t shaped, const int16_t *v)   /* WET, then LVL */
+static int32_t color_out(int32_t x, int32_t shaped, const int16_t *v)   /* WET (INS: a crossfade; SEND: added to the
+                                                                           * dry), then LVL */
 {
+    if (v[CP_ROUT])
+        return (x + shaped * v[7] / 100) * db_x1000(v[8]) / 1000;
     return (x + (shaped - x) * v[7] / 100) * db_x1000(v[8]) / 1000;
 }
 
 static void viz_color(const int16_t *v, uint32_t f)
 {
-    static const char *const NAME[9] = {"DRIV", "CRSH", "NOIS", "TILT", "NDEC", "NTON", "CMOD", "WET", "LVL"};
+    static const char *const NAME[10] = {"DRIV", "CRSH", "NOIS", "TILT", "NDEC", "NTON", "CMOD", "WET", "LVL", "ROUT"};
     int32_t bx = DX0, bw = 32, wx = DX0 + 37, ww = DX1 - wx, i, py = 0, held = 0;
     int32_t hold = (int32_t)col_hold(v);                              /* CMOD RATE or BOTH: hold a value */
     int32_t fall = 1000 - 2000 / (2 + (int32_t)TIME_MS_X10[v[4] & 127] / 40), env = 0;   /* NDEC, per dot x1000 */
@@ -529,7 +535,7 @@ static void viz_color(const int16_t *v, uint32_t f)
         }
         py = y;
     }
-    vz_label(bx + bw / 2, f < 9u ? NAME[f] : "CURVE", f < 9u);
+    vz_label(bx + bw / 2, f == CP_ROUT ? N_ROUT[clamp(v[CP_ROUT], 0, 1)] : f < 10u ? NAME[f] : "CURVE", f < 10u);
     vz_label(wx + ww / 2, "IN : OUT", 0);
     if (f >= 4u && f < 9u)
         vz_ktag(118, DY0 - 1, &DEV_P[DEV_COLOR][f], v[f]);

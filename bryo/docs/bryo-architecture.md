@@ -964,6 +964,46 @@ strings) would need a step for SPACE as well (the room at a quarter rate, say), 
 the device's number. The stress run cuts the interrupts in while RESONATOR and SPACE take and give back memory as
 knobs turn, and the books balance (RESONATOR's strings and SPACE's lines are in the check now too).
 
+## Sends: ROUT, as built (2026-10-09)
+
+GRAIN, RESONATOR and COLOR each have a WET, and until now it was always a crossfade: turning WET up turned the dry
+sound down, because the device sat in the track's line (an insert). That's right for some things (a track that's
+all grains) and wrong for others: a little resonance or a bit of parallel drive under a drum loop wants the loop at
+full and the effect added. So each of the three now has ROUT, INS or SEND, on its own page:
+
+| Device | Where ROUT is | INS (as before) | SEND |
+| --- | --- | --- | --- |
+| GRAIN | page 3, KNOB 4 | dry x (1 - WET) + grains x WET | dry + grains x WET |
+| RESONATOR | page 3 (its own page), KNOB 1 | dry x (1 - WET) + strings x WET | dry + strings x WET |
+| COLOR | page 3, KNOB 2 | dry x (1 - WET) + coloured x WET, then LVL | dry + coloured x WET, then LVL |
+
+SPACE has no ROUT: DLY and VERB were always levels added to a full dry, which is a send already.
+
+This is a send per track, not a shared aux bus: each track's devices stay its own, nothing new is allocated, and the
+CPU is the same. (A shared bus, one reverb that four tracks send into, was the other option; it would save memory
+when several tracks want the same effect, at the cost of shared knobs and a rework of the chain and the mixer.
+Parked, not ruled out.)
+
+How it works. Each device keeps the dry's share from the last block (INS: 1 - WET; SEND: all of it) and ramps it
+across the next block when it changes, so flipping ROUT under a held note doesn't click (the test holds a sine
+through the flip: its largest sample-to-sample move is 118 against a steady 50, where the doubled level's own slope
+is about 100; without the ramp it's 912). While nothing changes and ROUT is INS, each device runs its old code, so
+INS sounds exactly as it did. The cost of the extra branch: run 19 went from 1,602 to 1,615, run 15 from 4,875 to
+4,909.
+
+One thing to know about COLOR as a send: with nothing colouring (DRIV, CRSH, NOIS and TILT at 0), the "coloured"
+sound is the dry itself, so a send adds the dry to itself: +6 dB at WET 100. That's what parallel processing does,
+and COLOR's LVL sits right beside ROUT for it. With drive on, it's parallel saturation: the transients stay clean
+and the drive fills in underneath.
+
+ROUT isn't a modulation target (`nomod`): a switch flipping at an LFO's rate isn't a sound. The pictures follow it:
+RESONATOR's response adds the strings to the flat dry line instead of blending, COLOR's transfer curve adds the
+coloured sound to the straight line.
+
+Tested (`test_sends`): for each device at WET 100, SEND minus INS equals the dry sound (the same run at WET 0) to
+within 3 of a 3,959 peak, which is the definition of a send; the ROUT flip without a click (the check fails with
+the ramp taken out); ROUT on the three devices and never a modulation target.
+
 ## The mixer, as built (2026-10-08)
 
 The mixer's knobs did nothing until now: the channel page drew a response no sound followed. `firmware/src/mixer.c`

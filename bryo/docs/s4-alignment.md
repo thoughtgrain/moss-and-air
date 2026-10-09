@@ -87,7 +87,7 @@ architecture doc already plans TAPE, SYNTH and POLY.
 | random pitch | PRND (0..12 st, page 3) | a random pitch per grain. **done** |
 | reverse | REV | the chance a grain plays backwards: stays |
 
-So four pages: SIZE RATE PTCH SPRD / WET SPRY CONT REV / PATN SCAL PRND / SCAN WARP OFST FDBK. Not taken from OS
+So four pages: SIZE RATE PTCH SPRD / WET SPRY CONT REV / PATN SCAL PRND ROUT / SCAN WARP OFST FDBK (ROUT, 2026-10-09: INS or SEND, not the S-4's). Not taken from OS
 2.2 yet: RAND RATE, RAND SIZE and RAND AMP (page 3's fourth knob is free for one).
 
 ## RESONATOR (the S-4's RING)
@@ -104,7 +104,7 @@ resonator tuned to a root note. Same family, different engine. The knob names ca
 | CUTOFF, RES, SLOPE | none | A filter in front of the resonator: cutoff, resonance, and SLOPE morphing LP → BP → HP. One state-variable filter does all three cheaply. Page 2. |
 | SCALE | none | Tunes the resonator's partials (or its 4 strings) to a scale: CHR MAJ MIN PEN *(the S-4's list unverified)*. Page 2. |
 
-That gives two pages: PTCH DEC TONE WET / CUT RES SLOP SCAL. **Done.** SCAL is HARM (the root's harmonics, as
+That gives two pages: PTCH DEC TONE WET / CUT RES SLOP SCAL, and ROUT (INS or SEND) on a page 3 since. **Done.** SCAL is HARM (the root's harmonics, as
 before), MAJ, MIN or PEN (that scale's chord tones stacked over three octaves). The filter starts open (CUT at the
 top, RES 0, LP), so nothing changes until you turn it. TONE runs the other way from DAMP: 0 is dark.
 
@@ -121,7 +121,7 @@ top, RES 0, LP), so nothing changes until you turn it. TONE runs the other way f
 | WET | MIX | Rename to WET. |
 | none | LVL | Bryo's output trim. Keep (drive adds level). |
 
-That gives two pages: DRIV CRSH NOIS TILT / NDEC NTON CMOD WET, and LVL on page 3. **Done.** TILT and NTON are
+That gives two pages: DRIV CRSH NOIS TILT / NDEC NTON CMOD WET, and LVL ROUT on page 3. **Done.** TILT and NTON are
 bipolar (0 is flat).
 
 ## SPACE (the S-4's VAST)

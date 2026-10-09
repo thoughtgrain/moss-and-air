@@ -53,7 +53,7 @@
 #define GR_WIN 128u                  /* a grain's decoded window, samples (a reverse refill re-decodes from its
                                       * block's start: the wider the window, the rarer) */
 #define GR_BUF_MAX (12u * TAPE_SR)   /* a buffer's most, tape samples (12 s) */
-enum { GP_SIZE, GP_RATE, GP_PTCH, GP_SPRD, GP_WET, GP_SPRY, GP_CONT, GP_REV, GP_PATN, GP_SCAL, GP_PRND, GP_SCAN = 12,
+enum { GP_SIZE, GP_RATE, GP_PTCH, GP_SPRD, GP_WET, GP_SPRY, GP_CONT, GP_REV, GP_PATN, GP_SCAL, GP_PRND, GP_ROUT, GP_SCAN,
        GP_WARP, GP_OFST, GP_FDBK };   /* (param.c DEV_P[DEV_GRAIN]: page 3's fourth knob is empty) */
 enum { SCAN_TAPE, SCAN_STR, SCAN_POS, SCAN_DLY };
 
@@ -115,6 +115,8 @@ typedef struct {
     int32_t kofs;                    /* a white key's spot (POS: where; DLY: the trail), samples; -1 none */
     int16_t ofst_seen;               /* OFST when the key was pressed (turning OFST takes over again) */
     uint8_t scan;                    /* SCAN last block (a change: the cursor starts over) */
+    uint8_t dset;                    /* dsh holds last block's dry share */
+    int32_t dsh;                     /* the dry share last block, Q15 (ROUT switched: ramped across the next) */
 } grain_trk_t;
 
 static grain_t gslot[GR_SLOTS] __attribute__((section(".pool")));
@@ -451,8 +453,22 @@ static void grain_block(uint32_t t, const int32_t *dry, uint32_t keys, int froze
     if (!G->rng)
         G->rng = 0x2545F491 + (int32_t)t * 7919;
     grain_frozen = (uint8_t)frozen;
-    for (i = 0; i < (int32_t)n; i++)                     /* the dry share, centred */
-        l[i] = r[i] = dry[i] * (100 - wet) / 100;
+    {                                                   /* the dry share, centred: INS 1 - WET, SEND all of it */
+        int32_t d1 = p[GP_ROUT] ? 32767 : (100 - wet) * 32767 / 100, d0 = G->dset ? G->dsh : d1;
+        G->dsh = d1;
+        G->dset = 1;
+        if (d0 != d1) {                                  /* (ROUT or WET moved: ramped, no click) */
+            int32_t dd = (d1 - d0) >> CTL_LOG2;
+            for (i = 0; i < (int32_t)n; i++, d0 += dd)
+                l[i] = r[i] = (dry[i] * (d0 >> 3)) >> 12;
+        } else if (p[GP_ROUT]) {
+            for (i = 0; i < (int32_t)n; i++)
+                l[i] = r[i] = dry[i];
+        } else {
+            for (i = 0; i < (int32_t)n; i++)
+                l[i] = r[i] = dry[i] * (100 - wet) / 100;
+        }
+    }
     if (scan != SCAN_TAPE && B->len && B->nch) {        /* the buffer: the bar line at the transport's start */
         if (B->w >= (int32_t)B->len)                    /* (shrunk under it: the same place in the bars) */
             B->w %= (int32_t)B->len;

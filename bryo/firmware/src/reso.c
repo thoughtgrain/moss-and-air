@@ -23,7 +23,7 @@
 
 #define RS_N 4u                      /* strings a track */
 #define RS_LEN (sizeof(mem_chunk_t) / 2u)   /* a string's delay line: a chunk as samples (1,056) */
-enum { RP_PTCH, RP_DEC, RP_TONE, RP_WET, RP_CUT, RP_RES, RP_SLOP, RP_SCAL };
+enum { RP_PTCH, RP_DEC, RP_TONE, RP_WET, RP_CUT, RP_RES, RP_SLOP, RP_SCAL, RP_ROUT };
 
 /* the strings above the root, 1/16 semitones, by SCAL (HARM MAJ MIN PEN): the first four of ui_viz.c's PART_16 */
 static const int16_t RS_PART16[4][RS_N] = {{0, 192, 304, 384}, {0, 64, 112, 192}, {0, 48, 112, 192}, {0, 32, 64, 112}};
@@ -46,6 +46,7 @@ typedef struct {
                                       * sample across the block, so a moving pitch never jumps the read point */
     int16_t ptch_seen;               /* PTCH when the key was played (turning PTCH takes over again) */
     int32_t wet;                     /* WET last block (ramped across the next), 0..100 */
+    int32_t dry;                     /* the track's share last block + 1, Q15 (INS: 1 - WET; SEND: all; 0: not set) */
     uint32_t keys;
     int32_t rng;
 } reso_t;
@@ -128,6 +129,7 @@ static void reso_block(uint32_t t, int32_t *l, int32_t *r, uint32_t keys, int pl
             break;
         }
     if (!nstr || (!wet0 && !wet1)) {                     /* off: the track as it was */
+        R->dry = 32768;
         R->rs16 = 0;
         for (k = 0; k < RS_N; k++)
             R->dq[k] = 0;
@@ -203,8 +205,21 @@ static void reso_block(uint32_t t, int32_t *l, int32_t *r, uint32_t keys, int pl
         R->lp[k] = lp;
     }
     R->w = (R->w + n) % RS_LEN;
-    {   /* WET: the strings against the track, ramped across the block (Q15: no division a sample) */
+    {   /* WET: the strings against the track, ramped across the block (Q15: no division a sample). INS crossfades;
+         * SEND keeps the track at full and adds the strings (ROUT: the track's share ramped when it's switched) */
         int32_t w0 = wet0 * 32767 / 100, dw = ((wet1 - wet0) * 32767 / 100) >> CTL_LOG2;
+        int32_t d1 = p[RP_ROUT] ? 32767 : 32767 - wet1 * 32767 / 100, d0 = R->dry ? R->dry - 1 : d1;
+        R->dry = d1 + 1;
+        if (p[RP_ROUT] || d0 != 32767 - wet0 * 32767 / 100) {   /* a send, or switching: the two shares apart */
+            int32_t dd = (d1 - d0) >> CTL_LOG2;
+            for (i = 0; i < n; i++, w0 += dw, d0 += dd) {
+                int32_t wl = soft_knee(((acc_e[i] * 3) >> 2) + ((acc_o[i] * 3) >> 3), 24000);
+                int32_t wr = soft_knee(((acc_o[i] * 3) >> 2) + ((acc_e[i] * 3) >> 3), 24000);
+                l[i] = (int32_t)(((l[i] >> 1) * (d0 >> 1)) >> 13) + (int32_t)(((wl >> 1) * (w0 >> 1)) >> 13);
+                r[i] = (int32_t)(((r[i] >> 1) * (d0 >> 1)) >> 13) + (int32_t)(((wr >> 1) * (w0 >> 1)) >> 13);
+            }
+            return;
+        }
         for (i = 0; i < n; i++, w0 += dw) {
             int32_t wl = soft_knee(((acc_e[i] * 3) >> 2) + ((acc_o[i] * 3) >> 3), 24000);   /* (strings 1 and 3 2 : 1
                                                                                              * left, 2 and 4 right) */

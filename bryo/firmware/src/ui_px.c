@@ -276,7 +276,7 @@ enum {
     PK_SHAPE, PK_FOLD, PK_SKEW, PK_SMOOTH, PK_STEPS, PK_SLEW, PK_SWING, PK_KEYS, PK_SHELF_LO, PK_SHELF_HI, PK_FILTER,
     PK_PAN, PK_TOGGLE, PK_FADE, PK_WINDOW, PK_GATE, PK_PRE, PK_MODE, PK_DIR, PK_STEPAT, PK_NONE,
     PK_CURVE, PK_VAR, PK_SRC, PK_OSC, PK_DETUNE, PK_CUTOFF, PK_RES, PK_ENVAMT, PK_KTRK, PK_VOICES, PK_PATTERN,
-    PK_SCALE, PK_SLOPE, PK_CMOD, PK_SCAN
+    PK_SCALE, PK_SLOPE, PK_CMOD, PK_SCAN, PK_ROUTE
 };
 
 /* the waveform shapes WAVE's SHAPE picks, at phase p (0..63 a cycle), x1000 */
@@ -671,6 +671,21 @@ static void px_picto(uint32_t kind, int32_t x, int32_t y, const pdesc_t *d, int3
         px_box(p - 1, cy + 1, 3, 5, c);
         break;
     }
+    case PK_ROUTE:                                       /* ROUT: INS, the line through the device; SEND, the line
+                                                          * straight on, a branch down through the device and back */
+        if (v == d->min) {
+            px_line(x, cy, x + 5, cy, c, 1);
+            px_frame(x + 6, cy - 4, 10, 9, c, 1);
+            px_line(x + 16, cy, x + 21, cy, c, 1);
+        } else {
+            px_line(x, y + 4, x + 21, y + 4, c, 1);
+            px_line(x + 4, y + 4, x + 4, y + 14, c, 1);
+            px_line(x + 17, y + 4, x + 17, y + 14, c, 1);
+            px_line(x + 4, y + 14, x + 6, y + 14, c, 1);
+            px_line(x + 15, y + 14, x + 17, y + 14, c, 1);
+            px_frame(x + 6, y + 10, 10, 9, c, 1);
+        }
+        break;
     case PK_TOGGLE: {                                    /* a switch: the block left (off, FREE) or right (on) */
         int32_t on = v > d->min;
         px_frame(x + 1, cy - 4, 20, 9, c, 1);
@@ -937,13 +952,14 @@ static const uint8_t DEV_PK[NDEV][NPK] = {
      PK_SRC, PK_CLOCK, PK_FADER, PK_NONE},           /*       REEL ROTA LVL */
     {PK_SQUARE, PK_DOTS, PK_KNOB, PK_BOWTIE,         /* GRAIN: SIZE RATE PTCH SPRD */
      PK_MIX, PK_NOISE, PK_WINDOW, PK_DOTS,           /*        WET SPRY CONT REV */
-     PK_PATTERN, PK_SCALE, PK_VAR, PK_NONE,          /*        PATN SCAL PRND */
+     PK_PATTERN, PK_SCALE, PK_VAR, PK_ROUTE,         /*        PATN SCAL PRND ROUT */
      PK_SCAN, PK_SPEED, PK_START, PK_LOOP},          /*        SCAN WARP OFST FDBK */
     {PK_KEYS, PK_DECAY, PK_TONE, PK_MIX,             /* RESONATOR: PTCH DEC TONE WET */
-     PK_CUTOFF, PK_RES, PK_SLOPE, PK_SCALE},         /*            CUT RES SLOP SCAL */
+     PK_CUTOFF, PK_RES, PK_SLOPE, PK_SCALE,          /*            CUT RES SLOP SCAL */
+     PK_ROUTE, PK_NONE, PK_NONE, PK_NONE},           /*            ROUT */
     {PK_DRIVE, PK_STAIRS, PK_NOISE, PK_TONE,         /* COLOR: DRIV CRSH NOIS TILT */
      PK_DECAY, PK_TONE, PK_CMOD, PK_MIX,             /*        NDEC NTON CMOD WET */
-     PK_FADER, PK_NONE, PK_NONE, PK_NONE},           /*        LVL */
+     PK_FADER, PK_ROUTE, PK_NONE, PK_NONE},          /*        LVL ROUT */
     {PK_CLOCK, PK_LOOP, PK_ROOM, PK_DECAY,           /* SPACE: TIME FDBK SIZE DEC */
      PK_MIX, PK_MIX, PK_FILTER, PK_BOWTIE,           /*        DLY VERB TONE SPRD */
      PK_PRE, PK_NONE, PK_NONE, PK_NONE},             /*        PRE */

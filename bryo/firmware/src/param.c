@@ -51,6 +51,12 @@ static const char *const N_GSCAL[5] = {"OFF", "CHR", "MAJ", "MIN", "PEN"};
 static const char *const N_RSCAL[4] = {"HARM", "MAJ", "MIN", "PEN"};
 static const char *const N_SLOP[3] = {"LP", "BP", "HP"};
 static const char *const N_CMOD[3] = {"BIT", "RATE", "BOTH"};
+static const char *const N_ROUT[2] = {"INS", "SEND"};
+/* ROUT (GRAIN, RESONATOR, COLOR): how WET mixes the device in. INS: in the track's line, WET crossfading the dry
+ * sound with the device's (dry x (1 - WET) + device x WET); SEND: in parallel, the dry at full and the device's
+ * sound added at WET (dry + device x WET), the way an aux send works, per track. SPACE is always a send (DLY and
+ * VERB are levels added to the dry). Not a modulation target: a switch flipping at an LFO's rate isn't a sound */
+#define P_ROUT {"ROUT", 0, 1, 0, F_ENUM, N_ROUT, 1}
 static const pdesc_t DEV_P[NDEV][NPK] = {
     {   /* TAPE (the source when it's TAPE: SYNTH and POLY have their own tables) */
         {"STRT", 0, 100, 0, F_PCT}, {"LEN", 1, 100, 100, F_PCT},
@@ -72,7 +78,7 @@ static const pdesc_t DEV_P[NDEV][NPK] = {
         /* 3: the order grains fire in; their pitch held to a scale; a random pitch per grain, up to +-PRND
          * semitones */
         {"PATN", 0, 3, 3, F_ENUM, N_PATN}, {"SCAL", 0, 4, 0, F_ENUM, N_GSCAL},
-        {"PRND", 0, 12, 0, F_ST}, {""},
+        {"PRND", 0, 12, 0, F_ST}, P_ROUT,
         /* 4: what grains read and where (grain.c), left to right as you set it up: SCAN, the track's TAPE or the
          * live buffer of the last bars, read stretching behind the write head (STR), at a spot (POS) or a delay
          * behind it (DLY); WARP, how fast the read point moves (TAPE, STR; 0 holds it, - backwards); OFST, POS's
@@ -86,7 +92,9 @@ static const pdesc_t DEV_P[NDEV][NPK] = {
         /* 2: a filter before the strings (cutoff, resonance, its slope: low-, band- or high-pass), and the
          * strings' tuning: the root's harmonics, or a scale's chord tones from the root */
         {"CUT", 0, 127, 127, F_HZ}, {"RES", 0, 100, 0, F_PCT},
-        {"SLOP", 0, 2, 0, F_ENUM, N_SLOP}, {"SCAL", 0, 3, 0, F_ENUM, N_RSCAL}},
+        {"SLOP", 0, 2, 0, F_ENUM, N_SLOP}, {"SCAL", 0, 3, 0, F_ENUM, N_RSCAL},
+        /* 3: how WET mixes the strings in (ROUT: INS or SEND) */
+        P_ROUT, {""}, {""}, {""}},
     {   /* COLOR (the S-4's DEFORM) */
         {"DRIV", 0, 100, 0, F_PCT}, {"CRSH", 0, 100, 0, F_PCT},
         {"NOIS", 0, 100, 0, F_PCT}, {"TILT", -100, 100, 0, F_BIPCT},
@@ -94,8 +102,9 @@ static const pdesc_t DEV_P[NDEV][NPK] = {
          * rate, both), dry/wet */
         {"NDEC", 0, 127, 40, F_TIME}, {"NTON", -100, 100, 0, F_BIPCT},
         {"CMOD", 0, 2, 0, F_ENUM, N_CMOD}, {"WET", 0, 100, 100, F_PCT},
-        /* 3: the output level (drive adds loudness) */
-        {"LVL", -24, 6, 0, F_DB}, {""}, {""}, {""}},
+        /* 3: the output level (drive adds loudness), how WET mixes COLOR in (ROUT: INS or SEND; a send of a sound
+         * nothing colours adds the dry to itself, +6 dB at WET 100: LVL is there for it) */
+        {"LVL", -24, 6, 0, F_DB}, P_ROUT, {""}, {""}},
     {   /* SPACE (the S-4's VAST) */
         {"TIME", 10, 370, 250, F_MS}, {"FDBK", 0, 100, 30, F_PCT},
         {"SIZE", 0, 100, 50, F_PCT}, {"DEC", 0, 100, 40, F_PCT},
