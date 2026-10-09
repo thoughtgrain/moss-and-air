@@ -12,5 +12,7 @@ The thanks, and how I try to be a good downstream, are in
 "Felucca" and why, is in [bryo/NOTICE.md](bryo/NOTICE.md). Everything inside `bryo/` is GPL-3.0-only, same as
 upstream.
 
-Where it stands: phase 1 of 10 (the skeleton) is done and host-verified; see [bryo/README.md](bryo/README.md)
-and the plan in [bryo/docs/bryo-architecture.md](bryo/docs/bryo-architecture.md).
+Where it stands: phases 1 to 7 of 10 are built and verified on the host (nothing has run on an FM-1 yet); see
+[bryo/docs/bryo-status.md](bryo/docs/bryo-status.md) for the state, the file map, how to build and test, the
+decisions and what's open, and [bryo/docs/bryo-architecture.md](bryo/docs/bryo-architecture.md) for each part as
+built.

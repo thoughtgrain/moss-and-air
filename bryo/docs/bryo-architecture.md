@@ -1,9 +1,13 @@
 # Bryo architecture: from the PRD to the FM-1
 
-Written 2026-10-07. This is my plan for turning the PRD (Bryo: a 4-track generative sound-sculpting
-instrument) into firmware on the FM-1. Nothing here is built yet. The PRD is the goal; this doc is where I
-check it against what the hardware can actually do, decide what to keep from Felucca, and set the order to
-build in.
+Written 2026-10-07 as the plan for turning the PRD (Bryo: a 4-track generative sound-sculpting instrument) into
+firmware on the FM-1: the PRD is the goal; this doc is where I check it against what the hardware can actually do,
+decide what to keep from Felucca, and set the order to build in. Since then each part has been built, and each has
+an "as built" section below saying how it works, what it costs, how it's tested and what I changed my mind on. The
+sections before "Phase 1, as built" are the plan as I wrote it (the module map there is the plan, not the files).
+
+**For where it all stands now, start with [bryo-status.md](bryo-status.md):** the state, the real file map, how
+to build, test and measure, the decisions and the open questions on one page.
 
 ## Decisions so far (2026-10-07)
 
@@ -177,12 +181,13 @@ and Felucca 1.0.3 the same way, as a yardstick:
 
 | Build | Code | Constants | Code in RAM | Sum |
 | --- | ---: | ---: | ---: | ---: |
-| Bryo now | 120 KB | 157 KB | 4 KB | 281 KB |
+| Bryo, 2026-10-08 | 120 KB | 157 KB | 4 KB | 281 KB |
+| Bryo, 2026-10-09 (modulation, LEVEL pages) | 139 KB | 159 KB | 4 KB | 302 KB |
 | Felucca 1.0.3 | 254 KB | 236 KB | 4 KB | 494 KB |
 
 Constants are the same bytes on any target. Code isn't: but Felucca shipped and fits its 568 KiB, so the pi32v2's
-code can be at most about 1.34 times this measure. That puts Bryo between about 270 and 320 KB, roughly half the
-room: 250 to 300 KB free. `./build.sh` prints the real number; that's the one to trust.
+code can be at most about 1.34 times this measure. That puts Bryo (2026-10-09) between about 300 and 350 KB:
+roughly 230 to 280 KB free. `./build.sh` prints the real number; that's the one to trust.
 
 Where Bryo's goes: the four factory reels 98 KB (ADPCM, 11 KB a second of sound), Felucca's anti-aliased fonts 43 KB
 (only their sizes are still used, by the boot, crash and update screens: about 40 KB to win back if it's needed,
@@ -260,7 +265,7 @@ cap), then RESONATOR strings, and never the tape itself. COLOR and SPACE aren't 
   (`editor*.c`); the editor protocol is entirely Felucca's parameters
 - their tests, the golden sound renders and CPU baselines, replaced by Bryo's own
 
-## The new module map
+## The new module map (the plan; the files as built are in bryo-status.md)
 
 All under `bryo/firmware/src/`. `bryo.c` replaces `felucca.c` as the single translation unit (the same
 unity-build approach), and `tools/build.py` points at it.
@@ -1344,7 +1349,7 @@ Each phase ends in something you can flash and hear or see, and each is its own 
 | 5. COLOR + SPACE (**done**, host-verified; see "COLOR, as built" and "SPACE, as built") | drive, crush, noise; delay and reverb | the full chain on 4 tracks inside the budget (on the host it isn't: everything on all four is 5,842; the device decides) |
 | 6. Mixer + routing (**done**, host-verified; routing early as REC IN; see "The mixer, as built") | GLO mixer, filters, compressor | the mixer's DSP |
 | 7. Modulation (**done** but p-locks, host-verified; see "Modulation, as built") | the 4 engines, hold-and-turn depth, assigning engines, SEQ steps, MONO's clear; p-locks wait on a decision | the PRD's §4 workflow end to end |
-| 8. Projects | save and recall with reels; user reel slots in flash and the upload tool; quick SAVE; undo for MONO and POLY | a power cycle brings a session back |
+| 8. Projects | save and recall with reels; the upload tool for user reels (the slots in flash are in, phase 2); quick SAVE (MONO's and POLY's undo came early, phases 2 and 7) | a power cycle brings a session back |
 | 9. Screen (mostly done early: the dot-grid screens) | the modulation arcs on the pictograms, the motion dots, the summed white dot | the PRD's §5 |
 | 10. Tools + docs | the upload tool for reels, the installer text, a Bryo manual | someone else can use it |
 

@@ -12,7 +12,8 @@ Felucca's own README is kept in [docs/FELUCCA-README.md](docs/FELUCCA-README.md)
 
 ## Where it stands
 
-**Phases 1 to 7 of 10, on the host** (p-locks still to decide). Each of the four tracks has a tape: a loop in RAM (IMA ADPCM at 22.05 kHz) that plays when
+**Phases 1 to 7 of 10, on the host** (p-locks still to decide; the whole picture, with the file map and what's open,
+is in [docs/bryo-status.md](docs/bryo-status.md)). Each of the four tracks has a tape: a loop in RAM (IMA ADPCM at 22.05 kHz) that plays when
 you press PLAY. The tracks share one memory (28 s in all) and each takes what it records: a blank tape grows while
 REC records it, and TRACKS (GLO held + SELECT) switches tracks off to give the rest more. To start, track n plays factory reel n (BEAT, KEYS, AIR, PLUK, made from material in
 this repository). The loop window, speed, reverse and half speed work; the white keys play 16 slices of the loop;
