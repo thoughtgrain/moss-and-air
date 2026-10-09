@@ -4195,7 +4195,7 @@ static void test_mod(void)
     press(B_FX);                                         /* COLOR */
     hold(B_LFO);
     turn(1, 5);                                          /* CRSH */
-    check("slot pad held + KNOB 2 on COLOR: slot 1's depth to CRSH", mdep[0][0][MOD_TG(DEV_COLOR, 1)] == 5);
+    check("slot pad held + KNOB 2 on COLOR: slot 1's depth to CRSH", mod_dep(0, 0, MOD_TG(DEV_COLOR, 1)) == 5);
     check("..the strip shows the depth while it's held", ui.slot_held == 0u);
     let_go(B_LFO);
     check("..let go after a turn: still COLOR (no page change)", ui.kind == FOCUS_DEV && ui.dev == DEV_COLOR &&
@@ -4216,12 +4216,12 @@ static void test_mod(void)
                                                                         ui.kind == FOCUS_DEV && ui.dev == DEV_SRC);
     turn(2, -10);                                        /* TAPE SPD */
     let_go(B_ENV);
-    check("..and KNOB 3 on TAPE: slot 2's depth to SPD", mdep[0][1][MOD_TSRC + TK_SPD] == -10);
-    check("..depths stay when the engine changes", mdep[0][0][MOD_TG(DEV_COLOR, 1)] == 5);
+    check("..and KNOB 3 on TAPE: slot 2's depth to SPD", mod_dep(0, 1, MOD_TSRC + TK_SPD) == -10);
+    check("..depths stay when the engine changes", mod_dep(0, 0, MOD_TG(DEV_COLOR, 1)) == 5);
     hold(B_LFO);
     turn(0, 3);                                          /* TAPE's REEL is on page 3: page 1 knob 1 is STRT */
     let_go(B_LFO);
-    check("hold + turn on the source: the depth for that source's knob", mdep[0][0][MOD_TSRC + TK_STRT] == 3);
+    check("hold + turn on the source: the depth for that source's knob", mod_dep(0, 0, MOD_TSRC + TK_STRT) == 3);
     hold(B_GLO);
     press(B_EDIT);                                       /* the channel strip */
     let_go(B_GLO);
@@ -4229,7 +4229,7 @@ static void test_mod(void)
         hold(B_SEQ);
         turn(3, 20);
         let_go(B_SEQ);
-        check("hold + turn on the channel strip: the depth to PAN", mdep[0][2][PAN] == 20);
+        check("hold + turn on the channel strip: the depth to PAN", mod_dep(0, 2, PAN) == 20);
     }
     press(B_HOME);
 
@@ -4290,6 +4290,23 @@ static void test_mod(void)
         check("..and they all run", TPD(0, DEV_GRAIN) == mda[0][DEV_GRAIN] && TPD(0, DEV_RESO) == mda[0][DEV_RESO]);
     }
     power_on();
+    {                                                    /* the depths are a short sorted list a track */
+        static mod_deps_t a;
+        power_on();
+        mod_nudge(0, 1, MOD_TG(DEV_COLOR, CP_DRIV), 20);
+        mod_nudge(0, 0, MOD_TCH + CH_PAN, -30);
+        mod_nudge(0, 3, MOD_TG(DEV_GRAIN, GP_WET), 10);
+        a = mdl[0];
+        power_on();
+        mod_nudge(0, 3, MOD_TG(DEV_GRAIN, GP_WET), 10);
+        mod_nudge(0, 0, MOD_TCH + CH_PAN, -30);
+        mod_nudge(0, 1, MOD_TG(DEV_COLOR, CP_DRIV), 20);
+        check("mod: the depths set in another order are the same list (sorted: projects fingerprint the same)",
+              !memcmp(&a, &mdl[0], sizeof a) && mod_count(0) == 3u && mdl[0].e[0].g == MOD_TG(DEV_GRAIN, GP_WET));
+        mod_nudge(0, 1, MOD_TG(DEV_COLOR, CP_DRIV), -20);
+        check("..a depth turned back to 0 leaves the list", mod_count(0) == 2u && !mod_dep(0, 1, MOD_TG(DEV_COLOR, CP_DRIV)));
+        power_on();
+    }
 }
 
 /* each source's LVL (its last page): -12 dB is a quarter of the sound, on TAPE, SYNTH and POLY alike; a target */
@@ -4739,7 +4756,7 @@ static void pj_scene(void)                               /* a session far from t
 static void test_projects(void)
 {
     static track_params_t want[NTRK];
-    static int8_t wdep[NTRK][NSLOT][MOD_NTGT];
+    static mod_deps_t wdep[NTRK];
     track_ctl_t wtr[NTRK];
     int16_t wmst[NMS];
     pj_hdr_t h;
@@ -4757,7 +4774,7 @@ static void test_projects(void)
     check("..a change makes the project changed", pj_changed());
     rc = pj_save(1);
     memcpy(want, tp, sizeof tp);
-    memcpy(wdep, mdep, sizeof mdep);
+    memcpy(wdep, mdl, sizeof mdl);
     memcpy(wtr, track, sizeof track);
     memcpy(wmst, mst, sizeof mst);
     pj_current(1, &h);
@@ -4766,7 +4783,7 @@ static void test_projects(void)
     power_on();                                          /* a power cycle */
     check("..power-on alone: the defaults (nothing loaded yet)", tp[1].src == SRC_TAPE && sys.bpm != 97);
     pj_boot();
-    same = !memcmp(tp, want, sizeof tp) && !memcmp(mdep, wdep, sizeof mdep) && !memcmp(mst, wmst, sizeof mst);
+    same = !memcmp(tp, want, sizeof tp) && !memcmp(mdl, wdep, sizeof mdl) && !memcmp(mst, wmst, sizeof mst);
     for (k = 0; k < NTRK; k++)
         same &= track[k].level == wtr[k].level && track[k].mute == wtr[k].mute && track[k].octave == wtr[k].octave;
     check("..booted: P2 back as saved: every knob, source, pattern, step, depth, level, mute, octave, the tempo",

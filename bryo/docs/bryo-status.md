@@ -82,7 +82,7 @@ One core, no RTOS. Three contexts, and the rules between them are most of the ar
 **Memory.** Sound lives in one pool of 152 chunks (28 s of tape-format sound: `mem.c`) handed out by use: tapes as
 long as what's on them, GRAIN's live buffers, RESONATOR's strings and SPACE's lines while they're on. Nothing is
 set aside per track. When it runs short: a cleared tape's chunks first, then a parked track's tape, then the end of
-the longest tape. Main RAM holds 87.2 of 96 KiB (.bss), the pool 326.2 of 336 KiB (2026-10-09 with DRUM, 32-bit
+the longest tape. Main RAM holds 81.0 of 96 KiB (.bss; 50.7 of it sound on purpose, the rest of the 96 the stack's), the pool 326.2 of 336 KiB (2026-10-09 with DRUM, 32-bit
 build: the firmware preprocessed, its inline assembly taken out, compiled `-m32 -Os`, `size -A`).
 
 **Parameters.** `param.c` holds every knob as an integer in its own range (`tp[t]`), with a descriptor (name,
@@ -125,7 +125,7 @@ Tests and tools:
 | File | What |
 | --- | --- |
 | `tests/run_tests.sh` | everything below that's quick, plus Felucca's kept hardware and installer tests; ends "ALL HOST TESTS PASSED" |
-| `tests/bryo_host.c` | Bryo's chain, input and screens on the host: 495 checks, and every screen rendered |
+| `tests/bryo_host.c` | Bryo's chain, input and screens on the host: 497 checks, and every screen rendered |
 | `tests/bryo_golden.txt`, `ui_golden.py` | each screen's pixel fingerprint |
 | `tests/checkpoint_sim.sh` | the hardware checkpoint on the host: 28 runs rendered to WAV, each one's cost under callgrind, and a stress test with the audio and USB interrupts cutting into the main loop while the memory's books are checked |
 | `tests/mod_audit.sh` | every knob a modulator can move: does it change the sound, does it step at the blocks, what it costs (`--cost`) |
@@ -207,6 +207,8 @@ number.
   cost 7 KB of main RAM.
 - **2026-10-09: every source has a LEVEL** on its last page, as the S-4 does; that needed five pages a device
   (NPK 20).
+- **2026-10-09: the modulation depths are a sorted list per track, not a dense table** (and storage.c streams a
+  page at a time): 6.2 KiB of main RAM back as stack headroom. `mod_dep()` / `mod_dep_set()` read and set them.
 - **2026-10-09: projects are a field-by-field stream, packed, never a struct dump** (versioned, counted arrays,
   clamped on load, depths by array and knob): a newer Bryo reads older projects. Six slots, A/B, Bryo's own magic so
   Felucca never misreads one. A take on a track's own tape goes into a user reel named after the project and track.

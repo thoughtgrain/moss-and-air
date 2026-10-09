@@ -283,8 +283,10 @@ static uint32_t pj_hash(void)
     const uint8_t *p;
     for (p = (const uint8_t *)tp, i = 0; i < sizeof tp; i++)
         h = (h ^ p[i]) * 16777619u;
-    for (p = (const uint8_t *)mdep, i = 0; i < sizeof mdep; i++)
-        h = (h ^ p[i]) * 16777619u;
+    for (t = 0; t < NTRK; t++)                           /* (the depths: sorted, so the same ones hash the same) */
+        for (i = 0; i < mdl[t].n; i++)
+            h = (h ^ (mdl[t].e[i].s | (uint32_t)mdl[t].e[i].g << 8 | (uint32_t)(uint8_t)mdl[t].e[i].d << 16 |
+                      t << 24)) * 16777619u;
     for (t = 0; t < NTRK; t++) {
         h = (h ^ (track[t].level | track[t].mute << 8 | track[t].octave << 16)) * 16777619u;
         if (pj_own_tape(t))                              /* (its own tape: what's recorded on it) */
@@ -298,7 +300,7 @@ static uint32_t pj_hash(void)
 /* the whole state into the stream (the writer set up) */
 static void pj_write_state(void)
 {
-    uint32_t t, s, b, n = 0, g;
+    uint32_t t, s, b, n = 0, i;
     pw_byte('B');
     pw_byte('P');
     pw_byte(PJ_VERSION);
@@ -335,21 +337,17 @@ static void pj_write_state(void)
             pw_a16(P->dins[s], NDIN);
     }
     for (t = 0; t < NTRK; t++)                           /* the depths, sparse: track, slot, array, knob, depth */
-        for (s = 0; s < NSLOT; s++)
-            for (g = 0; g < MOD_NTGT; g++)
-                n += mdep[t][s][g] != 0;
+        n += mdl[t].n;
     pw_u16(n);
     for (t = 0; t < NTRK; t++)
-        for (s = 0; s < NSLOT; s++)
-            for (g = 0; g < MOD_NTGT; g++)
-                if (mdep[t][s][g]) {
-                    uint32_t k, a = mod_tarr(g, &k);
-                    pw_byte((uint8_t)t);
-                    pw_byte((uint8_t)s);
-                    pw_byte((uint8_t)a);
-                    pw_byte((uint8_t)k);
-                    pw_byte((uint8_t)mdep[t][s][g]);
-                }
+        for (i = 0; i < mdl[t].n; i++) {
+            uint32_t k, a = mod_tarr(mdl[t].e[i].g, &k);
+            pw_byte((uint8_t)t);
+            pw_byte(mdl[t].e[i].s);
+            pw_byte((uint8_t)a);
+            pw_byte((uint8_t)k);
+            pw_byte((uint8_t)mdl[t].e[i].d);
+        }
 }
 
 /* knob k of array a (MA_* / DEV_*) as a modulation target, or MOD_NTGT */
@@ -390,9 +388,7 @@ static int pj_read_state(void)
     }
     param_defaults();                                    /* (what an older project doesn't have: as at power-on) */
     for (t = 0; t < NTRK; t++)
-        for (s = 0; s < NSLOT; s++)
-            for (i = 0; i < MOD_NTGT; i++)
-                mdep[t][s][i] = 0;
+        mdl[t].n = 0;
     sys.bpm = (uint16_t)clamp((int32_t)pr_u16(), 40, 240);
     sys.ntrk = (uint8_t)clamp(pr_byte(), 1, (int32_t)NTRK);
     pr_a16(mst, NMS, MS_P);
@@ -451,7 +447,7 @@ static int pj_read_state(void)
         uint32_t tt = pr_byte(), ss = pr_byte(), a = pr_byte(), k = pr_byte(), g = pj_target(a, k);
         int32_t dp = (int8_t)pr_byte();
         if (tt < NTRK && ss < NSLOT && g < MOD_NTGT && mod_tdesc(g))
-            mdep[tt][ss][g] = (int8_t)clamp(dp, -100, 100);
+            mod_dep_set(tt, ss, g, clamp(dp, -100, 100));   /* (past MOD_MAX a track: dropped) */
     }
     return 0;
 }

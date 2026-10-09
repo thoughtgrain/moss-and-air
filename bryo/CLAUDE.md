@@ -44,6 +44,7 @@ container; everything is verified on the host.
   `SYN_PK`, `POL_PK`, `ME_PK`), the controls map if a gesture changes, the screens' goldens. It's a modulation
   target automatically (`mod.c` numbers targets by `NPK`); a reel choice or anything the main loop allocates for
   must be excluded in `mod_tdesc`.
+- Modulation depths are read and set through `mod_dep()` / `mod_dep_set()` (a sorted list per track).
 - The device code reads knobs through `TPD(t, array)` (the modulated copy when there are depths), not `tp[t]`;
   the main loop's memory decisions read `tp[t]` and `mod_peak`. Pitches and cutoffs read `mod_pitch16` /
   `mod_fine8`.

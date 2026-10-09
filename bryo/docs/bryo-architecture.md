@@ -166,12 +166,31 @@ Why:
 | SYNTH | 576 | 4 tracks × 3 voices of oscillator and filter state (.bss) |
 | POLY | 8,288 | 4 tracks × 4 voices × a 256-sample block reader (pool), plus 448 B of voice state (.bss) |
 | The drive | 17,340 | the FAT, root and write cache of the USB drive (the 36 KB WAV inbox is gone: a WAV lands in shared memory) |
-| Modulation | 3,282 main RAM + 6,016 pool | the depths (a byte per slot per target) and MONO's undo in main RAM; the ISR's lists, the slots' state and the modulated knob arrays in the pool |
+| Modulation | 485 main RAM + 6,016 pool | the depths (a sorted list of up to 32 a track) and MONO's undo in main RAM; the ISR's lists, the slots' state and the modulated knob arrays in the pool |
+| Settings storage | 256 main RAM | a page of bounce buffer for the settings record (storage.c; it was a whole 3,840-byte payload) |
 | DRUM | 3,700 pool + 1,650 main RAM | 4 tracks × 5 voices (a voice's coefficients and state, 176 B) in the pool; each track's pattern, accents and the instruments' own knobs (304 B a track), the undo and the screen's render in main RAM |
 
 Measured now (KiB, 32-bit build, 2026-10-09 with DRUM): the pool holds 326.2 of 336 (9.8 spare; build.py keeps 8),
-main RAM's .bss 86.7 of 96. DRUM's voices first sat in main RAM and took it to 90.3; they're ISR-only state, so
-they moved to the pool with the rest of it. The USB record mode's two rings first went into main RAM and took it to 92.2, too close to the stack, so
+main RAM's .bss 81.0 of 96 (it was 87.2 before the RAM pass below). DRUM's voices first sat in main RAM and took
+it to 90.3; they're ISR-only state, so they moved to the pool with the rest of it.
+
+The RAM pass (2026-10-09). Main RAM's .bss isn't all overhead: 50.7 KB of it is sound (24 chunks of the shared
+memory live there on purpose), and what .bss leaves is the stack's. The deepest stack I can see on the host build
+(`-fstack-usage`) is the main loop's input path, about 2 KB, with the audio interrupt's chain (chain_block's 1.9 KB
+frame and what it calls, about 2.5 KB) nested on top and TIMER5 on that: 5 to 6 KB in all, so the 8.8 KiB left was
+enough but not generous. Two things were sized for jobs they no longer had:
+
+- the depths were a dense table, a byte for every slot x target x track (2,624 B, and MONO's undo a copy of a
+  track's, 658 B), when a track can only have 32 depths (mod_nudge refuses more). They're a list per track now,
+  sorted by target and slot (so the same depths are the same bytes, which the project's fingerprint relies on, and
+  mod_rebuild needs no sort): 388 B, the undo 97. Read through `mod_dep()`, set through `mod_dep_set()`.
+- storage.c's buffer held a whole payload (3,840 B) from when Felucca kept its projects there; only the 572-byte
+  settings record uses it now. A payload is checked in place a page at a time, read straight into the caller's
+  buffer, and programmed through a 256-byte bounce buffer (the driver wants RAM sources). Felucca's own storage test
+  (torn writes at every byte, bit rot, sequence wrap) passes unchanged.
+
+6.2 KiB back, all of it left as stack headroom (15 KiB free). The 24 sound chunks, the screen's line buffers and the
+update path's buffers stay as they are. The USB record mode's two rings first went into main RAM and took it to 92.2, too close to the stack, so
 they live in the pool's room that was kept for USB audio in.
 
 What gives way when memory runs short: chunks come off a cleared tape first, then a parked track's tape (TRACKS),
@@ -1015,7 +1034,8 @@ into the project loaded or saved last, without asking: that's the quick save the
 always), parks tracks above TRACKS, and drops the undo buffers (they belonged to the session before). Each track's
 own RAM tape is let go: what a project keeps of a tape is in its reel.
 
-**What it costs:** 0.5 KB of main RAM (the page buffer, the packer, the six summaries; .bss now 87.2 of 96 KiB). A
+**What it costs:** 0.5 KB of main RAM (the page buffer, the packer, the six summaries; .bss was 87.2 of 96 KiB then,
+81.0 after the RAM pass). A
 save erases and programs one sector (well under a second of flash work) plus a user reel for each new take (about a
 second each), with the sound stuttering while the flash holds the bus, as reel saves always have; the screen says
 SAVING first.
@@ -1267,7 +1287,8 @@ realistic four-track scene. Run 25 is the ceiling, and it's not a scene anyone p
 first 32 targets of each slot are (since the sources' LEVEL pages, NPK 20, those land on other knobs, and more
 devices wake: 3,123, up from 2,858; the modulation itself 469, 24 of it the pitch knobs' finer path).
 
-**Memory**: the depths and their undo 2.9 KB of main RAM (now 84.4 of 96 KiB, with five pages of knobs); the lists, the slots' state and the
+**Memory**: the depths and their undo 2.9 KB of main RAM when this was written (485 B since the RAM pass: a sorted
+list a track, see "Budgets"); the lists, the slots' state and the
 modulated arrays 5.9 KB of the pool (now 322.4 of 336 KiB). Code about 9 KB on the host measure.
 
 **What's still open:**

@@ -5,7 +5,7 @@
  * its whole range at the slot's full swing.
  *
  * How it runs (docs/bryo-architecture.md, "Modulation, as built"):
- *   main loop  owns the depths (mdep). Every change rebuilds the track's list of the depths that aren't 0, sorted
+ *   main loop  owns the depths (mdl: each track's, a short list). Every change rebuilds the track's list of the depths that aren't 0, sorted
  *              by target, into the buffer the ISR isn't reading, then flips mod_cur[t] (one byte). The ISR can't
  *              be interrupted by the main loop, so it always reads a whole list.
  *   audio ISR  once per control block, before any track renders (mod_tick): the clock, then for each track with a
@@ -39,11 +39,66 @@ enum { MA_SYN = NDEV, MA_POL, MA_DRM, MA_CH, MOD_NARR };   /* the knob arrays: d
                                                              * the channel */
 
 /* ------------------------------------------------------------ depths --- */
-static int8_t mdep[NTRK][NSLOT][MOD_NTGT];   /* main loop only: the depth from slot s to target g, -100..100 */
+/* The depths themselves, main loop only: a track's depths that aren't 0, each (slot, target, depth -100..100), kept
+ * sorted by target then slot. A track has at most MOD_MAX of them (mod_nudge refuses more), so a list that long holds
+ * everything a dense table of every slot x target would (2,624 bytes of mostly zeros, plus as much again for MONO's
+ * undo) in 97 bytes a track; and sorted, the same depths are always the same bytes (the project's fingerprint) */
+typedef struct {
+    uint8_t s, g;                    /* slot, target */
+    int8_t d;                        /* depth, % */
+} mod_dep_t;
+typedef struct {
+    uint8_t n;
+    mod_dep_t e[MOD_MAX];
+} mod_deps_t;
+static mod_deps_t mdl[NTRK];
 static struct {                              /* MONO's clear and SAVE's undo of it: one track's depths */
-    int8_t dep[NSLOT][MOD_NTGT];
+    mod_deps_t dep;
     uint8_t trk, valid;
 } mod_undo_buf;
+
+/* main loop: slot s's depth to target g on track t (0: none) */
+static int32_t mod_dep(uint32_t t, uint32_t s, uint32_t g)
+{
+    uint32_t i;
+    if (t >= NTRK)
+        return 0;
+    for (i = 0; i < mdl[t].n; i++)
+        if (mdl[t].e[i].g == g && mdl[t].e[i].s == s)
+            return mdl[t].e[i].d;
+    return 0;
+}
+
+/* main loop: slot s's depth to target g on track t set to v (0: removed). 0, or -1: a new depth and the track has
+ * MOD_MAX already. (The list only: mod_rebuild publishes it.) */
+static int mod_dep_set(uint32_t t, uint32_t s, uint32_t g, int32_t v)
+{
+    mod_deps_t *L = &mdl[t % NTRK];
+    uint32_t i, j;
+    for (i = 0; i < L->n && (L->e[i].g < g || (L->e[i].g == g && L->e[i].s < s)); i++)
+        ;
+    if (i < L->n && L->e[i].g == g && L->e[i].s == s) {  /* there: changed, or gone */
+        if (v) {
+            L->e[i].d = (int8_t)v;
+        } else {
+            for (j = i; j + 1u < L->n; j++)
+                L->e[j] = L->e[j + 1u];
+            L->n--;
+        }
+        return 0;
+    }
+    if (!v)
+        return 0;
+    if (L->n >= MOD_MAX)
+        return -1;
+    for (j = L->n; j > i; j--)                           /* a new one, in its place */
+        L->e[j] = L->e[j - 1u];
+    L->e[i].s = (uint8_t)s;
+    L->e[i].g = (uint8_t)g;
+    L->e[i].d = (int8_t)v;
+    L->n++;
+    return 0;
+}
 
 /* the knobs that modulate finer than the knob (below): four pitches, then four filter cutoffs */
 enum { FN_SYN, FN_POL, FN_RESO, FN_GRAIN, FN_SCUT, FN_PCUT, FN_RCUT, FN_FILT, FN_N };
@@ -72,7 +127,6 @@ typedef struct {
 } mod_list_t;
 static mod_list_t mod_l[NTRK][2] __attribute__((section(".pool")));
 static volatile uint8_t mod_cur[NTRK];       /* the list the ISR reads */
-static uint8_t mod_n[NTRK];                  /* main loop: the depths that aren't 0 on each track */
 static volatile uint8_t mod_on;              /* the tracks with a list, a bit each (the ISR skips the rest) */
 
 /* target g's descriptor (0: not a target) */
@@ -113,39 +167,36 @@ static int16_t *mod_base(uint32_t t, uint32_t a)
 /* main loop: track t's list from its depths, published whole */
 static void mod_rebuild(uint32_t t)
 {
-    uint32_t b = mod_cur[t] ^ 1u, g, s, n = 0;
+    uint32_t b = mod_cur[t] ^ 1u, i;
     mod_list_t *L = &mod_l[t][b];
     L->n = 0;
     L->used = 0;
     L->arrs = 0;
-    for (g = 0; g < MOD_NTGT; g++)
-        for (s = 0; s < NSLOT; s++)
-            if (mdep[t][s][g]) {
-                const pdesc_t *d = mod_tdesc(g);
-                uint32_t k, a = mod_tarr(g, &k);
-                mod_ent_t *e = &L->e[L->n];
-                n++;
-                if (!d || L->n >= MOD_MAX)
-                    continue;
-                e->slot = (uint8_t)(s | mod_fine_of(a, k) << 4);
-                e->arr = (uint8_t)a;
-                e->k = (uint8_t)k;
-                e->tgt = (uint8_t)g;
-                e->lo = d->min;
-                e->hi = d->max;
-                e->fq = mdep[t][s][g] * (d->max - d->min) * 1280 / 1000;   /* (2^22 / (100 x 32767) = 1.28) */
-                L->used |= (uint8_t)(1u << s);
-                L->arrs |= (uint16_t)(1u << a);
-                L->n++;
-            }
-    mod_n[t] = (uint8_t)(n < 255u ? n : 255u);
+    for (i = 0; i < mdl[t].n; i++) {                     /* (already sorted by target, then slot) */
+        uint32_t g = mdl[t].e[i].g, s = mdl[t].e[i].s, k, a;
+        const pdesc_t *d = mod_tdesc(g);
+        mod_ent_t *e = &L->e[L->n];
+        if (!d || L->n >= MOD_MAX)
+            continue;
+        a = mod_tarr(g, &k);
+        e->slot = (uint8_t)(s | mod_fine_of(a, k) << 4);
+        e->arr = (uint8_t)a;
+        e->k = (uint8_t)k;
+        e->tgt = (uint8_t)g;
+        e->lo = d->min;
+        e->hi = d->max;
+        e->fq = mdl[t].e[i].d * (d->max - d->min) * 1280 / 1000;   /* (2^22 / (100 x 32767) = 1.28) */
+        L->used |= (uint8_t)(1u << s);
+        L->arrs |= (uint16_t)(1u << a);
+        L->n++;
+    }
     RING_PUBLISH();
     mod_cur[t] = (uint8_t)b;
     mod_on = (uint8_t)((mod_on & ~(1u << t)) | (L->n ? 1u << t : 0u));
 }
 
 /* main loop: the depths that aren't 0 on track t */
-static uint32_t mod_count(uint32_t t) { return t < NTRK ? mod_n[t] : 0u; }
+static uint32_t mod_count(uint32_t t) { return t < NTRK ? mdl[t].n : 0u; }
 
 /* main loop: slot s's depth to target g on track t, nudged by d (%). Returns the new depth, or -128 when g can't be
  * modulated or the track already has MOD_MAX depths */
@@ -154,10 +205,10 @@ static int32_t mod_nudge(uint32_t t, uint32_t s, uint32_t g, int32_t d)
     int32_t v;
     if (t >= NTRK || s >= NSLOT || !mod_tdesc(g))
         return -128;
-    v = clamp(mdep[t][s][g] + d, -100, 100);
-    if (!mdep[t][s][g] && v && mod_count(t) >= MOD_MAX)
+    v = clamp(mod_dep(t, s, g) + d, -100, 100);
+    if (!mod_dep(t, s, g) && v && mod_count(t) >= MOD_MAX)
         return -128;
-    mdep[t][s][g] = (int8_t)v;
+    mod_dep_set(t, s, g, v);
     mod_rebuild(t);
     return v;
 }
@@ -165,9 +216,9 @@ static int32_t mod_nudge(uint32_t t, uint32_t s, uint32_t g, int32_t d)
 /* main loop: any slot's depth to target g on track t (the strip marks those knobs) */
 static int mod_any(uint32_t t, uint32_t g)
 {
-    uint32_t s;
-    for (s = 0; s < NSLOT && g < MOD_NTGT; s++)
-        if (mdep[t][s][g])
+    uint32_t i;
+    for (i = 0; t < NTRK && i < mdl[t].n; i++)
+        if (mdl[t].e[i].g == g)
             return 1;
     return 0;
 }
@@ -175,16 +226,12 @@ static int mod_any(uint32_t t, uint32_t g)
 /* main loop: MONO held. Track t's depths go (kept for SAVE's undo); its slots' knobs stay. 0: there were none. */
 static int mod_clear(uint32_t t)
 {
-    uint32_t s, g;
     if (!mod_count(t))
         return 0;
-    for (s = 0; s < NSLOT; s++)
-        for (g = 0; g < MOD_NTGT; g++) {
-            mod_undo_buf.dep[s][g] = mdep[t][s][g];
-            mdep[t][s][g] = 0;
-        }
+    mod_undo_buf.dep = mdl[t];
     mod_undo_buf.trk = (uint8_t)t;
     mod_undo_buf.valid = 1;
+    mdl[t].n = 0;
     mod_rebuild(t);
     return 1;
 }
@@ -192,12 +239,10 @@ static int mod_clear(uint32_t t)
 /* main loop: SAVE held after a clear. -1: nothing to undo */
 static int mod_undo(void)
 {
-    uint32_t s, g, t = mod_undo_buf.trk;
+    uint32_t t = mod_undo_buf.trk;
     if (!mod_undo_buf.valid || t >= NTRK)
         return -1;
-    for (s = 0; s < NSLOT; s++)
-        for (g = 0; g < MOD_NTGT; g++)
-            mdep[t][s][g] = mod_undo_buf.dep[s][g];
+    mdl[t] = mod_undo_buf.dep;
     mod_undo_buf.valid = 0;
     mod_rebuild(t);
     return 0;
@@ -210,11 +255,12 @@ static int32_t mod_peak(uint32_t t, uint32_t g)
     const pdesc_t *d;
     uint32_t k, a = mod_tarr(g, &k);
     int32_t v = mod_base(t, a)[k], s, span;
-    if (!mod_n[t] || !(d = mod_tdesc(g)))              /* (the common case: no depths on the track) */
+    if (!mdl[t].n || !(d = mod_tdesc(g)))              /* (the common case: no depths on the track) */
         return v;
     span = 0;
-    for (s = 0; s < (int32_t)NSLOT; s++)
-        span += mdep[t][s][g] < 0 ? -mdep[t][s][g] : mdep[t][s][g];
+    for (s = 0; s < (int32_t)mdl[t].n; s++)
+        if (mdl[t].e[s].g == g)
+            span += mdl[t].e[s].d < 0 ? -mdl[t].e[s].d : mdl[t].e[s].d;
     return clamp(v + span * (d->max - d->min) / 100, d->min, d->max);
 }
 
@@ -577,19 +623,17 @@ static void mod_follow(mod_rt_t *m, const int16_t *v, const int32_t *in)
 /* power-on (chain_init): no depths, every slot at rest, the clock at 0 */
 static void mod_init(void)
 {
-    uint32_t t, s, g;
+    uint32_t t, s;
     for (t = 0; t < NTRK; t++) {
         for (s = 0; s < NSLOT; s++) {
             mod_rt_t z = {0};
             mrt[t][s] = z;
-            for (g = 0; g < MOD_NTGT; g++)
-                mdep[t][s][g] = 0;
         }
+        mdl[t].n = 0;
         mod_l[t][0].n = mod_l[t][1].n = 0;
         mod_l[t][0].used = mod_l[t][1].used = 0;
         mod_l[t][0].arrs = mod_l[t][1].arrs = 0;
         mod_cur[t] = 0;
-        mod_n[t] = 0;
         mod_on = 0;
         mod_keys_prev[t] = 0;
         mod_arrs[t] = 0;

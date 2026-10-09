@@ -273,7 +273,7 @@ static void draw_strip(void)
             sig = (sig ^ (uint32_t)(meter_w(track_rt[k].peak, 19) | track[k].mute << 8)) * 16777619u;
         if (page_target(k) < MOD_NTGT)                  /* the depths: the marks, the held slot's values */
             sig = (sig ^ (uint32_t)(mod_any(sys.sel, page_target(k)) |
-                                    (ui.slot_held < NSLOT ? (mdep[sys.sel][ui.slot_held][page_target(k)] + 256) << 1 : 0))) * 16777619u;
+                                    (ui.slot_held < NSLOT ? (mod_dep(sys.sel, ui.slot_held, page_target(k)) + 256) << 1 : 0))) * 16777619u;
     }
     sig += ui.slot_held * 2909u + ui.drm_inst * 6151u;
     sig += (ui.last < 4u ? ui.last + 1u : 0u) * 7919u + sys.ntrk * 15485863u + sys.sel * 104729u + ui.view * 31u + ui.page * 263u + ui.chan * 5u + ui.kind * 131u +
@@ -316,7 +316,7 @@ static void draw_strip(void)
         if (page_target(k) < MOD_NTGT && mod_any(sys.sel, page_target(k)))   /* modulated: a mark in the corner */
             px_box(x + 26, 1, 2, 2, px_ink);
         if (ui.slot_held < NSLOT && page_target(k) < MOD_NTGT) {   /* a slot's pad held: its depth to this knob */
-            int32_t dp = mdep[sys.sel][ui.slot_held][page_target(k)];
+            int32_t dp = mod_dep(sys.sel, ui.slot_held, page_target(k));
             if (!mod_tdesc(page_target(k))) {
                 px_text_c(x, 30, 37, PXF_5, "--", px_dim);
                 continue;

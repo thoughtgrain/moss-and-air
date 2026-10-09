@@ -39,20 +39,20 @@ static int st_read(uint32_t off, void *dst, uint32_t n);
 static int st_erase(uint32_t off);
 static int st_prog(uint32_t off, const void *src, uint32_t n);
 
-static uint32_t st_crc32(const void *p, uint32_t n)   /* zlib CRC-32, 4 bits per step */
+static uint32_t st_crc_upd(uint32_t c, const void *p, uint32_t n)   /* zlib CRC-32, 4 bits per step, carried on */
 {
     static const uint32_t T[16] = {
         0x00000000u, 0x1DB71064u, 0x3B6E20C8u, 0x26D930ACu, 0x76DC4190u, 0x6B6B51F4u, 0x4DB26158u, 0x5005713Cu,
         0xEDB88320u, 0xF00F9344u, 0xD6D6A3E8u, 0xCB61B38Cu, 0x9B64C2B0u, 0x86D3D2D4u, 0xA00AE278u, 0xBDBDF21Cu};
     const uint8_t *b = p;
-    uint32_t c = 0xFFFFFFFFu;
     while (n--) {
         c ^= *b++;
         c = (c >> 4) ^ T[c & 15u];
         c = (c >> 4) ^ T[c & 15u];
     }
-    return ~c;
+    return c;
 }
+static uint32_t st_crc32(const void *p, uint32_t n) { return ~st_crc_upd(0xFFFFFFFFu, p, n); }
 
 static uint32_t st_sector(uint32_t obj, uint32_t copy)  /* flash offset of copy A (0) / B (1) */
 {
@@ -65,7 +65,11 @@ static uint32_t st_sector(uint32_t obj, uint32_t copy)  /* flash offset of copy 
     return 0x97000u + (obj - OBJ_PROJECT0) * 2u * ST_SECTOR + copy * ST_SECTOR;
 }
 
-static uint8_t st_buf[ST_PAYLOAD_MAX] __attribute__((aligned(4)));
+/* A page of bounce buffer (Bryo: it held a whole payload, 3,840 bytes, when Felucca stored projects here; settings
+ * are 572 now, so payloads stream through a page at a time: checked in place, read straight into the caller's
+ * buffer, programmed from this RAM copy a page at a time, as the driver wants RAM sources) */
+#define ST_CHUNK 256u
+static uint8_t st_buf[ST_CHUNK] __attribute__((aligned(4)));
 
 static int st_head(uint32_t obj, uint32_t copy, st_hdr_t *h)   /* commit record valid: 0 */
 {
@@ -79,16 +83,21 @@ static int st_head(uint32_t obj, uint32_t copy, st_hdr_t *h)   /* commit record 
     return 0;
 }
 
-static int st_body(uint32_t obj, uint32_t copy, const st_hdr_t *h)   /* payload -> st_buf, CRC ok: 0 */
+static int st_body(uint32_t obj, uint32_t copy, const st_hdr_t *h)   /* the payload's CRC ok: 0 */
 {
-    if (st_read(st_sector(obj, copy) + ST_PAYLOAD_OFF, st_buf, h->len) || st_crc32(st_buf, h->len) != h->crc)
-        return -1;
-    return 0;
+    uint32_t off, c = 0xFFFFFFFFu, base = st_sector(obj, copy) + ST_PAYLOAD_OFF;
+    for (off = 0; off < h->len; off += ST_CHUNK) {
+        uint32_t n = h->len - off < ST_CHUNK ? h->len - off : ST_CHUNK;
+        if (st_read(base + off, st_buf, n))
+            return -1;
+        c = st_crc_upd(c, st_buf, n);
+    }
+    return ~c == h->crc ? 0 : -1;
 }
 
 /* the current copy: the newest valid sequence (A on a tie), -1 when
- * neither is valid. Headers first, so only the winner's payload is read (it
- * is left in st_buf); *h gets its header. */
+ * neither is valid. Headers first, so only the winner's payload is checked;
+ * *h gets its header. */
 static int st_current(uint32_t obj, st_hdr_t *h)
 {
     st_hdr_t a, b;
@@ -114,12 +123,12 @@ static int st_current(uint32_t obj, st_hdr_t *h)
 /* load the whole object into dst; returns its length, or -1 if it does not fit */
 static int st_load(uint32_t obj, void *dst, uint32_t max)
 {
-    uint32_t i;
     st_hdr_t h;
-    if (obj >= OBJ_COUNT || st_current(obj, &h) < 0 || h.len > max)
+    int c;
+    if (obj >= OBJ_COUNT || (c = st_current(obj, &h)) < 0 || h.len > max)
         return -1;
-    for (i = 0; i < h.len; i++)
-        ((uint8_t *)dst)[i] = st_buf[i];
+    if (st_read(st_sector(obj, (uint32_t)c) + ST_PAYLOAD_OFF, dst, h.len))   /* (checked above: read it in) */
+        return -1;
     return (int)h.len;
 }
 
@@ -136,13 +145,13 @@ static int st_save_to(uint32_t obj, const void *src, uint32_t len, int to)
     if (to < 0)
         to = cur == 0 ? 1 : 0;                        /* write the other copy */
     base = st_sector(obj, (uint32_t)to);
-    for (off = 0; off < len; off++)
-        st_buf[off] = ((const uint8_t *)src)[off];    /* the driver wants RAM sources */
     if ((rc = st_erase(base)) != 0)
         return rc;
-    for (off = 0; off < len; off += 256u) {
-        uint32_t n = len - off > 256u ? 256u : len - off;
-        if ((rc = st_prog(base + ST_PAYLOAD_OFF + off, st_buf + off, n)) != 0)
+    for (off = 0; off < len; off += ST_CHUNK) {
+        uint32_t n = len - off > ST_CHUNK ? ST_CHUNK : len - off, i;
+        for (i = 0; i < n; i++)
+            st_buf[i] = ((const uint8_t *)src)[off + i];   /* the driver wants RAM sources */
+        if ((rc = st_prog(base + ST_PAYLOAD_OFF + off, st_buf, n)) != 0)
             return rc;
     }
     h.magic = ST_MAGIC;
@@ -150,7 +159,7 @@ static int st_save_to(uint32_t obj, const void *src, uint32_t len, int to)
     h.slot = (uint16_t)to;
     h.seq = seq + 1u;
     h.len = len;
-    h.crc = st_crc32(st_buf, len);
+    h.crc = st_crc32(src, len);
     h.rsv[0] = h.rsv[1] = 0xFFFFFFFFu;
     h.hcrc = st_crc32(&h, sizeof h - 4u);
     if ((rc = st_prog(base, &h, sizeof h)) != 0)       /* the commit record, last */
