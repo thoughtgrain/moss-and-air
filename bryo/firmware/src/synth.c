@@ -131,7 +131,8 @@ static void syn_voice(uint32_t t, syn_voice_t *v, int32_t *out, uint32_t n)
                                                                            * when it's modulated: mod.c) */
     inc1 = pitch_inc((uint32_t)pp);
     inc2 = p[SY_DTUN] ? cents_inc(pp, p[SY_DTUN], 0) : inc1;
-    cut = (p[SY_CUT] << 8) + p[SY_ENV] * 96 * (e15 >> 7) / 100 + p[SY_KTRK] * (pp - 60 * 16) * 16 / 100;
+    cut = mod_fine8(t, FN_SCUT, p[SY_CUT]) + p[SY_ENV] * 96 * (e15 >> 7) / 100 + p[SY_KTRK] * (pp - 60 * 16) * 16 / 100;
+                                                            /* (CUT finer than its semitones when modulated: mod.c) */
     tsvf_coef(&flt, cut, p[SY_RES] * 127 / 100);
     for (i = 0; i < n; i++) {
         int32_t a, b, s, y, k;

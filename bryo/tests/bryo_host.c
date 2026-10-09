@@ -4477,6 +4477,40 @@ static void test_mod_engines(void)
         sys.playing = 0;
         check("..a SEQ on TUNE lands on semitones (a step is a note)", fine == 0u && f % 16u == 0u);
     }
+    /* the filters' cutoffs modulate finer than their semitones: a slow sweep moves a little every block, never in
+     * whole-step jumps (SYNTH's CUT, POLY's, RESONATOR's, the channel's FILT) */
+    {
+        static const uint32_t FNS[4] = {FN_SCUT, FN_PCUT, FN_RCUT, FN_FILT};
+        static const char *const NAME[4] = {"mod: SYNTH's CUT sweeps in 1/256 steps (no semitone staircase)",
+                                            "..POLY's CUT", "..RESONATOR's CUT", "..the channel's FILT (1/256 of its 1 % steps)"};
+        uint32_t w, b;
+        for (w = 0; w < 4u; w++) {
+            uint32_t g = w == 0u ? MOD_TSRC + SRC_SYNTH * NPK + SY_CUT : w == 1u ? MOD_TSRC + SRC_POLY * NPK + PL_CUT
+                       : w == 2u ? MOD_TG(DEV_RESO, RP_CUT) : MOD_TCH + CH_FILT;
+            uint32_t k, a = mod_tarr(g, &k), frac = 0, big = 0;
+            int32_t prev = 0;
+            power_on();
+            mod_base(0, a)[k] = (int16_t)(w == 3u ? -40 : 60);
+            tp[0].mod[0][0] = 20;                        /* a slow triangle */
+            tp[0].mod[0][1] = 1;
+            tp[0].mod[0][12] = 0;
+            mod_nudge(0, 0, g, 20);
+            for (b = 0; b < 2000u; b++) {
+                static const int32_t zero[CTL];
+                const int32_t *last[NTRK] = {zero, zero, zero, zero};
+                int32_t v;
+                mod_tick(0, 0, last);
+                v = mod_fine8(0, FNS[w], TPD(0, a)[k]);
+                frac += (v & 255) != 0;
+                if (b && (v - prev > 128 || prev - v > 128))
+                    big++;
+                prev = v;
+            }
+            check(NAME[w], frac > 1500u && big == 0u && (mod_fmask[0] >> FNS[w]) & 1u);
+        }
+        check("..and a cutoff reads as the knob x 256 when nothing modulates it", mod_fine8(1, FN_SCUT, 64) == 64 * 256);
+        power_on();
+    }
     /* RESONATOR's root glides when PTCH moves (half the way a block), so the strings' read point never jumps */
     {
         int32_t r0, r1;

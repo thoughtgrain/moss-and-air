@@ -1121,9 +1121,16 @@ applied a block at a time in steps does), and, with `--cost`, the instructions.
 - Cost: a slot with one depth adds about 20 instructions a sample; what the device does with the moving knob comes
   on top, in proportion (the channel filter switched on, more grains at a higher RATE, more notes overlapping with a
   longer REL). Nothing costs more just for being modulated.
-- The knobs' own resolution still shows on slow, deep sweeps of a few: CUT moves in semitones (SYNTH's, POLY's,
-  RESONATOR's), LVL in dB. Not a click; a sweep you can count with high resonance. The fine path that pitch uses would
-  carry CUT too, if it's ever heard.
+- The filters' cutoffs modulate finely too (2026-10-09): SYNTH's, POLY's and RESONATOR's CUT and the channel's FILT
+  join the pitches on the fine path, which now keeps 1/256 of a knob's step (`mod_f8`; pitches read it as 1/16
+  semitones through `mod_pitch16`, cutoffs as their Q8 through `mod_fine8`). A knob holds whole semitones of the
+  filter's scale (FILT whole percent), so a slow, deep, resonant sweep climbed a staircase: on a 0.06 Hz sweep,
+  a semitone every 110 ms. Now the cutoff moves a little every block. The proof is in the tests (each filter gets a
+  value off the semitones on 3 blocks in 4 and never moves more than half a step between blocks); my audio measure
+  (the resonance's peak tracked over noise) was too jittery to see a staircase that fine either way, so the before
+  and after renders are for the ear. Cost: 5 more on the modulated groove (run 24: 1,798), the channel filter's
+  coefficients now made every block while FILT moves. Unmodulated, every cutoff is exactly what it was.
+- LVL still moves in whole dB under modulation (ramped across each block, so no step is heard as a click).
 
 **The clock** is one counter of beats (Q16), counted exactly from the tempo with its remainder carried, reset when
 PLAY starts and running on while stopped, so a synced LFO still moves when you're tweaking a stopped loop.
@@ -1155,6 +1162,13 @@ modulated arrays 5.9 KB of the pool (now 322.4 of 336 KiB). Code about 9 KB on t
 - **LFO RATE with SYNC BPM** prints its 0..127, not the division it picked. The strip's format is per knob, not per
   mode; it's a small change in the strip I'd rather make with phase 9's modulation arcs.
 - **Seeing it move.** The pictures still draw the knobs as set; phase 9 adds the arcs and the moving dot.
+- **SPRD on PAN, a known consideration** (decided 2026-10-09 to leave it for now). SPRD gives the left and right
+  channels their own pan; PAN is a balance (tracks are stereo), so at SPRD 100 the two swing apart in opposite
+  directions and each turns its own side down at the same time: the sound pulses (a tremolo) instead of moving.
+  Around 50 it circles. The S-4's SPREAD means the same (the right channel's modulation shifted against the left),
+  but there it probably reaches every stereo parameter. Options I laid out: keep it; make SPRD on PAN a width
+  (always movement); or let SPRD reach every knob of the parts that already run left and right apart (COLOR, the
+  channel strip), the S-4's way, measured before it's kept. My lean is the last.
 
 **Tests** (`test_mod`, `test_mod_engines`): no depths, no copy; the reels and empty knobs can't be targets; an LFO
 at 100 sweeps PAN end to end, at 25 a quarter each way, clamped at the ends; AMT 0 silences a slot; SPRD mirrors

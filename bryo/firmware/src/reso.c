@@ -142,9 +142,10 @@ static void reso_block(uint32_t t, int32_t *l, int32_t *r, uint32_t keys, int pl
     {   /* what excites the strings: the track, mono, through the filter in front (when it does anything) */
         int32_t mode = clamp(p[RP_SLOP], 0, 2);
         tsvf_t flt;
-        int filt = p[RP_CUT] < 127 || p[RP_RES] || mode;
+        int32_t c8 = mod_fine8(t, FN_RCUT, p[RP_CUT]);   /* (CUT finer than its semitones when modulated: mod.c) */
+        int filt = c8 < 127 << 8 || p[RP_RES] || mode;
         if (filt)
-            tsvf_coef(&flt, p[RP_CUT] << 8, p[RP_RES] * 127 / 100);
+            tsvf_coef(&flt, c8, p[RP_RES] * 127 / 100);
         for (i = 0; i < n; i++) {
             int32_t x = (l[i] + r[i]) >> 1;
             e[i] = filt ? tsvf_mode(&flt, x >> 1, &R->ic1, &R->ic2, (uint32_t)mode) << 1 : x;

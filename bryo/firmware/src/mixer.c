@@ -37,7 +37,7 @@ typedef struct {                     /* ISR only */
     int16_t lo_seen, hi_seen;        /* LOW and HIGH the coefficients were made for */
     int32_t klo, khi;                /* .. the coefficients, Q15 */
     int32_t f1[2], f2[2];            /* the filter's state, each side */
-    int16_t filt_seen;               /* FILT the coefficients were made for (-32768: none) */
+    int32_t filt_seen;               /* FILT the coefficients were made for, Q8 (CH_NONE: none) */
     tsvf_t fc;
     int32_t pl, pr;                  /* the pan's gains last block, Q15 */
 } chan_t;
@@ -95,11 +95,14 @@ static int32_t ch_shelf_k(int32_t fm, int32_t db, int high)
     return (int32_t)(((uint32_t)t << 15) / (uint32_t)(65536 + t));
 }
 
-/* FILT -100..100 as the filter's corner on tsvf's scale (CUTOFF_HZ: 30 Hz at 0, 14 steps an octave), Q8 */
-static int32_t ch_cut(int32_t f)
+#define CH_NONE (-(1 << 30))
+
+/* FILT -100..100, Q8 (finer than its 1 % steps when it's modulated: mod.c), as the filter's corner on tsvf's scale
+ * (CUTOFF_HZ: 30 Hz at 0, 14 steps an octave), Q8 */
+static int32_t ch_cut(int32_t f8)
 {
-    int32_t oct = f < 0 ? 8000 + f * 68 : f * 68;       /* octaves above 40 Hz, x1000 */
-    return 14 * 256 * oct / 1000 + 1490;                /* (+ log2(40 / 30) octaves) */
+    int32_t oct8 = f8 < 0 ? 8000 * 256 + f8 * 68 : f8 * 68;   /* octaves above 40 Hz, x1000, Q8 */
+    return 14 * oct8 / 1000 + 1490;                     /* (+ log2(40 / 30) octaves) */
 }
 
 /* audio ISR: track t's channel strip on its stereo block, before its level (LOW HIGH FILT) */
@@ -108,12 +111,14 @@ static void mix_channel(uint32_t t, int32_t *l, int32_t *r, uint32_t n)
     chan_t *C = &chan[t];
     const int16_t *ch = TPD(t, MA_CH);
     int32_t glo = ch[CH_LOW] ? db_q10(ch[CH_LOW]) * 4 - 4096 : 0, ghi = ch[CH_HIGH] ? db_q10(ch[CH_HIGH]) * 4 - 4096 : 0;
-    int32_t f = ch[CH_FILT];
+    int32_t f = ch[CH_FILT], f8 = mod_fine8(t, FN_FILT, f);
     uint32_t i, c;
     if (!glo && !ghi && !f) {
-        C->filt_seen = -32768;                          /* (the filter starts from rest when it's turned again) */
+        C->filt_seen = CH_NONE;                         /* (the filter starts from rest when it's turned again) */
         return;
     }
+    if (f && (f8 < 0) != (f < 0))                       /* (the fine value holds the knob's side: LP or HP) */
+        f8 = f < 0 ? -1 : 1;
     if (ch[CH_LOW] != C->lo_seen || !C->klo) {
         C->klo = ch_shelf_k(CH_FLO, ch[CH_LOW], 0);
         C->lo_seen = ch[CH_LOW];
@@ -122,11 +127,11 @@ static void mix_channel(uint32_t t, int32_t *l, int32_t *r, uint32_t n)
         C->khi = ch_shelf_k(CH_FHI, ch[CH_HIGH], 1);
         C->hi_seen = ch[CH_HIGH];
     }
-    if (f && f != C->filt_seen) {
-        if (C->filt_seen == -32768 || (C->filt_seen < 0) != (f < 0))
+    if (f && f8 != C->filt_seen) {
+        if (C->filt_seen == CH_NONE || (C->filt_seen < 0) != (f8 < 0))
             C->f1[0] = C->f1[1] = C->f2[0] = C->f2[1] = 0;   /* (off, or LP to HP: start from rest) */
-        tsvf_coef_k(&C->fc, ch_cut(f), CH_BW);
-        C->filt_seen = (int16_t)f;
+        tsvf_coef_k(&C->fc, ch_cut(f8), CH_BW);
+        C->filt_seen = f8;
     }
     for (c = 0; c < 2u; c++) {                          /* (the state in locals: the compiler can't know the
                                                          *  buffers don't alias it) */

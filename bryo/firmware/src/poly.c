@@ -77,7 +77,7 @@ static void pol_voice(uint32_t t, pol_voice_t *v, tape_rd_t *rd, const tape_view
     const int16_t *p = TPD(t, MA_POL);
     tsvf_t flt;
     uint32_t i, mode = (uint32_t)clamp(p[PL_TYPE], 0, 2);
-    int32_t a0 = v->amp, a1, e15, pos = v->pos, ic1 = v->ic1, ic2 = v->ic2;
+    int32_t a0 = v->amp, a1, e15, pos = v->pos, ic1 = v->ic1, ic2 = v->ic2, c8;
     switch (v->stage) {                                     /* the envelope, a step per block (as SYNTH's) */
     case 1:
         v->env += (int32_t)ENV_LIN[p[PL_ATK] & 127];
@@ -108,11 +108,12 @@ static void pol_voice(uint32_t t, pol_voice_t *v, tape_rd_t *rd, const tape_view
         v->stage = 0;
         v->env = 0;
     }
-    tsvf_coef(&flt, (p[PL_CUT] << 8) + p[PL_ENV] * 96 * (e15 >> 7) / 100, p[PL_RES] * 127 / 100);
+    c8 = mod_fine8(t, FN_PCUT, p[PL_CUT]);                  /* (CUT finer than its semitones when modulated: mod.c) */
+    tsvf_coef(&flt, c8 + p[PL_ENV] * 96 * (e15 >> 7) / 100, p[PL_RES] * 127 / 100);
     for (i = 0; i < n; i++) {
         int32_t x = tape_read(vw, rd, pos), y;
         pos += v->inc;
-        y = mode || p[PL_CUT] < 127 || p[PL_RES] || p[PL_ENV] ? tsvf_mode(&flt, x >> 1, &ic1, &ic2, mode) << 1 : x;
+        y = mode || c8 < 127 << 8 || p[PL_RES] || p[PL_ENV] ? tsvf_mode(&flt, x >> 1, &ic1, &ic2, mode) << 1 : x;
         out[i] += mulq15(y, a0 + (((a1 - a0) * (int32_t)i) >> CTL_LOG2));
     }
     v->pos = pos;
